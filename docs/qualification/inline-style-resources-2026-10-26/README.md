@@ -1,7 +1,7 @@
 # Inline style resource qualification — 2026-10-26
 
 Continues the style-attribute gap in the RAGRAF matrix. See the
-[contract](../../INLINE_STYLE_RESOURCE_RELATIONS.md) and linked W3C declaration-list
+[contract](../../code-intelligence/INLINE_STYLE_RESOURCE_RELATIONS.md) and linked W3C declaration-list
 specification. CSS boundaries use the already available cssparser dependency;
 resource facts reuse the existing AST URL/responsive collectors. This is not a
 browser/cascade engine, full CSS validator or complete RAGRAF parity claim.

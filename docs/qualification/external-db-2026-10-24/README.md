@@ -3,7 +3,7 @@
 This report covers the new native PostgreSQL/MySQL metadata snapshot subset. It
 does not close the full RAGRAF transfer/improvement goal. The source working tree
 contains earlier unrelated work; this qualification neither commits nor deploys
-it. See [the operation contract](../../EXTERNAL_DATABASES.md) and
+it. See [the operation contract](../../code-intelligence/EXTERNAL_DATABASES.md) and
 [the feature matrix](../../RAGRAF_FEATURE_MATRIX.md).
 
 ## Actual evidence

@@ -1,5 +1,6 @@
 //! Corpus analysis and maintenance tools.
 
+use crate::mcp::error::mcp_error;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::{tool, tool_router, ErrorData as McpError};
@@ -10,6 +11,7 @@ use super::tools::{
     DoctorRepairParams, MaintainCompressParams, MaintainOrganizeParams, MaintainRefreshParams,
     PlanMaintenanceParams,
 };
+use crate::db::Store;
 use crate::diagnostics::DiagnosticsService;
 use crate::error::AppError;
 use crate::maintain::{
@@ -33,10 +35,15 @@ impl RagServer {
         Parameters(params): Parameters<CleanupSourceDuplicatesParams>,
     ) -> Result<CallToolResult, McpError> {
         let dry_run = params.dry_run.unwrap_or(true);
-        let mut mutation_guard = if dry_run {
+        let mutation_guard = if dry_run {
             None
         } else {
-            Some(self.store.try_corpus_mutation_guard("duplicate cleanup")?)
+            Some(
+                self.store
+                    .corpus_lane()
+                    .try_corpus_mutation_guard("duplicate cleanup")
+                    .map_err(mcp_error)?,
+            )
         };
         let configured_cap = self.config.maint_max_docs.max(1);
         let max_candidates = params
@@ -45,30 +52,34 @@ impl RagServer {
             .unwrap_or(configured_cap)
             .max(1)
             .min(configured_cap);
-        let mut report = crate::util::blocking_section(|| {
-            self.store.cleanup_source_duplicates(
-                dry_run,
-                params.confirm.unwrap_or(false),
-                max_candidates,
-            )
-        })?;
-        if report.applied {
-            // Keep the exclusive source-mutation lane until the derived lexical
-            // index covers the committed deletions. Otherwise the first user
-            // search after a successful cleanup pays the full BM25 rebuild.
-            let guard = mutation_guard
-                .take()
-                .expect("applied duplicate cleanup owns the mutation lane");
-            let outcome = self
-                .refresh_fts_after_mutation("cleanup_source_duplicates", guard)
-                .await;
-            if let Some(error) = outcome.error {
-                report.success = false;
-                report.errors.push(error);
-            }
-            mutation_guard = outcome.guard;
+        let confirm = params.confirm.unwrap_or(false);
+        let cleanup = move |store: &Store| {
+            store
+                .maintenance()
+                .cleanup_source_duplicates(dry_run, confirm, max_candidates)
+        };
+        let Some(guard) = mutation_guard else {
+            let report = self
+                .blocking("cleanup_source_duplicates", cleanup)
+                .await
+                .map_err(mcp_error)?;
+            return Self::json_result(&report);
+        };
+        // Cleanup and its FTS refresh run in one blocking task that owns the
+        // lane, so the first search after an applied cleanup does not pay the
+        // full BM25 rebuild and cancellation cannot release the lane early.
+        let outcome = self
+            .guarded_mutation("cleanup_source_duplicates", guard, cleanup, |report| {
+                report.applied
+            })
+            .await
+            .map_err(mcp_error)?;
+        let _mutation_guard = outcome.guard;
+        let mut report = outcome.value;
+        if let Some(error) = outcome.fts_error {
+            report.success = false;
+            report.errors.push(error);
         }
-        let _mutation_guard = mutation_guard;
         Self::json_result(&report)
     }
 
@@ -91,7 +102,8 @@ impl RagServer {
                     params.max_docs,
                 )),
             )
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         Self::json_result(&report)
     }
 
@@ -106,8 +118,9 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<AnalyzeCorpusParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let mut opts = maintain::AnalyzeOptions::from_config(&self.config);
+        let config = self.config.clone();
+        self.blocking_tool("analyze_corpus", move |store| {
+            let mut opts = maintain::AnalyzeOptions::from_config(&config);
             if let Some(d) = params.stub_age_days {
                 opts.stub_age_days = d;
             }
@@ -123,9 +136,10 @@ impl RagServer {
             if let Some(v) = params.log_ops {
                 opts.log_ops = v;
             }
-            let report = maintain::analyze_corpus(&self.store, &self.config, &opts)?;
+            let report = maintain::analyze_corpus(store, &config, &opts).map_err(mcp_error)?;
             Self::json_result(&report)
         })
+        .await
     }
 
     #[tool(
@@ -142,7 +156,7 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let report = if let Some(value) = params.analysis {
             serde_json::from_value::<maintain::AnalysisReport>(value).map_err(|e| {
-                McpError::from(AppError::invalid(format!(
+                mcp_error(AppError::invalid(format!(
                     "plan_maintenance analysis must be an AnalysisReport JSON object: {e}"
                 )))
             })?
@@ -152,9 +166,12 @@ impl RagServer {
             if let Some(v) = params.include_near_dups {
                 opts.include_near_dups = v;
             }
-            crate::util::blocking_section(|| {
-                maintain::analyze_corpus(&self.store, &self.config, &opts)
-            })?
+            let config = self.config.clone();
+            self.blocking("plan_maintenance analysis", move |store| {
+                maintain::analyze_corpus(store, &config, &opts)
+            })
+            .await
+            .map_err(mcp_error)?
         };
 
         let mut plan_opts = maintain::PlanOptions::from_config(&self.config);
@@ -169,10 +186,15 @@ impl RagServer {
         }
 
         let llm = self.completer();
-        let plan = maintain::plan_maintenance(&report, &self.config, llm, &plan_opts).await?;
+        let plan = maintain::plan_maintenance(&report, &self.config, llm, &plan_opts)
+            .await
+            .map_err(mcp_error)?;
 
         if plan_opts.log_ops {
-            crate::util::blocking_section(|| maintain::log_plan(&self.store, &plan))?;
+            let logged = plan.clone();
+            self.blocking("log plan", move |store| maintain::log_plan(store, &logged))
+                .await
+                .map_err(mcp_error)?;
         }
 
         Self::json_result(&plan)
@@ -194,7 +216,7 @@ impl RagServer {
         let mut actions: Vec<MaintenancePlanItem> = Vec::with_capacity(params.actions.len());
         for a in params.actions {
             let kind = maintain::MaintenanceAction::parse(&a.action).ok_or_else(|| {
-                McpError::from(AppError::forbidden(format!(
+                mcp_error(AppError::forbidden(format!(
                     "maintenance action '{}' is not on the whitelist; allowed: {}",
                     a.action.trim(),
                     maintain::ALLOWED_ACTIONS.join(", ")
@@ -229,12 +251,19 @@ impl RagServer {
             )
             .await
         } else {
-            let mutation_guard = self.store.try_corpus_mutation_guard("maintenance plan")?;
+            let mutation_guard = self
+                .store
+                .corpus_lane()
+                .try_corpus_mutation_guard("maintenance plan")
+                .map_err(mcp_error)?;
             let server = self.clone();
             run_detached("apply_maintenance_plan", async move {
                 // This owned task intentionally survives a dropped MCP request:
                 // mutations and their terminal FTS refresh keep one lane lease.
-                let scoped_store = server.store.with_corpus_mutation_guard(mutation_guard)?;
+                let scoped_store = server
+                    .store
+                    .corpus_lane()
+                    .with_corpus_mutation_guard(mutation_guard)?;
                 let llm = server.completer();
                 maintain::apply_maintenance_plan(
                     &scoped_store,
@@ -248,7 +277,7 @@ impl RagServer {
             })
             .await
         };
-        let report = report?;
+        let report = report.map_err(mcp_error)?;
         Self::json_result(&report)
     }
 
@@ -266,7 +295,7 @@ impl RagServer {
         let mut opts = maintain::OrganizeOptions::from_config(&self.config);
         opts.dry_run = params.dry_run.unwrap_or(true);
         if let Some(ref mode) = params.mode {
-            opts.mode = maintain::OrganizeMode::parse(mode)?;
+            opts.mode = maintain::OrganizeMode::parse(mode).map_err(mcp_error)?;
         }
         if let Some(n) = params.max_docs {
             opts.max_docs =
@@ -294,7 +323,7 @@ impl RagServer {
             })
             .await
         };
-        let report = report?;
+        let report = report.map_err(mcp_error)?;
         Self::json_result(&report)
     }
 
@@ -327,18 +356,23 @@ impl RagServer {
         } else {
             let mutation_guard = self
                 .store
-                .try_corpus_mutation_guard("maintenance refresh")?;
+                .corpus_lane()
+                .try_corpus_mutation_guard("maintenance refresh")
+                .map_err(mcp_error)?;
             let server = self.clone();
             run_detached("maintain_refresh", async move {
                 // See apply_maintenance_plan: cancellation detaches this owned
                 // workflow instead of releasing its corpus lease mid-refresh.
-                let scoped_store = server.store.with_corpus_mutation_guard(mutation_guard)?;
+                let scoped_store = server
+                    .store
+                    .corpus_lane()
+                    .with_corpus_mutation_guard(mutation_guard)?;
                 maintain::maintain_refresh(&scoped_store, &server.embedder, &server.config, flags)
                     .await
             })
             .await
         };
-        let report = report?;
+        let report = report.map_err(mcp_error)?;
         Self::json_result(&report)
     }
 
@@ -367,13 +401,15 @@ impl RagServer {
             opts.max_docs =
                 clamp_maintenance_max_docs(self.config.maint_max_docs, Some(n as usize));
         }
-        opts.validate()?;
+        opts.validate().map_err(mcp_error)?;
         let mutation_guard = if opts.dry_run {
             None
         } else {
             Some(
                 self.store
-                    .try_corpus_mutation_guard("maintenance compression")?,
+                    .corpus_lane()
+                    .try_corpus_mutation_guard("maintenance compression")
+                    .map_err(mcp_error)?,
             )
         };
         let store = self.store.clone();
@@ -384,7 +420,8 @@ impl RagServer {
             let _mutation_guard = mutation_guard;
             maintain::maintain_compress(&store, &config, &opts)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&report)
     }
 
@@ -395,10 +432,12 @@ impl RagServer {
         to ops_log. Does not delete rows."
     )]
     pub(super) async fn vacuum_store(&self) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let report: VacuumStoreReport = self.store.vacuum_store()?;
+        self.blocking_tool("vacuum_store", move |store| {
+            let report: VacuumStoreReport =
+                store.maintenance().vacuum_store().map_err(mcp_error)?;
             Self::json_result(&report)
         })
+        .await
     }
 }
 

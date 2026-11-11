@@ -1,6 +1,6 @@
 # Git impact qualification
 
-Contract: [GIT_DIFF_IMPACT.md](../../GIT_DIFF_IMPACT.md). `detect_changes` uses
+Contract: [GIT_DIFF_IMPACT.md](../../code-intelligence/GIT_DIFF_IMPACT.md). `detect_changes` uses
 ephemeral captured source graphs, not a presumed-fresh persistent index.
 
 Evidence files:

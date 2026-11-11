@@ -1,7 +1,8 @@
 //! Code, SQL, database and analysis operations over the shared server context.
 use super::facade::RagServer;
 use super::tools::*;
-use crate::ingest::{IngestService, IngestUrlCommand};
+use crate::ingest::IngestUrlCommand;
+use crate::mcp::error::mcp_error;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::{service::RequestContext, RoleServer};
@@ -17,8 +18,11 @@ impl RagServer {
         Parameters(params): Parameters<crate::code_index::CatalogQuery>,
     ) -> Result<CallToolResult, McpError> {
         let store = self.store.clone();
-        let result =
-            crate::util::run_blocking("catalog", move || store.code_catalog_query(&params)).await?;
+        let result = crate::util::run_blocking("catalog", move || {
+            crate::code_index::CodeIndex::new(&store).code_catalog_query(&params)
+        })
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&result)
     }
     #[tool(
@@ -29,12 +33,14 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::drift::SourceQuery>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(
-            &self
-                .store
-                .code_freshness(&params, &self.config.ingest_roots)
-                .map_err(Self::map_err)?,
-        )
+        let store = self.store.clone();
+        let config = self.config.clone();
+        let result = crate::util::run_blocking("freshness", move || {
+            crate::code_index::CodeIndex::new(&store).code_freshness(&params, &config.ingest_roots)
+        })
+        .await
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "live_read",
@@ -44,12 +50,14 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::drift::SourceQuery>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(
-            &self
-                .store
-                .code_live_read(&params, &self.config.ingest_roots)
-                .map_err(Self::map_err)?,
-        )
+        let store = self.store.clone();
+        let config = self.config.clone();
+        let result = crate::util::run_blocking("live_read", move || {
+            crate::code_index::CodeIndex::new(&store).code_live_read(&params, &config.ingest_roots)
+        })
+        .await
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "drift_report",
@@ -59,12 +67,13 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::drift::DriftQuery>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(
-            &self
-                .store
-                .code_drift_report(&params)
-                .map_err(Self::map_err)?,
-        )
+        let store = self.store.clone();
+        let result = crate::util::run_blocking("drift_report", move || {
+            crate::code_index::CodeIndex::new(&store).code_drift_report(&params)
+        })
+        .await
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "drift_ack",
@@ -74,7 +83,13 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::drift::DriftAck>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(&self.store.code_drift_ack(&params).map_err(Self::map_err)?)
+        let store = self.store.clone();
+        let result = crate::util::run_blocking("drift_ack", move || {
+            crate::code_index::CodeIndex::new(&store).code_drift_ack(&params)
+        })
+        .await
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "index_status",
@@ -87,9 +102,10 @@ impl RagServer {
         let store = self.store.clone();
         let config = self.config.clone();
         let result = crate::util::run_blocking("index_status", move || {
-            store.code_index_status(&params, &config)
+            crate::code_index::CodeIndex::new(&store).code_index_status(&params, &config)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&result)
     }
 
@@ -101,7 +117,13 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::corpus::MultiSearch>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(&self.store.search_multi(&params).map_err(Self::map_err)?)
+        let store = self.store.clone();
+        let result = crate::util::run_blocking("search_multi", move || {
+            crate::code_index::CodeIndex::new(&store).search_multi(&params)
+        })
+        .await
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "duplicates",
@@ -111,7 +133,13 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::corpus::DuplicateQuery>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(&self.store.duplicates(&params).map_err(Self::map_err)?)
+        let store = self.store.clone();
+        let result = crate::util::run_blocking("duplicates", move || {
+            crate::code_index::CodeIndex::new(&store).duplicates(&params)
+        })
+        .await
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "index_revisions",
@@ -121,12 +149,13 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::history::HistoryQuery>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(
-            &self
-                .store
-                .code_index_history(&params)
-                .map_err(Self::map_err)?,
-        )
+        let store = self.store.clone();
+        let result = crate::util::run_blocking("index_revisions", move || {
+            crate::code_index::CodeIndex::new(&store).code_index_history(&params)
+        })
+        .await
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "diff",
@@ -136,7 +165,13 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::history::DiffQuery>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(&self.store.code_index_diff(&params).map_err(Self::map_err)?)
+        let store = self.store.clone();
+        let result = crate::util::run_blocking("diff", move || {
+            crate::code_index::CodeIndex::new(&store).code_index_diff(&params)
+        })
+        .await
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "calibrate",
@@ -146,12 +181,13 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::calibration::CalibrationQuery>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(
-            &self
-                .store
-                .calibrate_confidence(&params)
-                .map_err(Self::map_err)?,
-        )
+        let store = self.store.clone();
+        let result = crate::util::run_blocking("calibrate", move || {
+            crate::calibration::Calibrations::new(&store).calibrate_confidence(&params)
+        })
+        .await
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "calibration_reports",
@@ -161,12 +197,13 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::calibration::ReportsQuery>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(
-            &self
-                .store
-                .calibration_reports(&params)
-                .map_err(Self::map_err)?,
-        )
+        let store = self.store.clone();
+        let result = crate::util::run_blocking("calibration_reports", move || {
+            crate::calibration::Calibrations::new(&store).calibration_reports(&params)
+        })
+        .await
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "gate",
@@ -180,15 +217,18 @@ impl RagServer {
         let session = self.analysis_scope(payload.session_id.as_deref())?;
         let mode = params
             .mode
-            .or_else(|| std::env::var("RAG_GATE_MODE").ok())
+            .or_else(|| self.config.gate_mode.clone())
             .unwrap_or("warn".into());
         let mode = crate::gate::Mode::parse(&mode).map_err(Self::map_err)?;
-        Self::json_result(
-            &self
-                .store
-                .analysis_gate(session, &payload, mode, &self.config.ingest_roots)
-                .map_err(Self::map_err)?,
-        )
+        let session = session.to_owned();
+        let store = self.store.clone();
+        let roots = self.config.ingest_roots.clone();
+        let result = crate::util::run_blocking("gate", move || {
+            crate::gate::Gate::new(&store).analysis_gate(&session, &payload, mode, &roots)
+        })
+        .await
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "task_set",
@@ -199,12 +239,14 @@ impl RagServer {
         Parameters(params): Parameters<crate::analysis_tasks::TaskSet>,
     ) -> Result<CallToolResult, McpError> {
         let session = self.analysis_scope(params.session_id.as_deref())?;
-        Self::json_result(
-            &self
-                .store
-                .analysis_task_set(session, &params)
-                .map_err(Self::map_err)?,
-        )
+        let session = session.to_owned();
+        let store = self.store.clone();
+        let result = crate::util::run_blocking("analysis_task_set", move || {
+            crate::analysis_tasks::AnalysisTasks::new(&store).analysis_task_set(&session, &params)
+        })
+        .await
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "note",
@@ -221,12 +263,15 @@ impl RagServer {
             .peer_info()
             .map(|i| i.client_info.name.as_str())
             .unwrap_or("unknown");
-        Self::json_result(
-            &self
-                .store
-                .analysis_note(session, agent, &params)
-                .map_err(Self::map_err)?,
-        )
+        let (session, agent) = (session.to_owned(), agent.to_owned());
+        let store = self.store.clone();
+        let result = crate::util::run_blocking("analysis_note", move || {
+            crate::analysis_tasks::AnalysisTasks::new(&store)
+                .analysis_note(&session, &agent, &params)
+        })
+        .await
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "notes",
@@ -237,12 +282,14 @@ impl RagServer {
         Parameters(params): Parameters<crate::analysis_tasks::Notes>,
     ) -> Result<CallToolResult, McpError> {
         let session = self.analysis_scope(params.session_id.as_deref())?;
-        Self::json_result(
-            &self
-                .store
-                .analysis_notes(session, &params)
-                .map_err(Self::map_err)?,
-        )
+        let session = session.to_owned();
+        let store = self.store.clone();
+        let result = crate::util::run_blocking("analysis_notes", move || {
+            crate::analysis_tasks::AnalysisTasks::new(&store).analysis_notes(&session, &params)
+        })
+        .await
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "task_stats",
@@ -253,12 +300,14 @@ impl RagServer {
         Parameters(params): Parameters<crate::analysis_tasks::TaskStats>,
     ) -> Result<CallToolResult, McpError> {
         let session = self.analysis_scope(params.session_id.as_deref())?;
-        Self::json_result(
-            &self
-                .store
-                .analysis_task_stats(session, &params)
-                .map_err(Self::map_err)?,
-        )
+        let session = session.to_owned();
+        let store = self.store.clone();
+        let result = crate::util::run_blocking("analysis_task_stats", move || {
+            crate::analysis_tasks::AnalysisTasks::new(&store).analysis_task_stats(&session, &params)
+        })
+        .await
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "policy_trace",
@@ -268,7 +317,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::policy::PolicyQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        let snapshot = self.code_snapshot().await?;
         Self::json_result(&snapshot.policy_trace(&params).map_err(Self::map_err)?)
     }
     #[tool(
@@ -279,7 +328,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::styles::ClassQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        let snapshot = self.code_snapshot().await?;
         Self::json_result(&snapshot.class_usage(&params).map_err(Self::map_err)?)
     }
     #[tool(
@@ -291,8 +340,7 @@ impl RagServer {
         Parameters(params): Parameters<crate::external_db::Refresh>,
     ) -> Result<CallToolResult, McpError> {
         Self::json_result(
-            &self
-                .store
+            &crate::external_db::ExternalDb::new(&self.store)
                 .external_db_refresh(&params)
                 .await
                 .map_err(Self::map_err)?,
@@ -306,12 +354,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::external_db::Query>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(
-            &self
-                .store
-                .external_db_query("db_schema", &params)
-                .map_err(Self::map_err)?,
-        )
+        self.captured_db_query("db_schema", params).await
     }
     #[tool(
         name = "db_table",
@@ -321,12 +364,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::external_db::Query>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(
-            &self
-                .store
-                .external_db_query("db_table", &params)
-                .map_err(Self::map_err)?,
-        )
+        self.captured_db_query("db_table", params).await
     }
     #[tool(
         name = "db_relations",
@@ -336,12 +374,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::external_db::Query>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(
-            &self
-                .store
-                .external_db_query("db_relations", &params)
-                .map_err(Self::map_err)?,
-        )
+        self.captured_db_query("db_relations", params).await
     }
     #[tool(
         name = "db_drift",
@@ -351,12 +384,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::external_db::Query>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(
-            &self
-                .store
-                .external_db_query("db_drift", &params)
-                .map_err(Self::map_err)?,
-        )
+        self.captured_db_query("db_drift", params).await
     }
     #[tool(
         name = "db_cross",
@@ -366,12 +394,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::external_db::Query>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(
-            &self
-                .store
-                .external_db_query("db_cross", &params)
-                .map_err(Self::map_err)?,
-        )
+        self.captured_db_query("db_cross", params).await
     }
     #[tool(
         name = "db_sample",
@@ -381,12 +404,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::external_db::Query>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(
-            &self
-                .store
-                .external_db_query("db_sample", &params)
-                .map_err(Self::map_err)?,
-        )
+        self.captured_db_query("db_sample", params).await
     }
     #[tool(
         name = "schema",
@@ -396,12 +414,15 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::sql::SqlQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
-        Self::json_result(
-            &snapshot
+        let store = self.store.clone();
+        let result = crate::util::run_blocking("schema", move || {
+            crate::code_index::CodeIndex::new(&store)
+                .code_snapshot()?
                 .sql_query("schema", &params)
-                .map_err(Self::map_err)?,
-        )
+        })
+        .await
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "table_usage",
@@ -411,12 +432,15 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::sql::SqlQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
-        Self::json_result(
-            &snapshot
+        let store = self.store.clone();
+        let result = crate::util::run_blocking("table_usage", move || {
+            crate::code_index::CodeIndex::new(&store)
+                .code_snapshot()?
                 .sql_query("table_usage", &params)
-                .map_err(Self::map_err)?,
-        )
+        })
+        .await
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "write_check",
@@ -426,7 +450,13 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::external_db::write_check::Request>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(&self.store.check_write_plan(params).map_err(Self::map_err)?)
+        let store = self.store.clone();
+        let result = crate::util::run_blocking("write_check", move || {
+            crate::external_db::ExternalDb::new(&store).check_write_plan(params)
+        })
+        .await
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "entrypoints",
@@ -436,7 +466,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::CodeQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        let snapshot = self.code_snapshot().await?;
         Self::json_result(&snapshot.query("entrypoints", &params))
     }
     #[tool(
@@ -448,8 +478,11 @@ impl RagServer {
         Parameters(params): Parameters<crate::code_index::RouteQuery>,
     ) -> Result<CallToolResult, McpError> {
         let store = self.store.clone();
-        let result =
-            crate::util::run_blocking("routes", move || store.code_routes(&params)).await?;
+        let result = crate::util::run_blocking("routes", move || {
+            crate::code_index::CodeIndex::new(&store).code_routes(&params)
+        })
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&result)
     }
     #[tool(
@@ -464,9 +497,10 @@ impl RagServer {
             "files" => {
                 let store = self.store.clone();
                 let result = crate::util::run_blocking("dead_code_files", move || {
-                    store.code_dead_files(&params)
+                    crate::code_index::CodeIndex::new(&store).code_dead_files(&params)
                 })
-                .await?;
+                .await
+                .map_err(mcp_error)?;
                 return Self::json_result(&result);
             }
             "routines" => {
@@ -488,7 +522,7 @@ impl RagServer {
                 ))
             }
         }
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        let snapshot = self.code_snapshot().await?;
         Self::json_result(&snapshot.query("dead_code", &params))
     }
     #[tool(
@@ -499,7 +533,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::CodeQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        let snapshot = self.code_snapshot().await?;
         Self::json_result(&snapshot.query("slice", &params))
     }
     #[tool(
@@ -512,10 +546,12 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let store = self.store.clone();
         let result = crate::util::run_blocking("trace_path", move || {
-            let snapshot = store.code_snapshot_in_project(params.project.as_deref())?;
+            let snapshot = crate::code_index::CodeIndex::new(&store)
+                .code_snapshot_in_project(params.project.as_deref())?;
             Ok::<_, crate::error::AppError>(snapshot.trace_path(&params))
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&result)
     }
     #[tool(
@@ -530,7 +566,8 @@ impl RagServer {
         let result = crate::util::run_blocking("detect_changes", move || {
             crate::code_index::git_diff_impact(&params, &roots)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&result)
     }
     #[tool(
@@ -542,9 +579,11 @@ impl RagServer {
         Parameters(params): Parameters<crate::code_index::InfrastructureQuery>,
     ) -> Result<CallToolResult, McpError> {
         let store = self.store.clone();
-        let result =
-            crate::util::run_blocking("infrastructure", move || store.code_infrastructure(&params))
-                .await?;
+        let result = crate::util::run_blocking("infrastructure", move || {
+            crate::code_index::CodeIndex::new(&store).code_infrastructure(&params)
+        })
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&result)
     }
     #[tool(
@@ -557,9 +596,11 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let store = self.store.clone();
         let roots = self.config.ingest_roots.clone();
-        let result =
-            crate::util::run_blocking("rename", move || store.code_rename_preview(&params, &roots))
-                .await?;
+        let result = crate::util::run_blocking("rename", move || {
+            crate::code_index::CodeIndex::new(&store).code_rename_preview(&params, &roots)
+        })
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&result)
     }
     #[tool(
@@ -573,9 +614,10 @@ impl RagServer {
         let store = self.store.clone();
         let roots = self.config.ingest_roots.clone();
         let result = crate::util::run_blocking("apply_rename", move || {
-            store.code_rename_apply(&params, &roots)
+            crate::code_index::CodeIndex::new(&store).code_rename_apply(&params, &roots)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&result)
     }
     #[tool(
@@ -587,9 +629,11 @@ impl RagServer {
         Parameters(params): Parameters<crate::code_index::AffectedTestsQuery>,
     ) -> Result<CallToolResult, McpError> {
         let store = self.store.clone();
-        let result =
-            crate::util::run_blocking("affected_tests", move || store.code_affected_tests(&params))
-                .await?;
+        let result = crate::util::run_blocking("affected_tests", move || {
+            crate::code_index::CodeIndex::new(&store).code_affected_tests(&params)
+        })
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&result)
     }
     #[tool(
@@ -600,7 +644,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::CodeQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        let snapshot = self.code_snapshot().await?;
         Self::json_result(&snapshot.query("inheritance", &params))
     }
     #[tool(
@@ -611,7 +655,13 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::CodeReadQuery>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(&self.store.code_read(&params).map_err(Self::map_err)?)
+        let store = self.store.clone();
+        let result = crate::util::run_blocking("code", move || {
+            crate::code_index::CodeIndex::new(&store).code_read(&params)
+        })
+        .await
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "repo_map",
@@ -623,10 +673,12 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let store = self.store.clone();
         let result = crate::util::run_blocking("repo_map", move || {
-            let snapshot = store.code_snapshot_in_project(params.project.as_deref())?;
+            let snapshot = crate::code_index::CodeIndex::new(&store)
+                .code_snapshot_in_project(params.project.as_deref())?;
             Ok::<_, crate::error::AppError>(snapshot.repo_map(&params))
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&result)
     }
     #[tool(
@@ -639,10 +691,12 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let store = self.store.clone();
         let result = crate::util::run_blocking("impact", move || {
-            let snapshot = store.code_snapshot_in_project(params.impact_project.as_deref())?;
+            let snapshot = crate::code_index::CodeIndex::new(&store)
+                .code_snapshot_in_project(params.impact_project.as_deref())?;
             Ok::<_, crate::error::AppError>(snapshot.query("impact", &params))
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&result)
     }
     #[tool(
@@ -655,9 +709,10 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let store = self.store.clone();
         let report = crate::util::run_blocking("index_code", move || {
-            store.index_code_with_options(&options)
+            crate::code_index::CodeIndex::new(&store).index_code_with_options(&options)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&report)
     }
     #[tool(
@@ -668,7 +723,13 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::SymbolQuery>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(&self.store.code_symbols(&params).map_err(Self::map_err)?)
+        let store = self.store.clone();
+        let result = crate::util::run_blocking("symbol", move || {
+            crate::code_index::CodeIndex::new(&store).code_symbols(&params)
+        })
+        .await
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "references",
@@ -678,7 +739,13 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::ReferenceQuery>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(&self.store.code_references(&params).map_err(Self::map_err)?)
+        let store = self.store.clone();
+        let result = crate::util::run_blocking("references", move || {
+            crate::code_index::CodeIndex::new(&store).code_references(&params)
+        })
+        .await
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "callers",
@@ -688,7 +755,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::CodeQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        let snapshot = self.code_snapshot().await?;
         Self::json_result(&snapshot.query("callers", &params))
     }
     #[tool(
@@ -699,7 +766,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::CodeQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        let snapshot = self.code_snapshot().await?;
         Self::json_result(&snapshot.query("callees", &params))
     }
     #[tool(
@@ -710,19 +777,16 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<IngestUrlParams>,
     ) -> Result<CallToolResult, McpError> {
-        let fetcher = crate::web_ingest::ReqwestFetcher::new(self.config.ingest_url_timeout_secs);
-        let result = IngestService::new(&self.store, &self.embedder, &self.config)
-            .ingest_url(
-                &fetcher,
-                IngestUrlCommand {
-                    url: params.url,
-                    title: params.title,
-                    uri: params.uri,
-                    metadata_json: params.metadata_json,
-                    wing: params.wing,
-                    room: params.room,
-                },
-            )
+        let result = self
+            .ingest_use_case()
+            .ingest_url(IngestUrlCommand {
+                url: params.url,
+                title: params.title,
+                uri: params.uri,
+                metadata_json: params.metadata_json,
+                wing: params.wing,
+                room: params.room,
+            })
             .await
             .map_err(Self::map_err)?;
         Self::json_result(&result)
@@ -732,8 +796,39 @@ impl RagServer {
         description = "Embedding identity status: whether vector search is open, stored vs configured identity, and resumable migration progress (documents done/pending, batch size). Read-only."
     )]
     pub(super) async fn reembed_status(&self) -> Result<CallToolResult, McpError> {
-        let body =
-            crate::maintain::reembed_status(&self.store, &self.config).map_err(Self::map_err)?;
+        let body = self
+            .admin_use_case()
+            .reembed_status()
+            .await
+            .map_err(Self::map_err)?;
         Self::json_result(&body)
+    }
+}
+
+/// The six read-only `db_*` tools differ only in the operation name; this is
+/// their one body (captured metadata read on the blocking pool).
+impl RagServer {
+    /// Load the code-index snapshot on the blocking pool.
+    async fn code_snapshot(&self) -> Result<crate::code_index::CodeSnapshot, McpError> {
+        let store = self.store.clone();
+        crate::util::run_blocking("code_snapshot", move || {
+            crate::code_index::CodeIndex::new(&store).code_snapshot()
+        })
+        .await
+        .map_err(Self::map_err)
+    }
+
+    async fn captured_db_query(
+        &self,
+        operation: &'static str,
+        params: crate::external_db::Query,
+    ) -> Result<CallToolResult, McpError> {
+        let store = self.store.clone();
+        let result = crate::util::run_blocking(operation, move || {
+            crate::external_db::ExternalDb::new(&store).external_db_query(operation, &params)
+        })
+        .await
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
     }
 }

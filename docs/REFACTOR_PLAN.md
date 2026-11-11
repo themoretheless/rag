@@ -1,6 +1,35 @@
 # Refactor plan: structure, architecture, SOLID / DRY
 
-**Status:** executed on this branch except the items listed under "Not done, with the reason" (see [Progress](#progress)) · **Written:** 2026-10-11 · **Baseline:** branch
+> **Superseded (2026-11-11).** This is the October 2026 plan, kept as a
+> historical record. A re-audit of `origin/main` (`facf533`) found that
+> several items it reports as done were not; the follow-up refactor
+> ([`refactor/PLAN.md`](refactor/PLAN.md)) did them. Current architecture:
+> [`refactor/ARCHITECTURE.md`](refactor/ARCHITECTURE.md); per-finding status:
+> [`refactor/INVENTORY.md`](refactor/INVENTORY.md); open items:
+> [`refactor/BACKLOG.md`](refactor/BACKLOG.md). Corrections to the claims
+> below (each also marked inline with **Correction**):
+>
+> - 4.4 `Store::lock` was still `pub(crate)` at `facf533`, and 19 `impl Store`
+>   blocks outside `src/db` (code_index, external_db, gate, calibration,
+>   analysis_tasks) used it 33 times. Fixed in refactor Stages 2–3
+>   (repository types; `lock` private to `db` outside test builds).
+> - 4.5 grouped `Store` methods into files but kept them on `Store` (258
+>   production methods). Refactor Stage 3 moved them into 14 repository
+>   types; `Store` keeps open/lock/tx, accessors and 15 UI forwarders.
+> - "Operations implemented in both transports without a shared service: 0"
+>   was false: 16 MCP/HTTP drifts were pinned at `facf533`
+>   (`tests/it/parity_test.rs`). Refactor Stage 4 added `src/app` use cases.
+> - "`RAG_*` env reads outside `config.rs`: 0" was false: 24 reads in 12
+>   files at `facf533`. Four groups remain, with reasons
+>   ([`refactor/BACKLOG.md`](refactor/BACKLOG.md)).
+> - 2.x: `wiki::put_wiki_page` no longer exists; one wiki write entrypoint is
+>   `app::WikiUseCase::write` over `wiki::write_page`.
+> - 0.6 / 3.4: the `Storage` trait and the Markdown backend were deleted as
+>   unused (refactor Stage 3); `RAG_STORAGE_BACKEND` accepts only `duckdb`.
+> - "Not done: nothing" was false; see the corrections above and the
+>   backlog.
+
+**Status:** historical; see the note above · **Written:** 2026-10-11 · **Baseline:** branch
 `claude/optimistic-pascal-8x90fc` (MCP facade split, `AppError::code()`,
 `util::{blocking,text,time}` already done; see [`SOLID_DRY_AUDIT.md`](SOLID_DRY_AUDIT.md)).
 
@@ -331,7 +360,8 @@ are fixed too:
   (`store::{embedding_json, owned_embedding_json}`) used by atomic writes,
   sync writes, chunk replacement and recovery import. Import restores revision
   and timestamps verbatim on purpose.
-- 4.5 done: `Store` methods are grouped in `db/store/{documents,chunks,health,
+- 4.5 reported done (**Correction:** the methods stayed on `Store`, 258 in
+  all; refactor Stage 3 moved them into repository types): `Store` methods are grouped in `db/store/{documents,chunks,health,
   revisions,schema_diary,corpus_lane,manifest,ops_log,wiki_index}.rs`, leaving
   `store.rs` with the write/transaction core (~1.7k production lines). The
   2.5k lines of store tests moved to `db/store/tests.rs`
@@ -391,7 +421,8 @@ are fixed too:
   builds a second embedder.
 - 2.5 done: `JobRegistry`, lifecycle and persistence live in `src/jobs.rs`;
   `http_api/jobs.rs` keeps routes and handlers.
-- 2.x wiki upsert done: `wiki::put_wiki_page` owns slug/uri/id resolution,
+- 2.x wiki upsert done (**Correction:** replaced in refactor Stage 4 by
+  `app::WikiUseCase::write` / `wiki::write_page`): `wiki::put_wiki_page` owned slug/uri/id resolution,
   the id-vs-URI check, create-only guards and the create-or-CAS choice; the
   HTTP handler is a thin adapter. MCP keeps its separate create/update tools.
 - 3.3 done: `db::EmbeddingIdentity` replaces `Config` in the store's manifest
@@ -405,7 +436,9 @@ are fixed too:
   `RAG_CALL_LOG_CAPACITY`, `RAG_NODE_ID`, `RAG_PRIMARY_URL` and
   `RAG_INGEST_ROOTS` and `RAG_PRIMARY_TOKEN` are read by
   `Config::from_env`.
-- 4.4 done: `Store::lock` is `pub(in crate::db)` outside tests. Former callers
+- 4.4 reported done (**Correction:** at `facf533` `Store::lock` was still
+  `pub(crate)` and 19 `impl Store` blocks outside `src/db` used it; fixed in
+  refactor Stages 2–3): `Store::lock` is `pub(in crate::db)` outside tests. Former callers
   use `db::{payload_kv, analytics, knowledge, chunk_text, review,
   graph::resolve}` or `Store` methods (`reindex_fts`, `chunks_generation`,
   `set_document_tags`, `checkpoint`). `payload_kv::with_session` gives
@@ -502,7 +535,8 @@ comment is back on its function. `llm::json` keeps its own excerpt rule
 
 **Not done, with the reason**
 
-Nothing: every planned item above is done.
+Reported as "nothing" in October. **Correction:** see the note at the top;
+remaining items are in [`refactor/BACKLOG.md`](refactor/BACKLOG.md).
 
 ## Performance round
 
@@ -1050,11 +1084,11 @@ are from a debug build.
 
 | Measure | Start | Now | Target |
 |---------|-------|-----|--------|
-| `Store::lock()` call sites outside `db` (production) | ~41 | 0 | `payload_kv` only |
-| Operations implemented in both transports without a shared service | ~8 | 0 | 0 |
+| `Store::lock()` call sites outside `db` (production) | ~41 | 0 (**Correction:** 33 `self.lock()` in `impl Store` blocks outside `db` at `facf533`; 0 after refactor Stage 2) | `payload_kv` only |
+| Operations implemented in both transports without a shared service | ~8 | 0 (**Correction:** 16 drifts at `facf533`; aligned in refactor Stage 4) | 0 |
 | `fn test_config` bodies not built on `Config::for_tests()` | 11 | 0 | 0 |
 | Integration-test binaries linking DuckDB | 8 | 1 | 1–2 |
-| `RAG_*` env reads outside `config.rs` | ~30 | 0 | 0 |
+| `RAG_*` env reads outside `config.rs` | ~30 | 0 (**Correction:** 24 at `facf533`; four groups left, see `refactor/BACKLOG.md`) | 0 |
 | Upward imports from `config`/domain into `mcp`/`http_api` | 5 | 0 | 0 |
 | Largest production file (without tests) | ~4.2k lines (`db/store.rs`) | ~1.5k | < 2k |
 | Largest UI file (`app.rs`) | 4.6k lines | 1.3k (`load.rs`, `app/mod.rs`) | — |

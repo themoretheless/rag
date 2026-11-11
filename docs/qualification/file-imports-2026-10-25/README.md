@@ -1,7 +1,7 @@
 # File import candidates — 2026-10-25
 
 Extends the incomplete file dependency/import portion of the RAGRAF matrix.
-See [contract](../../FILE_IMPORT_RELATIONS.md). Python and JS/TS AST imports
+See [contract](../../code-intelligence/FILE_IMPORT_RELATIONS.md). Python and JS/TS AST imports
 resolve to captured same-project file candidates independently of symbol lookup.
 Side-effect imports, re-exports and missing exports retain their file dependency.
 No calls or routine liveness are fabricated. Static candidates are not proven

@@ -1,6 +1,6 @@
 # Client endpoint syntax — 2026-10-26
 
-[Contract](../../CLIENT_ENDPOINT_REFERENCES.md). Pinned RAGRAF reference commit
+[Contract](../../code-intelligence/CLIENT_ENDPOINT_REFERENCES.md). Pinned RAGRAF reference commit
 075caf86dc2f6274b9c48487e521915bcdfeaf2c contains an `ENDPOINT_CALL_RE`
 including fetch/open/load/ajax/.post/.get and other call-name patterns.
 The new local AST collector extends existing fetch evidence with jQuery/Axios

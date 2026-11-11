@@ -10,7 +10,7 @@ pub fn create_review_proposal(store: &Store, document_id: &str) -> Result<Propos
     let base = get_wiki_page(store, document_id)?;
     let mut sources = Vec::new();
     for (id, uri) in review_parent_ids(store, &base)? {
-        let source = store.get_document(&id)?;
+        let source = store.documents().get_document(&id)?;
         sources.push(ReviewSource {
             document_id: id,
             uri: source.as_ref().map(|d| d.uri.clone()).unwrap_or(uri),

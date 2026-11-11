@@ -93,22 +93,22 @@ pub fn validate_prompt(
     body: &str,
 ) -> crate::error::Result<()> {
     if name.trim().is_empty() || name.len() > 64 {
-        return Err(crate::error::AppError::config(
+        return Err(crate::error::AppError::invalid(
             "prompt name must be 1..64 bytes",
         ));
     }
     if version.trim().is_empty() || version.len() > 32 {
-        return Err(crate::error::AppError::config(
+        return Err(crate::error::AppError::invalid(
             "prompt version must be 1..32 bytes",
         ));
     }
     if kind.trim().is_empty() || kind.len() > 32 {
-        return Err(crate::error::AppError::config(
+        return Err(crate::error::AppError::invalid(
             "prompt kind must be 1..32 bytes",
         ));
     }
     if body.trim().is_empty() || body.len() > 16_384 {
-        return Err(crate::error::AppError::config(
+        return Err(crate::error::AppError::invalid(
             "prompt body must be 1..16384 bytes",
         ));
     }

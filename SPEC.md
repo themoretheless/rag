@@ -119,8 +119,8 @@ CREATE TABLE IF NOT EXISTS chunks (
   document_id VARCHAR NOT NULL,
   chunk_index INTEGER NOT NULL,
   content TEXT NOT NULL,
-  -- embedding stored as JSON array of f32 for portability across duckdb versions
-  embedding_json VARCHAR NOT NULL,
+  -- embedding stored as a native FLOAT[] list (schema v26)
+  embedding FLOAT[] NOT NULL,  -- schema v26; was embedding_json VARCHAR (JSON text)
   char_start INTEGER NOT NULL,
   char_end INTEGER NOT NULL,
   created_at TIMESTAMP NOT NULL
@@ -159,7 +159,7 @@ CREATE INDEX IF NOT EXISTS idx_graph_nodes_document_id ON graph_nodes(document_i
 
 Notes:
 
-- Store embeddings as JSON float arrays in `embedding_json`. Rank in Rust with cosine similarity (simple, portable, no VSS extension required).
+- Store embeddings as a native `FLOAT[]` column (`chunks.embedding`, schema v26; earlier versions kept JSON text in `embedding_json`, migrated on open). A v26 database cannot be opened by pre-v26 builds (they fail with an SQL error on the missing `embedding_json` column); since v26 a build refuses a database whose stored schema version is newer than its own with `database schema vN is newer than this build supports (vM)`. Rank in Rust with cosine similarity (simple, portable, no VSS extension required).
 - For small/medium corpora this is fine. Document future VSS path in README only.
 - Connection: open once, wrap in `Arc<Mutex<Connection>>` or `r2d2` if needed. DuckDB connections are not Sync; use `Mutex`.
 - Graph is first-class: rebuild edges for a document on every re-ingest (delete old edges from that doc node, re-extract).

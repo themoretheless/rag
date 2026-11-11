@@ -1,6 +1,6 @@
 # Translation-key references — 2026-10-26
 
-Implemented [captured key syntax, queries and immutable history](../../TRANSLATION_KEY_REFERENCES.md).
+Implemented [captured key syntax, queries and immutable history](../../code-intelligence/TRANSLATION_KEY_REFERENCES.md).
 Full RAGRAF parity and translator/template runtime binding remain unproven.
 
 **1,460 workspace tests passed, 0 failed, 1 ignored**. Clippy with `-D warnings`,

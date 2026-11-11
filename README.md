@@ -54,9 +54,9 @@ With `RAG_TOOLS=full`, `schema` derives tables/columns from ingested migration D
 `table_usage` finds static SQL reads and writes, and `write_check` validates a
 column/row plan without executing SQL. Source sync refreshes SQL facts alongside
 the code index. Incomplete schemas return an indeterminate verdict. See
-[`docs/SQL_CODE_ANALYSIS.md`](docs/SQL_CODE_ANALYSIS.md) for supported SQL and limits.
+[`docs/code-intelligence/SQL_CODE_ANALYSIS.md`](docs/code-intelligence/SQL_CODE_ANALYSIS.md) for supported SQL and limits.
 External PostgreSQL/MySQL snapshots, bounded samples and code/schema comparisons are
-configured separately: [`docs/EXTERNAL_DATABASES.md`](docs/EXTERNAL_DATABASES.md).
+configured separately: [`docs/code-intelligence/EXTERNAL_DATABASES.md`](docs/code-intelligence/EXTERNAL_DATABASES.md).
 
 ## Exact code search and index history
 
@@ -65,7 +65,7 @@ unions. `duplicates` groups exact/near copies with static usage evidence.
 Index publications now retain immutable revisions and deduplicated source blobs;
 `index_revisions`, `diff`, `catalog`, `freshness`, `live_read`, `drift_report` and
 `drift_ack` expose their history and source differences. See
-[`docs/CODE_HISTORY.md`](docs/CODE_HISTORY.md) for consistency and limits.
+[`docs/code-intelligence/CODE_HISTORY.md`](docs/code-intelligence/CODE_HISTORY.md) for consistency and limits.
 
 ## Features (implemented)
 
@@ -149,8 +149,8 @@ parity) stay in [Limitations](#limitations-honest) and the parity doc.
 | `RAG_CHUNK_OVERLAP` | `120` | Overlap chars (must be &lt; chunk size) |
 | `RAG_CODE_CHUNKING` | `structural` | `structural` splits Rust/Python/JS/TS by top-level items with symbol metadata; `window` restores the legacy splitter |
 | `RAG_DEFAULT_TOP_K` | `5` | Default search limit |
-| `RAG_STORAGE_BACKEND` | `duckdb` | Full `rag-mcp` runtime accepts DuckDB; the backend-neutral library document factory also supports opt-in `markdown` vault CRUD |
-| `RAG_VAULT_PATH` | — | Explicit vault root required by the Markdown storage adapter; never inferred from `RAG_DB_PATH` |
+| `RAG_STORAGE_BACKEND` | `duckdb` | Only `duckdb` is implemented; `markdown`, `sqlite`, `postgres` and `memory` are recognized and refused at startup |
+| `RAG_VAULT_PATH` | — | Parsed but unused since the Markdown storage adapter was removed; `export_vault` takes its own `path` |
 | `RAG_STARTUP_WARN_MS` | `30000` | Warn when a measured startup phase exceeds this duration |
 | `RAG_PID_FILE` | `<RAG_DB_PATH with .pid>` | Optional PID metadata path used to flag stale crash metadata |
 | `RAG_DEFAULT_SEARCH_MODE` | `vec` | `vec` \| `lex` \| `hybrid` |
@@ -734,7 +734,7 @@ Tool tables above match the current MCP surface (see also Features and MemPalace
 - DuckDB is the only full application backend. The opt-in Markdown adapter implements document CRUD, frontmatter, sidecar rebuild and watching, but not search/graph/wiki/transaction parity; SQLite/Postgres/Memory still fail explicitly at startup
 - `reconnect` is an intentional no-op success on single-process DuckDB (no Chroma-style client cache)
 
-Architecture north star: [`docs/ARCHITECTURE_VISION.md`](docs/ARCHITECTURE_VISION.md), principles [`docs/PRODUCT_PRINCIPLES.md`](docs/PRODUCT_PRINCIPLES.md), map [`docs/SYSTEM_MAP.md`](docs/SYSTEM_MAP.md).
+Architecture north star: [`docs/ARCHITECTURE_VISION.md`](docs/ARCHITECTURE_VISION.md), principles [`docs/PRODUCT_PRINCIPLES.md`](docs/PRODUCT_PRINCIPLES.md), map [`docs/SYSTEM_MAP.md`](docs/SYSTEM_MAP.md). Code architecture (crates, layers, composition): [`docs/refactor/ARCHITECTURE.md`](docs/refactor/ARCHITECTURE.md); behaviour changes of the 2026-11 refactor, including the schema v26 upgrade (no downgrade): [`docs/refactor/CHANGES.md`](docs/refactor/CHANGES.md).
 
 Current release gate: [`docs/ROADMAP.md`](docs/ROADMAP.md). Historical contract
 and research: [`SPEC.md`](SPEC.md), [`FEATURES.md`](FEATURES.md),
@@ -819,8 +819,8 @@ re-exporting JSON, not opening a second live handle.
 
 MIT
 
-Static CSS class navigation and permission-decision traces: [CSS_POLICY_ANALYSIS.md](docs/CSS_POLICY_ANALYSIS.md) (`class_usage`, `policy_trace`; `RAG_TOOLS=full`).
+Static CSS class navigation and permission-decision traces: [CSS_POLICY_ANALYSIS.md](docs/code-intelligence/CSS_POLICY_ANALYSIS.md) (`class_usage`, `policy_trace`; `RAG_TOOLS=full`).
 
-Task-scoped analysis notes and measured index usage: [ANALYSIS_TASKS.md](docs/ANALYSIS_TASKS.md) (`task_set`, `note`, `notes`, `task_stats`; `RAG_TOOLS=full`).
+Task-scoped analysis notes and measured index usage: [ANALYSIS_TASKS.md](docs/code-intelligence/ANALYSIS_TASKS.md) (`task_set`, `note`, `notes`, `task_stats`; `RAG_TOOLS=full`).
 
-Opt-in index-usage gate and labelled confidence-threshold reports: [GATE_CALIBRATION.md](docs/GATE_CALIBRATION.md) (`gate`, `rag_gate`, `calibrate`, `calibration_reports`).
+Opt-in index-usage gate and labelled confidence-threshold reports: [GATE_CALIBRATION.md](docs/code-intelligence/GATE_CALIBRATION.md) (`gate`, `rag_gate`, `calibrate`, `calibration_reports`).

@@ -1,7 +1,7 @@
 # PHP parameter contracts — 2026-10-26
 
 This milestone extends the existing raw AST-adjacent docblocks with bounded,
-source-backed stated parameter contracts. [Contract](../../PHP_PARAMETER_CONTRACTS.md).
+source-backed stated parameter contracts. [Contract](../../code-intelligence/PHP_PARAMETER_CONTRACTS.md).
 Pinned RAGRAF source: 075caf86dc2f6274b9c48487e521915bcdfeaf2c.
 Its pure `_parse_array_shapes` function is extracted via Python AST without
 importing or starting the reference application. The simple required/optional

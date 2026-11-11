@@ -47,7 +47,7 @@ pub async fn consolidate(
         agent,
     } = request;
     if document_ids.is_empty() {
-        return Err(AppError::config(
+        return Err(AppError::invalid(
             "consolidate requires at least one document id or uri",
         ));
     }
@@ -74,7 +74,7 @@ pub async fn consolidate(
         }
     }
     if resolved.is_empty() {
-        return Err(AppError::config(
+        return Err(AppError::invalid(
             "consolidate: no valid document ids/uris after filtering empties",
         ));
     }
@@ -132,36 +132,34 @@ pub async fn consolidate(
     let source_count = resolved.len();
 
     if !apply {
-        if let Err(error) = crate::util::blocking_section(|| {
-            store.append_ops_log(&OpsLogEntry {
-                id: Uuid::new_v4().to_string(),
-                seq: 0,
-                ts: Utc::now(),
-                op: "consolidate".into(),
-                prefix: Some("MAINT".into()),
-                message: format!(
-                    "consolidate dry_run proposed wiki://{} from {} source(s)",
-                    proposed.slug, source_count
-                ),
-                entity_id: None,
-                entity_kind: Some(LAYER_WIKI.into()),
-                payload_json: serde_json::json!({
-                    "apply": false,
-                    "dry_run": true,
-                    "source_ids": &source_ids,
-                    "source_uris": &source_uris,
-                    "slug": &proposed.slug,
-                    "title": &proposed.title,
-                    "kind": &proposed.kind,
-                    "capped": capped,
-                    "max_docs": max_docs,
-                })
-                .to_string(),
-                agent_name: agent.map(|s| s.to_string()),
-            })
-        }) {
-            tracing::warn!(%error, "failed to append consolidate dry-run ops_log entry");
-        }
+        crate::util::blocking_section(|| {
+            store.ops_log().record(
+                &OpsLogEntry::new(
+                    "consolidate",
+                    "MAINT",
+                    format!(
+                        "consolidate dry_run proposed wiki://{} from {} source(s)",
+                        proposed.slug, source_count
+                    ),
+                )
+                .entity(None, LAYER_WIKI)
+                .payload(
+                    serde_json::json!({
+                        "apply": false,
+                        "dry_run": true,
+                        "source_ids": &source_ids,
+                        "source_uris": &source_uris,
+                        "slug": &proposed.slug,
+                        "title": &proposed.title,
+                        "kind": &proposed.kind,
+                        "capped": capped,
+                        "max_docs": max_docs,
+                    })
+                    .to_string(),
+                )
+                .agent(agent.map(|s| s.to_string())),
+            )
+        });
 
         return Ok(ConsolidateResult {
             source_ids,
@@ -191,37 +189,35 @@ pub async fn consolidate(
     )
     .await?;
 
-    if let Err(error) = crate::util::blocking_section(|| {
-        store.append_ops_log(&OpsLogEntry {
-            id: Uuid::new_v4().to_string(),
-            seq: 0,
-            ts: Utc::now(),
-            op: "consolidate".into(),
-            prefix: Some("MAINT".into()),
-            message: format!(
-                "consolidated {} source(s) into wiki://{}",
-                source_count, written.slug
-            ),
-            entity_id: Some(written.document_id.clone()),
-            entity_kind: Some(LAYER_WIKI.into()),
-            payload_json: serde_json::json!({
-                "apply": true,
-                "dry_run": false,
-                "source_ids": &source_ids,
-                "source_uris": &source_uris,
-                "slug": &written.slug,
-                "document_id": &written.document_id,
-                "node_id": &written.node_id,
-                "edge_count": written.edge_count,
-                "capped": capped,
-                "max_docs": max_docs,
-            })
-            .to_string(),
-            agent_name: agent.map(|s| s.to_string()),
-        })
-    }) {
-        tracing::warn!(%error, "failed to append consolidate ops_log entry");
-    }
+    crate::util::blocking_section(|| {
+        store.ops_log().record(
+            &OpsLogEntry::new(
+                "consolidate",
+                "MAINT",
+                format!(
+                    "consolidated {} source(s) into wiki://{}",
+                    source_count, written.slug
+                ),
+            )
+            .entity(Some(written.document_id.clone()), LAYER_WIKI)
+            .payload(
+                serde_json::json!({
+                    "apply": true,
+                    "dry_run": false,
+                    "source_ids": &source_ids,
+                    "source_uris": &source_uris,
+                    "slug": &written.slug,
+                    "document_id": &written.document_id,
+                    "node_id": &written.node_id,
+                    "edge_count": written.edge_count,
+                    "capped": capped,
+                    "max_docs": max_docs,
+                })
+                .to_string(),
+            )
+            .agent(agent.map(|s| s.to_string())),
+        )
+    });
 
     Ok(ConsolidateResult {
         source_ids,
@@ -249,8 +245,8 @@ pub async fn apply_consolidate_proposal(
     agent: Option<&str>,
 ) -> Result<WikiWriteResult> {
     let uri = format!("wiki://{}", slugify(&proposal.slug));
-    let expected_revision =
-        crate::util::blocking_section(|| store.find_by_uri(&uri))?.map(|page| page.revision);
+    let expected_revision = crate::util::blocking_section(|| store.documents().find_by_uri(&uri))?
+        .map(|page| page.revision);
     apply_consolidate_proposal_at_revision(
         store,
         embedder,
@@ -331,11 +327,13 @@ pub(super) async fn apply_consolidate_proposal_at_revision(
 
     // Link each source document → consolidated wiki (related), when nodes exist.
     crate::util::blocking_section(|| {
-        if let Ok(Some(wiki_node)) = store.find_node_by_document_id(&wr.document_id) {
+        if let Ok(Some(wiki_node)) = store.graph().find_node_by_document_id(&wr.document_id) {
             for src in sources {
-                if let Ok(Some(src_node)) = store.find_node_by_document_id(&src.id) {
+                if let Ok(Some(src_node)) = store.graph().find_node_by_document_id(&src.id) {
                     if let Err(error) =
-                        store.link_nodes(&src_node.id, &wiki_node.id, "related", 1.0)
+                        store
+                            .graph()
+                            .link_nodes(&src_node.id, &wiki_node.id, "related", 1.0)
                     {
                         tracing::warn!(%error, "failed to link consolidated wiki node");
                     }

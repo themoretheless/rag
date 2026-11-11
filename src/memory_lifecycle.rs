@@ -3,7 +3,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use uuid::Uuid;
 
 use crate::db::Store;
 use crate::error::{AppError, Result};
@@ -47,7 +46,7 @@ pub fn list_candidates(
     kind: Option<&str>,
     limit: usize,
 ) -> Result<Vec<LifecycleCandidate>> {
-    let docs = store.list_documents_filtered(&DocumentFilter {
+    let docs = store.documents().list_documents_filtered(&DocumentFilter {
         status: Some(status.unwrap_or(STATUS_ACTIVE).to_string()),
         layer: layer.map(str::to_string),
         kind: kind.map(str::to_string),
@@ -61,9 +60,9 @@ pub fn list_candidates(
             id: doc.id,
             uri: doc.uri,
             title: doc.title,
-            layer: doc.layer,
+            layer: doc.layer.to_string(),
             kind: doc.kind.to_string(),
-            status: doc.status,
+            status: doc.status.to_string(),
             updated_at: doc.updated_at,
         })
         .collect())
@@ -79,9 +78,10 @@ pub fn consolidate_selected(
 ) -> Result<LifecycleMutationResult> {
     let output_id = output_document_id.trim();
     if output_id.is_empty() {
-        return Err(AppError::config("output_document_id must be non-empty"));
+        return Err(AppError::invalid("output_document_id must be non-empty"));
     }
     let output = store
+        .documents()
         .get_document(output_id)?
         .ok_or_else(|| AppError::not_found(format!("output document not found: {output_id}")))?;
     let (sources, missing_ids) = resolve_unique(store, document_ids, Some(output_id))?;
@@ -95,7 +95,7 @@ pub fn consolidate_selected(
     merge_string_array(lifecycle, "source_uris", &source_uris);
     lifecycle.insert("operation".into(), Value::String("consolidate".into()));
     if output_meta != original_output_meta {
-        store.update_document_meta(
+        store.documents().update_document_meta(
             output_id,
             &DocumentMetaUpdate {
                 metadata_json: Some(Value::Object(output_meta).to_string()),
@@ -124,7 +124,7 @@ pub fn consolidate_selected(
             "consolidated_at".into(),
             Value::String(Utc::now().to_rfc3339()),
         );
-        store.update_document_meta(
+        store.documents().update_document_meta(
             &source.id,
             &DocumentMetaUpdate {
                 status: Some(STATUS_CONSOLIDATED.into()),
@@ -161,7 +161,7 @@ pub fn archive_selected(
             skipped_ids.push(document.id);
             continue;
         }
-        store.update_document_meta(
+        store.documents().update_document_meta(
             &document.id,
             &DocumentMetaUpdate {
                 status: Some(STATUS_ARCHIVED.into()),
@@ -195,7 +195,7 @@ fn resolve_unique(
         if id.is_empty() || !seen.insert(id.to_string()) || exclude == Some(id) {
             continue;
         }
-        match store.get_document(id)? {
+        match store.documents().get_document(id)? {
             Some(doc) => documents.push(doc),
             None => missing.push(id.to_string()),
         }
@@ -247,22 +247,20 @@ fn log_mutation(
     result: &LifecycleMutationResult,
     agent: Option<&str>,
 ) -> Result<()> {
-    store.append_ops_log(&OpsLogEntry {
-        id: Uuid::new_v4().to_string(),
-        seq: 0,
-        ts: Utc::now(),
-        op: format!("memory_lifecycle_{}", result.operation),
-        prefix: Some("MEMORY".into()),
-        message: format!(
-            "memory lifecycle {} changed {} item(s)",
-            result.operation,
-            result.changed_ids.len()
-        ),
-        entity_id: result.output_document_id.clone(),
-        entity_kind: Some("memory_lifecycle".into()),
-        payload_json: serde_json::to_string(result)?,
-        agent_name: agent.map(str::to_string),
-    })?;
+    store.ops_log().append(
+        &OpsLogEntry::new(
+            format!("memory_lifecycle_{}", result.operation),
+            "MEMORY",
+            format!(
+                "memory lifecycle {} changed {} item(s)",
+                result.operation,
+                result.changed_ids.len()
+            ),
+        )
+        .entity(result.output_document_id.clone(), "memory_lifecycle")
+        .payload(serde_json::to_string(result)?)
+        .agent(agent.map(str::to_string)),
+    )?;
     Ok(())
 }
 

@@ -1,7 +1,7 @@
 //! Explicitly saved, human-labelled search questions; never automatic query logging.
 use super::{
     error::{api_err, api_ok},
-    retrieval::{search_http, SearchBody},
+    retrieval::SearchBody,
     HttpState,
 };
 use crate::{
@@ -11,7 +11,7 @@ use crate::{
 };
 use axum::{
     extract::{Query, State},
-    response::{IntoResponse, Response},
+    response::Response,
     routing::{get, post},
     Json, Router,
 };
@@ -97,6 +97,7 @@ fn capture(store: &Store, body: Capture) -> Result<Feedback> {
     let mut expected = Vec::new();
     for key in body.expected {
         let doc = store
+            .documents()
             .find_by_id_or_uri(&key, &key)?
             .ok_or_else(|| AppError::not_found(format!("expected source not found: {key}")))?;
         if !expected.iter().any(|e: &Expected| e.document_id == doc.id) {
@@ -151,7 +152,9 @@ struct Run {
 }
 fn stale(store: &Store, item: &Feedback) -> Result<bool> {
     for e in &item.expected {
-        let doc = store.find_by_id_or_uri(&e.document_id, &e.uri)?;
+        let doc = store
+            .documents()
+            .find_by_id_or_uri(&e.document_id, &e.uri)?;
         if doc.map(|d| content_hash(&d.content)) != Some(e.hash.clone()) {
             return Ok(true);
         }
@@ -175,21 +178,21 @@ fn score_hits(item: &Feedback, hits: &[Value]) -> (Option<f64>, Option<f64>) {
     if item.no_answer {
         return (None, None);
     }
-    let found = item
+    let expected: Vec<(&str, &str)> = item
         .expected
         .iter()
-        .filter(|e| {
-            hits.iter()
-                .any(|h| h["document_id"] == e.document_id || h["document_uri"] == e.uri)
+        .map(|e| (e.document_id.as_str(), e.uri.as_str()))
+        .collect();
+    let ranked: Vec<(&str, &str)> = hits
+        .iter()
+        .map(|h| {
+            (
+                h["document_id"].as_str().unwrap_or_default(),
+                h["document_uri"].as_str().unwrap_or_default(),
+            )
         })
-        .count();
-    let rank = hits.iter().position(|h| {
-        item.expected
-            .iter()
-            .any(|e| h["document_id"] == e.document_id || h["document_uri"] == e.uri)
-    });
-    let recall = found as f64 / item.expected.len().max(1) as f64;
-    let mrr = rank.map(|r| 1.0 / (r + 1) as f64).unwrap_or(0.0);
+        .collect();
+    let (recall, mrr) = crate::eval::recall_and_mrr(&expected, &ranked);
     (Some(recall), Some(mrr))
 }
 fn merge_search(base: &Value, overlay: &Value) -> Result<SearchBody> {
@@ -205,19 +208,12 @@ fn merge_search(base: &Value, overlay: &Value) -> Result<SearchBody> {
     serde_json::from_value(Value::Object(merged)).map_err(|e| AppError::invalid(e.to_string()))
 }
 async fn search_with_body(st: HttpState, body: SearchBody) -> Result<(Value, Vec<Value>)> {
-    let response = search_http(State(st), Json(body)).await.into_response();
-    if !response.status().is_success() {
-        return Err(super::error::search_response_error(response).await);
-    }
-    let bytes = axum::body::to_bytes(response.into_body(), 16 * 1024 * 1024)
-        .await
-        .map_err(|e| AppError::invalid(e.to_string()))?;
-    let result: Value = serde_json::from_slice(&bytes)?;
-    let hits = result["items"]
-        .as_array()
-        .cloned()
-        .ok_or_else(|| AppError::invalid("missing search items"))?;
-    Ok((result, hits))
+    let (mode, hits) = super::retrieval::run_search(&st, &body).await?;
+    let hits = hits
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok((json!({ "mode": mode }), hits))
 }
 async fn list_runs(State(st): State<HttpState>, Query(q): Query<Page>) -> Response {
     let result = super::run_blocking("list eval runs", move || {
@@ -258,9 +254,12 @@ async fn compare(State(st): State<HttpState>, Json(body): Json<CompareBody>) -> 
     }
 }
 async fn compare_runs(st: HttpState, body: CompareBody) -> Result<Value> {
-    let questions = crate::util::blocking_section(|| {
-        load_feedback_questions(&st.store, body.question_ids.as_deref())
-    })?;
+    let question_ids = body.question_ids.clone();
+    let questions = st
+        .blocking("feedback questions", move |store| {
+            load_feedback_questions(store, question_ids.as_deref())
+        })
+        .await?;
     let mut results = Vec::new();
     let mut regressions = Vec::new();
     const EPSILON: f64 = 1e-9;
@@ -315,7 +314,11 @@ async fn compare_runs(st: HttpState, body: CompareBody) -> Result<Value> {
         "results": results,
         "regressions": regressions,
     });
-    crate::util::blocking_section(|| persist_eval_run(&st.store, &report))?;
+    let persisted = report.clone();
+    st.blocking("persist eval run", move |store| {
+        persist_eval_run(store, &persisted)
+    })
+    .await?;
     Ok(report)
 }
 async fn run(State(st): State<HttpState>, Json(body): Json<Run>) -> Response {
@@ -331,33 +334,32 @@ async fn run_one(
     answer_text: Option<String>,
     use_llm: bool,
 ) -> Result<Value> {
-    let payload = crate::util::blocking_section(|| {
-        super::payload_kv::get_payload_raw(
-            &st.store,
-            super::payload_kv::PayloadTable::SearchFeedback,
-            &id,
-        )
-    })?;
+    let key = id.clone();
+    let payload = st
+        .blocking("feedback question", move |store| {
+            super::payload_kv::get_payload_raw(
+                store,
+                super::payload_kv::PayloadTable::SearchFeedback,
+                &key,
+            )
+        })
+        .await?;
     let item: Feedback =
         serde_json::from_str(&payload.ok_or_else(|| AppError::not_found("question not found"))?)?;
-    if crate::util::blocking_section(|| stale(&st.store, &item))? {
+    if is_stale(&st, &item).await? {
         let result = json!({
             "id": id,
             "status": "source_changed",
             "hint": "Recheck labels against current sources"
         });
-        crate::util::blocking_section(|| {
-            persist_feedback_run(&st.store, &id, &item.search, &result)
-        })?;
+        save_feedback_run(&st, &id, &item.search, &result).await?;
         return Ok(result);
     }
     let (search_result, hits) =
         search_with_body(st.clone(), serde_json::from_value(item.search.clone())?).await?;
-    if crate::util::blocking_section(|| stale(&st.store, &item))? {
+    if is_stale(&st, &item).await? {
         let result = json!({"id":id,"status":"source_changed"});
-        crate::util::blocking_section(|| {
-            persist_feedback_run(&st.store, &id, &item.search, &result)
-        })?;
+        save_feedback_run(&st, &id, &item.search, &result).await?;
         return Ok(result);
     }
     let (recall, mrr) = score_hits(&item, &hits);
@@ -392,6 +394,11 @@ async fn run_one(
         }
     }
     let citation_judge = answer_judge.citation.clone();
+    let manifest = st
+        .blocking("embedding manifest", |store| {
+            store.embedding_manifest().get_embedding_manifest()
+        })
+        .await?;
     let result = json!({
         "id": id,
         "status": "evaluated",
@@ -408,13 +415,34 @@ async fn run_one(
         "empty_result_for_no_answer": item.no_answer.then_some(hits.is_empty()),
         "result_count": hits.len(),
         "timings": search_result["timings"],
-        "embedding_manifest": crate::util::blocking_section(|| st.store.get_embedding_manifest())?,
+        "embedding_manifest": manifest,
         "scope": "current corpus; only supplied positive labels; empty retrieval is not answer \
         correctness; citation_judge is deterministic expected-doc coverage; answer_judge is \
         heuristic unless use_llm and RAG_LLM_ENABLED"
     });
-    crate::util::blocking_section(|| persist_feedback_run(&st.store, &id, &item.search, &result))?;
+    save_feedback_run(&st, &id, &item.search, &result).await?;
     Ok(result)
+}
+
+/// `stale` on the blocking pool.
+async fn is_stale(st: &HttpState, item: &Feedback) -> Result<bool> {
+    let item = item.clone();
+    st.blocking("feedback stale check", move |store| stale(store, &item))
+        .await
+}
+
+/// `persist_feedback_run` on the blocking pool.
+async fn save_feedback_run(
+    st: &HttpState,
+    id: &str,
+    settings: &Value,
+    result: &Value,
+) -> Result<()> {
+    let (id, settings, result) = (id.to_string(), settings.clone(), result.clone());
+    st.blocking("persist feedback run", move |store| {
+        persist_feedback_run(store, &id, &settings, &result)
+    })
+    .await
 }
 fn persist_feedback_run(
     store: &Store,
@@ -446,8 +474,11 @@ mod tests {
             embedding_dims: 16,
             ..Config::for_tests()
         };
-        let store = Arc::new(Store::open(&config.db_path).unwrap());
-        let st = HttpState::new(store, false, config, Arc::new(MockEmbedder::new(16)));
+        let store = Arc::new(crate::testkit::open_test_store(&config.db_path).unwrap());
+        let st = HttpState::from_context(
+            crate::context::AppContext::with_store(store, Arc::new(MockEmbedder::new(16)), config),
+            false,
+        );
         let p = crate::wiki::write_wiki_page(
             &st.store,
             &st.embedder,
@@ -484,9 +515,9 @@ mod tests {
         let report = run_one(st.clone(), id.clone(), None, false).await.unwrap();
         assert_eq!(report["recall"], 1.0);
         assert_eq!(report["mrr"], 1.0);
-        let mut source = st.store.get_document(&doc).unwrap().unwrap();
+        let mut source = st.store.documents().get_document(&doc).unwrap().unwrap();
         source.content = "changed".into();
-        st.store.upsert_document(&source).unwrap();
+        st.store.documents().upsert_document(&source).unwrap();
         assert_eq!(
             run_one(st, id, None, false).await.unwrap()["status"],
             "source_changed"
@@ -524,7 +555,7 @@ mod tests {
         .unwrap();
         let path = st.config.db_path.clone();
         drop(st);
-        let store = Store::open(&path).unwrap();
+        let store = crate::testkit::open_test_store(&path).unwrap();
         let count: i64 = store
             .lock()
             .unwrap()

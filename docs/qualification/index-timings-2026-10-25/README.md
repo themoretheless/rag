@@ -1,7 +1,7 @@
 # Native indexing timing subset — 2026-10-25
 
 Previously `index_status` always reported index-stage timings as unavailable.
-The new [contract](../../INDEX_TIMINGS.md) records real successful native phase
+The new [contract](../../code-intelligence/INDEX_TIMINGS.md) records real successful native phase
 measurements, scoped to the shared corpus and linked atomically to the committed
 cache/revision. Publication and subsequent no-change run identities are separate.
 Schema migration is 24→25; syntax index format stays 24.

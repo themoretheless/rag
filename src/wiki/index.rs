@@ -4,10 +4,10 @@ use super::*;
 
 pub(super) fn resolve_doc(store: &Store, id_or_uri: &str) -> Result<Document> {
     let s = id_or_uri.trim();
-    if let Some(d) = store.get_document(s)? {
+    if let Some(d) = store.documents().get_document(s)? {
         return Ok(d);
     }
-    if let Some(d) = store.find_by_uri(s)? {
+    if let Some(d) = store.documents().find_by_uri(s)? {
         return Ok(d);
     }
     Err(AppError::not_found(format!(

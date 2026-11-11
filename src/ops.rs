@@ -378,7 +378,11 @@ fn inventory_at(settings: &AutoBackupSettings) -> AutoBackupInventory {
 
 /// Spawn the optional automatic backup loop. Disabled unless
 /// `RAG_AUTO_BACKUP_DIR` is configured.
-pub fn spawn_auto_backup(store: Store, config: &Config) {
+pub fn spawn_auto_backup(
+    tasks: &crate::background::BackgroundTasks,
+    store: Store,
+    config: &Config,
+) {
     let Some(settings) = auto_backup_settings(config) else {
         return;
     };
@@ -395,7 +399,8 @@ pub fn spawn_auto_backup(store: Store, config: &Config) {
             .map(|completed| completed + chrono::Duration::from_std(interval).unwrap_or_default())
             .or_else(|| Some(Utc::now()));
     }
-    tokio::spawn(async move {
+    let loop_tasks = tasks.clone();
+    tasks.spawn("auto-backup", async move {
         loop {
             RUNTIME
                 .write()
@@ -444,7 +449,9 @@ pub fn spawn_auto_backup(store: Store, config: &Config) {
                             .unwrap_or_default(),
                 );
             }
-            tokio::time::sleep(interval.min(AUTO_BACKUP_MAX_SLEEP)).await;
+            if !loop_tasks.pause(interval.min(AUTO_BACKUP_MAX_SLEEP)).await {
+                break;
+            }
         }
     });
 }
@@ -477,6 +484,7 @@ pub fn run_auto_backup_if_due(
     // A CHECKPOINT snapshot is about the live file, which still carries its free
     // pages, so this estimate is deliberately larger than the copy it produces.
     let needed_bytes = store
+        .maintenance()
         .db_file_size_bytes()
         .unwrap_or_default()
         .saturating_add(min_free_bytes);
@@ -504,7 +512,9 @@ pub fn run_auto_backup_if_due(
         ));
         suffix += 1;
     }
-    store.backup_database(&destination, false, false)?;
+    store
+        .recovery()
+        .backup_database(&destination, false, false)?;
 
     existing = list_backups(dir)?;
     for (path, _) in existing.into_iter().skip(keep.max(1)) {
@@ -667,7 +677,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let db = root.path().join("live.duckdb");
         let backups = root.path().join("backups");
-        let store = Store::open(&db).unwrap();
+        let store = crate::testkit::open_test_store(&db).unwrap();
 
         let first = run_auto_backup_if_due(&store, &backups, Duration::from_secs(60), 2, 0)
             .unwrap()
@@ -690,7 +700,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let db = root.path().join("live.duckdb");
         let backups = root.path().join("backups");
-        let store = Store::open(&db).unwrap();
+        let store = crate::testkit::open_test_store(&db).unwrap();
 
         // Larger than any real volume: the simulated almost-full-disk case.
         let error =

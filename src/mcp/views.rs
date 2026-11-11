@@ -120,7 +120,7 @@ impl From<DocumentWithChunks> for SourceDetail {
             room: document.room,
             source_file: document.source_file,
             source_download_path,
-            layer: document.layer,
+            layer: document.layer.to_string(),
             kind: document.kind.to_string(),
             created_at: document.created_at.to_rfc3339(),
             updated_at: document.updated_at.to_rfc3339(),

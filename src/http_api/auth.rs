@@ -518,7 +518,7 @@ mod tests {
 
     #[tokio::test]
     async fn real_mcp_dispatch_checks_roles_before_schema_seed_or_wiki_write() {
-        use crate::{Config, Store};
+        use crate::Config;
         use std::sync::Arc;
         let root = tempfile::tempdir().unwrap();
         let config = Config {
@@ -526,19 +526,15 @@ mod tests {
             embedding_dims: 32,
             ..Config::for_tests()
         };
-        let store = Store::open(&config.db_path).unwrap();
+        let store = crate::testkit::open_test_store(&config.db_path).unwrap();
         let embedder = crate::embeddings::build_provider(&config).unwrap();
-        let mcp = super::super::mcp_http_service(
-            store.clone(),
-            embedder.clone(),
-            config.clone(),
+        let mcp = crate::mcp::mcp_http_service_for(
+            crate::context::AppContext::new(store.clone(), embedder.clone(), config.clone()),
             tokio_util::sync::CancellationToken::new(),
         );
-        let api = super::super::api_router(super::super::HttpState::new(
-            Arc::new(store.clone()),
+        let api = super::super::api_router(super::super::HttpState::from_context(
+            crate::context::AppContext::with_store(Arc::new(store.clone()), embedder, config),
             true,
-            config,
-            embedder,
         ));
         let app = super::super::authenticated_gateway_layers(
             api.nest_service("/mcp", mcp),
@@ -584,13 +580,17 @@ mod tests {
             let body = String::from_utf8_lossy(&bytes);
             assert_eq!(body.contains("FORBIDDEN"), denied, "{body}");
             if denied {
-                assert_eq!(store.stats().unwrap().0, 0);
+                assert_eq!(store.maintenance().stats().unwrap().0, 0);
             }
             if method == "tools/list" {
                 assert!(!body.contains("write_wiki_page"));
                 assert!(body.contains("search"));
             }
         }
-        assert!(store.find_by_uri("wiki://auth-page").unwrap().is_some());
+        assert!(store
+            .documents()
+            .find_by_uri("wiki://auth-page")
+            .unwrap()
+            .is_some());
     }
 }

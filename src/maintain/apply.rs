@@ -8,10 +8,8 @@
 
 use std::sync::Arc;
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use uuid::Uuid;
 
 use super::plan::{validate_action, MaintenanceAction, MaintenancePlanItem};
 use super::refresh::{
@@ -20,10 +18,10 @@ use super::refresh::{
     REEMBED_ALL_INCOMPLETE_CODE,
 };
 use crate::config::Config;
+use crate::db::graph::resolve::rebuild_document_graph;
 use crate::db::Store;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
-use crate::graph::rebuild_document_graph;
 use crate::models::{DocumentMetaUpdate, OpsLogEntry};
 use crate::util::blocking_section;
 use crate::wiki::{self, FileAnswerCitation};
@@ -121,7 +119,9 @@ pub async fn apply_maintenance_plan(
     let chunks_generation_before = if dry_run {
         None
     } else {
-        Some(blocking_section(|| store.chunks_generation())?)
+        Some(blocking_section(|| {
+            store.maintenance().chunks_generation()
+        })?)
     };
 
     for (index, raw) in actions.into_iter().enumerate() {
@@ -196,7 +196,7 @@ pub async fn apply_maintenance_plan(
     }
 
     if let Some(chunks_generation_before) = chunks_generation_before {
-        let chunks_generation_after = blocking_section(|| store.chunks_generation())?;
+        let chunks_generation_after = blocking_section(|| store.maintenance().chunks_generation())?;
         if chunks_generation_after != chunks_generation_before {
             // A plan may combine reindex with later delete/re-embed/write
             // actions. Reconcile once at the plan boundary, independent of
@@ -210,7 +210,7 @@ pub async fn apply_maintenance_plan(
                 // marker for the next lexical read plus the canonical
                 // `fts_finalization_failed` audit row.
                 let failure = blocking_section(|| {
-                    store.record_fts_finalization_failure(
+                    store.corpus_lane().record_fts_finalization_failure(
                         "apply_maintenance_plan",
                         true,
                         &error_message,
@@ -302,138 +302,26 @@ struct MaintenanceExecutionContext<'a> {
     remaining_docs: usize,
 }
 
+/// Run one validated item through its [`steps::MaintenanceStep`].
 async fn execute_one(
     context: &MaintenanceExecutionContext<'_>,
     action: &MaintenancePlanItem,
     index: usize,
 ) -> StepResult {
-    let MaintenanceExecutionContext {
-        store,
-        embedder,
-        config,
-        dry_run,
-        ..
-    } = context;
-    let dry_run = *dry_run;
-    let name = action.action.as_str();
-    let target = action.target_id.as_deref();
-    let params = &action.params;
-
-    let result = match action.action {
-        MaintenanceAction::Noop => Ok(StepResult {
-            outcome: ok_outcome(
-                index,
-                name,
-                target,
-                dry_run,
-                "noop",
-                Some(json!({"reason": action.reason})),
-            ),
-            docs_delta: 0,
-        }),
-        MaintenanceAction::Refile => {
-            blocking_section(|| apply_refile(store, index, name, target, params, dry_run))
-        }
-        MaintenanceAction::Pin => {
-            blocking_section(|| apply_pin(store, index, name, target, true, dry_run))
-        }
-        MaintenanceAction::Unpin => {
-            blocking_section(|| apply_pin(store, index, name, target, false, dry_run))
-        }
-        MaintenanceAction::SetBoost => {
-            blocking_section(|| apply_set_boost(store, index, name, target, params, dry_run))
-        }
-        MaintenanceAction::SetTags => {
-            blocking_section(|| apply_set_tags(store, index, name, target, params, dry_run))
-        }
-        MaintenanceAction::Archive => {
-            blocking_section(|| apply_status(store, index, name, target, "archived", dry_run))
-        }
-        MaintenanceAction::Unarchive => {
-            blocking_section(|| apply_status(store, index, name, target, "active", dry_run))
-        }
-        MaintenanceAction::RebuildIndex => {
-            blocking_section(|| apply_rebuild_index(store, index, name, dry_run))
-        }
-        MaintenanceAction::RebuildGraph => blocking_section(|| {
-            apply_rebuild_graph(store, index, name, params, config, dry_run)
-        }),
-        MaintenanceAction::ReindexFts => {
-            apply_reindex_fts(store, index, name, config, dry_run).await
-        }
-        MaintenanceAction::Reembed => {
-            apply_reembed_one(store, embedder, config, index, name, target, dry_run).await
-        }
-        MaintenanceAction::ReembedAll => {
-            apply_reembed_all(store, embedder, config, index, name, params, dry_run).await
-        }
-        MaintenanceAction::CompileSource => {
-            apply_compile_source(context, index, name, target, params).await
-        }
-        MaintenanceAction::ConsolidatePropose => Ok(StepResult {
-            outcome: skip_outcome(
-                index,
-                name,
-                target,
-                "consolidate_propose is agent/LLM-side; call consolidate MCP tool or pass pre-synthesized title+content via consolidate",
-            ),
-            docs_delta: 0,
-        }),
-        MaintenanceAction::Consolidate => {
-            apply_consolidate(context, index, name, target, params).await
-        }
-        MaintenanceAction::RefreshStaleWiki => {
-            apply_refresh_stale(context, index, name, params).await
-        }
-        MaintenanceAction::FileAnswer => {
-            apply_file_answer(context, index, name, params).await
-        }
-        MaintenanceAction::ResolveStub
-        | MaintenanceAction::LintAndFixLinks
-        | MaintenanceAction::BuildOutline => Ok(StepResult {
-            outcome: skip_outcome(
-                index,
-                name,
-                target,
-                format!("{name} not implemented in apply path yet"),
-            ),
-            docs_delta: 0,
-        }),
-        MaintenanceAction::MergeExactDup => blocking_section(|| {
-            apply_merge_exact_dup(
-                store,
-                index,
-                name,
-                target,
-                params,
-                dry_run,
-                context.remaining_docs,
-            )
-        }),
-        MaintenanceAction::MergeNearDup => Ok(StepResult {
-            outcome: skip_outcome(
-                index,
-                name,
-                target,
-                "merge_near_dup not implemented in apply path; use maintain_compress L2 with confirm",
-            ),
-            docs_delta: 0,
-        }),
-        MaintenanceAction::DropTombstones => blocking_section(|| {
-            apply_drop_tombstones(store, index, name, params, config, dry_run)
-        }),
-        MaintenanceAction::Vacuum | MaintenanceAction::Checkpoint => {
-            blocking_section(|| apply_vacuum(store, index, name, dry_run))
-        }
+    let input = steps::StepInput {
+        index,
+        name: action.action.as_str(),
+        target: action.target_id.as_deref(),
+        reason: action.reason.as_deref(),
     };
-
-    match result {
-        Ok(s) => s,
-        Err(e) => StepResult {
-            outcome: err_outcome(index, name, target, e.to_string()),
-            docs_delta: 0,
-        },
-    }
+    let result = match steps::step_for(action) {
+        Ok(step) => step.run(context, &input).await,
+        Err(e) => Err(e),
+    };
+    result.unwrap_or_else(|e| StepResult {
+        outcome: err_outcome(index, input.name, input.target, e.to_string()),
+        docs_delta: 0,
+    })
 }
 
 // --- helpers: outcomes ---
@@ -500,7 +388,7 @@ fn require_target<'a>(target: Option<&'a str>, action: &str) -> Result<&'a str> 
     target
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| AppError::config(format!("{action} requires target_id")))
+        .ok_or_else(|| AppError::invalid(format!("{action} requires target_id")))
 }
 
 fn is_doc_scoped(action: MaintenanceAction) -> bool {
@@ -518,8 +406,6 @@ fn is_doc_scoped(action: MaintenanceAction) -> bool {
             | MaintenanceAction::Consolidate
             | MaintenanceAction::FileAnswer
             | MaintenanceAction::MergeExactDup
-            | MaintenanceAction::MergeNearDup
-            | MaintenanceAction::ResolveStub
     )
 }
 
@@ -540,104 +426,27 @@ fn log_action(
     );
     let payload = serde_json::to_string(outcome).unwrap_or_else(|_| "{}".into());
     // One autocommit per plan step, called from the async plan loop.
-    match blocking_section(|| {
-        store.append_ops_log(&OpsLogEntry {
-            id: Uuid::new_v4().to_string(),
-            seq: 0,
-            ts: Utc::now(),
-            op,
-            prefix: Some("MAINT".into()),
-            message: format!(
-                "{} [{}] {}",
-                outcome.action,
-                match outcome.outcome {
-                    ActionOutcomeKind::Applied => {
-                        if dry_run {
-                            "dry_run"
-                        } else {
-                            "applied"
-                        }
-                    }
-                    ActionOutcomeKind::Skipped => "skipped",
-                    ActionOutcomeKind::Error => "error",
-                },
-                outcome.message
-            ),
-            entity_id: outcome.target_id.clone(),
-            entity_kind: Some("maintenance_action".into()),
-            payload_json: payload,
-            agent_name: agent.map(|s| s.to_string()),
-        })
-    }) {
-        Ok(e) => Some(e.id),
-        Err(e) => {
-            tracing::warn!(error = %e, "failed to append ops_log for maintenance action");
-            None
-        }
-    }
-}
-
-// --- param helpers ---
-
-fn param_str(params: &serde_json::Value, key: &str) -> Option<String> {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-}
-
-fn param_f64(params: &serde_json::Value, key: &str) -> Option<f64> {
-    params.get(key).and_then(|v| {
-        v.as_f64()
-            .or_else(|| v.as_i64().map(|i| i as f64))
-            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-    })
-}
-
-/// Non-negative integer param (e.g. `max_docs`). Absent → `Ok(None)`;
-/// negative, NaN or infinite values are rejected; fractions truncate.
-fn param_usize(params: &serde_json::Value, key: &str) -> Result<Option<usize>> {
-    match param_f64(params, key) {
-        None => Ok(None),
-        Some(n) if n.is_finite() && n >= 0.0 => Ok(Some(n.min(usize::MAX as f64) as usize)),
-        Some(n) => Err(AppError::config(format!(
-            "maintenance param '{key}' must be a non-negative finite number, got {n}"
-        ))),
-    }
-}
-
-fn param_bool(params: &serde_json::Value, key: &str) -> Option<bool> {
-    params.get(key).and_then(|v| {
-        v.as_bool().or_else(|| match v.as_str() {
-            Some("true") | Some("1") | Some("yes") => Some(true),
-            Some("false") | Some("0") | Some("no") => Some(false),
-            _ => None,
-        })
-    })
-}
-
-fn param_str_list(params: &serde_json::Value, key: &str) -> Vec<String> {
-    let Some(v) = params.get(key) else {
-        return Vec::new();
-    };
-    if let Some(arr) = v.as_array() {
-        return arr
-            .iter()
-            .filter_map(|x| x.as_str().map(str::trim).filter(|s| !s.is_empty()))
-            .map(|s| s.to_string())
-            .collect();
-    }
-    if let Some(s) = v.as_str() {
-        return s
-            .split(|c: char| c == ',' || c.is_whitespace())
-            .map(str::trim)
-            .filter(|t| !t.is_empty())
-            .map(|t| t.to_string())
-            .collect();
-    }
-    Vec::new()
+    let message = format!(
+        "{} [{}] {}",
+        outcome.action,
+        match outcome.outcome {
+            ActionOutcomeKind::Applied => {
+                if dry_run {
+                    "dry_run"
+                } else {
+                    "applied"
+                }
+            }
+            ActionOutcomeKind::Skipped => "skipped",
+            ActionOutcomeKind::Error => "error",
+        },
+        outcome.message
+    );
+    let entry = OpsLogEntry::new(op, "MAINT", message)
+        .entity(outcome.target_id.clone(), "maintenance_action")
+        .payload(payload)
+        .agent(agent.map(|s| s.to_string()));
+    blocking_section(|| store.ops_log().record(&entry)).map(|written| written.id)
 }
 
 // --- action executors ---
@@ -646,8 +455,10 @@ mod dedupe;
 mod index;
 mod llm;
 mod metadata;
+mod params;
+mod steps;
 
-use self::{dedupe::*, index::*, llm::*, metadata::*};
+use self::{dedupe::*, index::*, llm::*, metadata::*, params::*};
 
 #[cfg(test)]
 mod tests;

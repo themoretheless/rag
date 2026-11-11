@@ -91,30 +91,32 @@ pub async fn compile_source(
     crate::util::blocking_section(|| {
         // Link source -> summaries via graph related edges when possible
         if let (Ok(Some(src_node)), true) = (
-            store.find_node_by_document_id(&source.id),
+            store.graph().find_node_by_document_id(&source.id),
             !page_ids.is_empty(),
         ) {
             for pid in &page_ids {
-                if let Ok(Some(dst)) = store.find_node_by_document_id(pid) {
-                    if let Err(error) = store.link_nodes(&src_node.id, &dst.id, "related", 1.0) {
+                if let Ok(Some(dst)) = store.graph().find_node_by_document_id(pid) {
+                    if let Err(error) =
+                        store
+                            .graph()
+                            .link_nodes(&src_node.id, &dst.id, "related", 1.0)
+                    {
                         tracing::warn!(%error, "failed to link wiki graph nodes");
                     }
                 }
             }
         }
 
-        store.append_ops_log(&OpsLogEntry {
-            id: Uuid::new_v4().to_string(),
-            seq: 0,
-            ts: Utc::now(),
-            op: "compile_source".into(),
-            prefix: Some("COMPILE".into()),
-            message: format!("compiled {} into {} wiki pages", source.uri, page_ids.len()),
-            entity_id: Some(source.id.clone()),
-            entity_kind: Some("raw".into()),
-            payload_json: serde_json::json!({ "page_ids": page_ids }).to_string(),
-            agent_name: agent.map(|s| s.to_string()),
-        })
+        store.ops_log().append(
+            &OpsLogEntry::new(
+                "compile_source",
+                "COMPILE",
+                format!("compiled {} into {} wiki pages", source.uri, page_ids.len()),
+            )
+            .entity(Some(source.id.clone()), "raw")
+            .payload(serde_json::json!({ "page_ids": page_ids }).to_string())
+            .agent(agent.map(|s| s.to_string())),
+        )
     })?;
 
     Ok(CompileApplyResult {
@@ -131,6 +133,7 @@ pub async fn compile_source(
 /// needed to detect edits made while generation is in flight.
 pub(super) fn wiki_revision_snapshot(store: &Store) -> Result<HashMap<String, i64>> {
     Ok(store
+        .documents()
         .list_wiki_page_metas()?
         .into_iter()
         .map(|page| (page.uri, page.revision))

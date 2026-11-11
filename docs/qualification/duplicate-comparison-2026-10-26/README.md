@@ -1,6 +1,6 @@
 # Duplicate primary comparisons — 2026-10-26
 
-Implemented [member comparison contract](../../DUPLICATE_PRIMARY_COMPARISON.md)
+Implemented [member comparison contract](../../code-intelligence/DUPLICATE_PRIMARY_COMPARISON.md)
 and retained the previously qualified static SQL-table impact behavior.
 
 **1,424 workspace tests passed, 0 failed, 1 ignored**; Clippy with `-D warnings`,

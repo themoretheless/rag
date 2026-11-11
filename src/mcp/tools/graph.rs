@@ -44,9 +44,10 @@ pub struct ExportGraphSnapshotParams {
 /// Parameters for `get_neighbors`.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct GetNeighborsParams {
-    /// Seed graph node id.
+    /// Seed: node id, document id, node URI or exact label (alias `seed`).
+    #[serde(alias = "seed")]
     pub node_id: String,
-    /// BFS hop depth (default 1, hard cap 5).
+    /// BFS hop depth (default 1, hard cap 3).
     #[serde(default)]
     pub depth: Option<u32>,
     /// Max nodes in the local subgraph (default 100).
@@ -61,6 +62,9 @@ pub struct GetNeighborsParams {
     /// `rel_types` is given. Default false.
     #[serde(default)]
     pub include_tags: Option<bool>,
+    /// Restrict the walk to one project (alias `wing`).
+    #[serde(default, alias = "wing")]
+    pub project: Option<String>,
 }
 
 /// Parameters for `get_backlinks`.

@@ -1,17 +1,13 @@
-//! Backend-neutral storage boundary.
+//! Storage composition: backend selection, store hooks and capability names.
 //!
-//! DuckDB remains the default and only adapter for now.  The deliberately
-//! small document slice lets callers migrate behind [`Storage`] gradually
-//! without changing the existing `db::Store` API.
+//! DuckDB (`db::Store`) is the only backend; other configured names fail at
+//! startup instead of silently pointing at DuckDB.
 
 use crate::config::Config;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{AppError, Document, Store};
-
-pub mod duckdb;
-pub mod markdown;
+use crate::{AppError, Store};
 
 /// Stable identifier used by configuration and diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,34 +73,15 @@ impl StorageCapability {
     }
 }
 
-/// Backend identity and an honest capability declaration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BackendMetadata {
-    pub kind: BackendKind,
-    pub name: &'static str,
-    pub capabilities: &'static [StorageCapability],
-}
-
-impl BackendMetadata {
-    /// Whether this backend implements `capability` natively.
-    pub fn supports(self, capability: StorageCapability) -> bool {
-        self.capabilities.contains(&capability)
-    }
-}
-
-/// Domain-facing storage contract.
-///
-/// This first vertical slice covers document lifecycle operations. Search,
-/// graph, wiki, and maintenance APIs continue to use the compatible DuckDB
-/// surface until they are migrated in later commits.
-pub trait Storage: Send + Sync {
-    fn metadata(&self) -> BackendMetadata;
-
-    fn upsert_document(&self, document: &Document) -> Result<(), AppError>;
-    fn get_document(&self, id: &str) -> Result<Option<Document>, AppError>;
-    fn list_documents(&self) -> Result<Vec<Document>, AppError>;
-    fn delete_document(&self, id: &str) -> Result<bool, AppError>;
-}
+/// What the DuckDB backend implements natively.
+const DUCKDB_CAPABILITIES: &[StorageCapability] = &[
+    StorageCapability::Documents,
+    StorageCapability::FullTextSearch,
+    StorageCapability::VectorSearch,
+    StorageCapability::Transactions,
+    StorageCapability::Graph,
+    StorageCapability::TemporalKnowledgeGraph,
+];
 
 /// Backend kind named by the configuration.
 pub fn configured_backend(config: &Config) -> Result<BackendKind, AppError> {
@@ -114,9 +91,10 @@ pub fn configured_backend(config: &Config) -> Result<BackendKind, AppError> {
 /// Open the configured adapter. Unsupported adapters fail at startup rather
 /// than silently pointing another backend name at DuckDB.
 pub fn open_configured(config: &Config) -> Result<Store, AppError> {
+    install_store_hooks();
     let backend = configured_backend(config)?;
     match backend {
-        BackendKind::DuckDb => Store::open(&config.db_path),
+        BackendKind::DuckDb => open_store(&config.db_path),
         other => Err(AppError::config(format!(
             "storage backend '{}' is recognized but not implemented; export_bundle/export_vault before migrating",
             other.as_str()
@@ -124,42 +102,34 @@ pub fn open_configured(config: &Config) -> Result<Store, AppError> {
     }
 }
 
-/// Open the configured backend through the backend-neutral document contract.
+/// Open a DuckDB store with the composition hooks installed.
 ///
-/// The Markdown adapter is deliberately opt-in and requires an explicit
-/// `RAG_VAULT_PATH`; `RAG_DB_PATH` is never reinterpreted as a vault root.
-pub fn open_configured_storage(config: &Config) -> Result<Box<dyn Storage>, AppError> {
-    match configured_backend(config)? {
-        BackendKind::DuckDb => Ok(Box::new(Store::open(&config.db_path)?)),
-        BackendKind::Markdown => {
-            let root = config
-                .vault_path
-                .clone()
-                .ok_or_else(|| {
-                    AppError::config(
-                        "RAG_VAULT_PATH is required when RAG_STORAGE_BACKEND=markdown",
-                    )
-                })?;
-            Ok(Box::new(markdown::MarkdownVaultStorage::open(root)?))
-        }
-        other => Err(AppError::config(format!(
-            "storage backend '{}' is recognized but not implemented; export_bundle/export_vault before migrating",
-            other.as_str()
-        ))),
-    }
+/// The one way binaries and test helpers open a store: it registers the
+/// document write hook (moves `code_source_text` into
+/// `code_index_source_blobs`) and the code-intelligence schema extensions
+/// before the first write, so no caller can forget them. `Store::open` stays
+/// the raw `db`-layer constructor.
+pub fn open_store(path: &std::path::Path) -> Result<Store, AppError> {
+    install_store_hooks();
+    Store::open(path)
 }
 
-/// Capability names of the Markdown backend.
-pub fn markdown_capability_names() -> Vec<String> {
-    markdown::CAPABILITIES
-        .iter()
-        .map(|cap| cap.as_str().to_string())
-        .collect()
+/// Composition: register the store write hooks owned by higher layers.
+/// Idempotent; called by [`open_store`].
+pub(crate) fn install_store_hooks() {
+    crate::code_index::source::install_document_write_hook();
+    register_schema_extensions();
+}
+
+/// Composition: register the tables owned by the code-intelligence crate,
+/// so every store opened afterwards has them from the start.
+pub fn register_schema_extensions() {
+    rag_code_intel::register_schema_extensions();
 }
 
 /// Capability names of the DuckDB backend.
 pub fn duckdb_capability_names() -> Vec<String> {
-    duckdb::CAPABILITIES
+    DUCKDB_CAPABILITIES
         .iter()
         .map(|cap| cap.as_str().to_string())
         .collect()
@@ -168,43 +138,6 @@ pub fn duckdb_capability_names() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// One lifecycle contract, run against every backend that implements it.
-    fn assert_document_lifecycle(storage: &dyn Storage) {
-        let mut doc = Document {
-            id: "conformance-doc".into(),
-            uri: "file:///conformance.md".into(),
-            title: "Conformance".into(),
-            content: "first body".into(),
-            metadata_json: "{}".into(),
-            ..Default::default()
-        };
-        storage.upsert_document(&doc).unwrap();
-        assert_eq!(
-            storage.get_document(&doc.id).unwrap().unwrap().content,
-            "first body"
-        );
-        doc.content = "second body".into();
-        storage.upsert_document(&doc).unwrap();
-        let listed = storage.list_documents().unwrap();
-        assert_eq!(listed.iter().filter(|d| d.id == doc.id).count(), 1);
-        assert_eq!(
-            storage.get_document(&doc.id).unwrap().unwrap().content,
-            "second body"
-        );
-        assert!(storage.delete_document(&doc.id).unwrap());
-        assert!(storage.get_document(&doc.id).unwrap().is_none());
-        assert!(!storage.delete_document(&doc.id).unwrap());
-    }
-
-    #[test]
-    fn document_lifecycle_conforms_on_every_backend() {
-        let root = tempfile::tempdir().unwrap();
-        let duck = crate::db::Store::open(&root.path().join("conformance.duckdb")).unwrap();
-        assert_document_lifecycle(&duck);
-        let vault = markdown::MarkdownVaultStorage::open(root.path().join("vault")).unwrap();
-        assert_document_lifecycle(&vault);
-    }
 
     #[test]
     fn backend_parser_is_explicit_and_capabilities_are_stable() {
@@ -215,3 +148,37 @@ mod tests {
         assert!(caps.contains(&"graph".to_string()));
     }
 }
+
+#[cfg(test)]
+mod open_store_tests {
+    use super::*;
+    use crate::models::Document;
+
+    #[test]
+    fn open_store_moves_code_source_text_into_the_blob_table() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = open_store(&dir.path().join("hooks.duckdb")).unwrap();
+        let now = chrono::Utc::now();
+        store
+            .documents()
+            .upsert_document(&Document {
+                id: "code-doc".into(),
+                uri: "file:///tmp/code-doc.rs".into(),
+                title: "code-doc.rs".into(),
+                content: "fn main() {}".into(),
+                metadata_json: serde_json::json!({ "code_source_text": "fn main() {}\r\n" })
+                    .to_string(),
+                created_at: now,
+                updated_at: now,
+                ..Default::default()
+            })
+            .unwrap();
+        let stored = store.documents().get_document("code-doc").unwrap().unwrap();
+        let metadata: serde_json::Value = serde_json::from_str(&stored.metadata_json).unwrap();
+        assert!(metadata.get("code_source_text").is_none(), "{metadata}");
+        assert!(metadata.get("code_source_hash").is_some(), "{metadata}");
+    }
+}
+
+#[cfg(test)]
+mod wal_replay_tests;

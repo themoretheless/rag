@@ -173,140 +173,107 @@ fn main() -> Result<()> {
     tokio::runtime::Runtime::new()?.block_on(run(args))
 }
 
-fn parse_args() -> Result<Args> {
-    parse_args_from(std::env::args().skip(1))
+/// Retrieval eval on a throwaway database. --golden remains a --dataset alias.
+/// A/B compare: both --settings-a and --settings-b; resume via --checkpoint.
+/// --replay recomputes heuristic judges from an export bundle (no live search).
+/// --triad-out writes a RAG-triad-named JSON report (unmeasured metrics null).
+#[derive(clap::Parser)]
+#[command(name = "eval")]
+struct Cli {
+    #[arg(long, value_name = "DIR", default_value = ".")]
+    root: PathBuf,
+    #[arg(long, value_name = "FILE.json", alias = "golden")]
+    dataset: Option<PathBuf>,
+    #[arg(long, value_name = "N", default_value_t = 5)]
+    top_k: usize,
+    /// Comma-separated search modes (lex,vec,hybrid).
+    #[arg(long, value_name = "CSV")]
+    modes: Option<String>,
+    #[arg(long)]
+    json: bool,
+    #[arg(long, value_name = "N")]
+    min_recall_at_k: Option<f64>,
+    #[arg(long, value_name = "N")]
+    min_mrr: Option<f64>,
+    #[arg(long, value_name = "N")]
+    max_p95_ms: Option<f64>,
+    #[arg(long, value_name = "N")]
+    max_rss_mib: Option<f64>,
+    #[arg(long, value_name = "N")]
+    min_throughput_qps: Option<f64>,
+    #[arg(long, value_name = "FILE")]
+    feedback_jsonl: Option<PathBuf>,
+    #[arg(long, value_name = "FILE")]
+    history_jsonl: Option<PathBuf>,
+    #[arg(long, value_name = "N", default_value_t = 0)]
+    warmup: usize,
+    #[arg(long, value_name = "N", default_value_t = 1)]
+    repeat: usize,
+    #[arg(long, value_name = "N")]
+    synthetic_chunks: Option<usize>,
+    #[arg(long, value_name = "FILE.json")]
+    settings_a: Option<PathBuf>,
+    #[arg(long, value_name = "FILE.json")]
+    settings_b: Option<PathBuf>,
+    #[arg(long, value_name = "FILE.json")]
+    compare_out: Option<PathBuf>,
+    #[arg(long, value_name = "FILE.json")]
+    checkpoint: Option<PathBuf>,
+    #[arg(long, value_name = "FILE.jsonl")]
+    error_labels: Option<PathBuf>,
+    #[arg(long, value_name = "FILE.json")]
+    replay: Option<PathBuf>,
+    #[arg(long, value_name = "FILE.json")]
+    triad_out: Option<PathBuf>,
 }
 
+fn parse_args() -> Result<Args> {
+    validate_args(<Cli as clap::Parser>::parse())
+}
+
+#[cfg(test)]
 fn parse_args_from<I, S>(args: I) -> Result<Args>
 where
     I: IntoIterator<Item = S>,
     S: Into<String>,
 {
-    let mut root = PathBuf::from(".");
-    let mut dataset = None;
-    let mut top_k = 5;
-    let mut modes = vec![SearchMode::Lex, SearchMode::Vec, SearchMode::Hybrid];
-    let mut json = false;
-    let mut min_recall_at_k: Option<f64> = None;
-    let mut min_mrr: Option<f64> = None;
-    let mut max_p95_ms: Option<f64> = None;
-    let mut max_rss_mib: Option<f64> = None;
-    let mut min_throughput_qps: Option<f64> = None;
-    let mut feedback_jsonl = None;
-    let mut history_jsonl = None;
-    let mut warmup = 0;
-    let mut repeat = 1;
-    let mut synthetic_chunks = None;
-    let mut settings_a = None;
-    let mut settings_b = None;
-    let mut compare_out = None;
-    let mut checkpoint = None;
-    let mut error_labels = None;
-    let mut replay = None;
-    let mut triad_out = None;
-    let mut it = args.into_iter().map(Into::into);
-    while let Some(arg) = it.next() {
-        match arg.as_str() {
-            "--root" => root = PathBuf::from(it.next().context("--root needs path")?),
-            "--dataset" | "--golden" => {
-                dataset = Some(PathBuf::from(it.next().context("--dataset needs path")?))
-            }
-            "--top-k" => top_k = it.next().context("--top-k needs value")?.parse()?,
-            "--modes" => {
-                modes = it
-                    .next()
-                    .context("--modes needs csv (lex,vec,hybrid)")?
-                    .split(',')
-                    .map(|m| SearchMode::parse(m.trim()))
-                    .collect::<std::result::Result<Vec<_>, _>>()
-                    .map_err(anyhow::Error::msg)?
-            }
-            "--json" => json = true,
-            "--min-recall-at-k" => {
-                min_recall_at_k = Some(
-                    it.next()
-                        .context("--min-recall-at-k needs value")?
-                        .parse()?,
-                )
-            }
-            "--min-mrr" => min_mrr = Some(it.next().context("--min-mrr needs value")?.parse()?),
-            "--max-p95-ms" => {
-                max_p95_ms = Some(it.next().context("--max-p95-ms needs value")?.parse()?)
-            }
-            "--max-rss-mib" => {
-                max_rss_mib = Some(it.next().context("--max-rss-mib needs value")?.parse()?)
-            }
-            "--min-throughput-qps" => {
-                min_throughput_qps = Some(
-                    it.next()
-                        .context("--min-throughput-qps needs value")?
-                        .parse()?,
-                )
-            }
-            "--feedback-jsonl" => {
-                feedback_jsonl = Some(PathBuf::from(
-                    it.next().context("--feedback-jsonl needs path")?,
-                ))
-            }
-            "--history-jsonl" => {
-                history_jsonl = Some(PathBuf::from(
-                    it.next().context("--history-jsonl needs path")?,
-                ))
-            }
-            "--warmup" => warmup = it.next().context("--warmup needs value")?.parse()?,
-            "--repeat" => repeat = it.next().context("--repeat needs value")?.parse()?,
-            "--synthetic-chunks" => {
-                synthetic_chunks = Some(
-                    it.next()
-                        .context("--synthetic-chunks needs value")?
-                        .parse()?,
-                )
-            }
-            "--settings-a" => {
-                settings_a = Some(PathBuf::from(it.next().context("--settings-a needs path")?))
-            }
-            "--settings-b" => {
-                settings_b = Some(PathBuf::from(it.next().context("--settings-b needs path")?))
-            }
-            "--compare-out" => {
-                compare_out = Some(PathBuf::from(
-                    it.next().context("--compare-out needs path")?,
-                ))
-            }
-            "--checkpoint" => {
-                checkpoint = Some(PathBuf::from(it.next().context("--checkpoint needs path")?))
-            }
-            "--error-labels" => {
-                error_labels = Some(PathBuf::from(
-                    it.next().context("--error-labels needs path")?,
-                ))
-            }
-            "--replay" => replay = Some(PathBuf::from(it.next().context("--replay needs path")?)),
-            "--triad-out" => {
-                triad_out = Some(PathBuf::from(it.next().context("--triad-out needs path")?))
-            }
-            "-h" | "--help" => {
-                eprintln!(
-                    "Usage: eval [--root DIR] [--dataset FILE.json] [--top-k N]\n\
-                     \t[--modes lex,vec,hybrid] [--json] [--min-recall-at-k N]\n\
-                     \t[--min-mrr N] [--max-p95-ms N] [--max-rss-mib N]\n\
-                     \t[--min-throughput-qps N] [--feedback-jsonl FILE]\n\
-                     \t[--history-jsonl FILE] [--warmup N] [--repeat N]\n\
-                     \t[--synthetic-chunks N]\n\
-                     \t[--settings-a FILE.json --settings-b FILE.json]\n\
-                     \t[--compare-out FILE.json] [--checkpoint FILE.json]\n\
-                     \t[--error-labels FILE.jsonl] [--replay FILE.json]\n\
-                     \t[--triad-out FILE.json]\n\
-                     Uses a throwaway database. --golden remains a --dataset alias.\n\
-                     A/B compare: both --settings-a and --settings-b; resume via --checkpoint.\n\
-                     --replay recomputes heuristic judges from an export bundle (no live search).\n\
-                     --triad-out writes a RAG-triad-named JSON report (unmeasured metrics null)."
-                );
-                std::process::exit(0);
-            }
-            other => bail!("unknown arg: {other} (try --help)"),
-        }
-    }
+    let argv = std::iter::once("eval".to_string()).chain(args.into_iter().map(Into::into));
+    validate_args(<Cli as clap::Parser>::try_parse_from(argv)?)
+}
+
+fn validate_args(cli: Cli) -> Result<Args> {
+    let Cli {
+        root,
+        dataset,
+        top_k,
+        modes,
+        json,
+        min_recall_at_k,
+        min_mrr,
+        max_p95_ms,
+        max_rss_mib,
+        min_throughput_qps,
+        feedback_jsonl,
+        history_jsonl,
+        warmup,
+        repeat,
+        synthetic_chunks,
+        settings_a,
+        settings_b,
+        compare_out,
+        checkpoint,
+        error_labels,
+        replay,
+        triad_out,
+    } = cli;
+    let modes = match modes {
+        Some(csv) => csv
+            .split(',')
+            .map(|m| SearchMode::parse(m.trim()))
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(anyhow::Error::msg)?,
+        None => vec![SearchMode::Lex, SearchMode::Vec, SearchMode::Hybrid],
+    };
     if top_k == 0 {
         bail!("--top-k must be greater than zero");
     }
@@ -639,7 +606,7 @@ async fn evaluate(
         .with_context(|| format!("ingest {relative}"))?;
     }
     let synthetic = if let Some(requested_chunks) = args.synthetic_chunks {
-        let chunks_before = store.stats()?.1;
+        let chunks_before = store.maintenance().stats()?.1;
         let documents = generate_synthetic_documents(
             requested_chunks,
             config.chunk_size,
@@ -663,7 +630,7 @@ async fn evaluate(
             .await
             .context("ingest deterministic synthetic corpus")?;
         }
-        let chunks_after = store.stats()?.1;
+        let chunks_after = store.maintenance().stats()?.1;
         let generated_chunks = chunks_after
             .checked_sub(chunks_before)
             .context("synthetic ingest reduced the chunk count")?;
@@ -681,7 +648,7 @@ async fn evaluate(
         None
     };
     let ingest_ms = ms(started);
-    let (documents, chunks, _, _) = store.stats()?;
+    let (documents, chunks, _, _) = store.maintenance().stats()?;
     let samples_per_mode = dataset
         .queries
         .len()
@@ -975,17 +942,21 @@ async fn eval_query_with_settings(
         let variants = mock_rewrite_variants(&query.query);
         let mut lists = Vec::with_capacity(1 + variants.len());
         lists.push(search(store, &search_query)?);
+        // All variant vectors in one embedder request, as production does.
+        let mut vectors = if mode.needs_embedding() && !variants.is_empty() {
+            embedder.embed(&variants).await?
+        } else {
+            Vec::new()
+        }
+        .into_iter();
         for variant in variants {
             let mut leg = search_query.clone();
-            leg.query_text = Some(variant.clone());
+            leg.query_text = Some(variant);
             leg.embed_ms = None;
             if mode.needs_embedding() {
-                leg.query_embedding = Some(
-                    embedder
-                        .embed(std::slice::from_ref(&variant))
-                        .await?
-                        .remove(0),
-                );
+                leg.query_embedding = Some(vectors.next().ok_or_else(|| {
+                    rag_mcp::error::AppError::embeddings("embedder returned no vector")
+                })?);
             }
             lists.push(search(store, &leg)?);
         }

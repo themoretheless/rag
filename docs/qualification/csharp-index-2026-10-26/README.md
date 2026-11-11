@@ -1,6 +1,6 @@
 # C# syntax index qualification — 2026-10-26
 
-See the [contract](../../CSHARP_CODE_ANALYSIS.md). The reference is pinned RAGRAF
+See the [contract](../../code-intelligence/CSHARP_CODE_ANALYSIS.md). The reference is pinned RAGRAF
 075caf86dc2f6274b9c48487e521915bcdfeaf2c, `extract/generic.py` C# profile.
 This transfers declarations and source occurrences while extending the profile
 with conservatively qualified namespace/owner/type/arity/base candidates.

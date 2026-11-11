@@ -6,7 +6,6 @@
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use super::analyze::AnalysisReport;
 use super::prompts::{PLAN_MAINTENANCE_SYSTEM, PLAN_MAINTENANCE_USER_PREFIX};
@@ -34,112 +33,58 @@ const ANALYSIS_JSON_MAX_CHARS: usize = 24_000;
 /// JSON uses `snake_case` (e.g. `"refile"`, `"merge_exact_dup"`).
 ///
 /// Task aliases: Refile, Archive, Pin, MergeExactDup, RebuildIndex, Vacuum,
-/// ReindexFts, ConsolidatePropose, ResolveStub, …
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum MaintenanceAction {
-    // Organize / place
-    Refile,
-    Pin,
-    Unpin,
-    SetBoost,
-    SetTags,
-    Archive,
-    Unarchive,
-    // Catalog / index
-    RebuildIndex,
-    RebuildGraph,
-    ReindexFts,
-    // Embeddings
-    Reembed,
-    ReembedAll,
-    // Compile / improve
-    CompileSource,
-    /// Propose consolidate body (no write).
-    ConsolidatePropose,
-    /// Apply consolidate / write concept page.
-    Consolidate,
-    RefreshStaleWiki,
-    FileAnswer,
-    /// Promote unresolved stub → real document.
-    ResolveStub,
-    /// Propose missing wikilinks / backlinks.
-    LintAndFixLinks,
-    /// Create/update outline page.
-    BuildOutline,
-    // Compress / hygiene
-    MergeExactDup,
-    MergeNearDup,
-    DropTombstones,
-    Vacuum,
-    Checkpoint,
-    // Meta
-    Noop,
+/// ReindexFts, Consolidate, RefreshStaleWiki, …
+/// Declares the whitelist once: the enum, its stable wire order and names.
+macro_rules! maintenance_actions {
+    ($($variant:ident => $name:literal,)+) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+        #[serde(rename_all = "snake_case")]
+        pub enum MaintenanceAction {
+            $($variant,)+
+        }
+
+        impl MaintenanceAction {
+            /// All whitelist variants in stable wire order.
+            pub const ALL: &'static [MaintenanceAction] = &[$(Self::$variant,)+];
+
+            /// Snake_case wire name (matches serde).
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name,)+
+                }
+            }
+        }
+
+        /// Snake_case names of every allowed action (prompts / errors).
+        pub const ALLOWED_ACTIONS: &[&str] = &[$($name,)+];
+    };
+}
+
+maintenance_actions! {
+    Refile => "refile",
+    Pin => "pin",
+    Unpin => "unpin",
+    SetBoost => "set_boost",
+    SetTags => "set_tags",
+    Archive => "archive",
+    Unarchive => "unarchive",
+    RebuildIndex => "rebuild_index",
+    RebuildGraph => "rebuild_graph",
+    ReindexFts => "reindex_fts",
+    Reembed => "reembed",
+    ReembedAll => "reembed_all",
+    CompileSource => "compile_source",
+    Consolidate => "consolidate",
+    RefreshStaleWiki => "refresh_stale_wiki",
+    FileAnswer => "file_answer",
+    MergeExactDup => "merge_exact_dup",
+    DropTombstones => "drop_tombstones",
+    Vacuum => "vacuum",
+    Checkpoint => "checkpoint",
+    Noop => "noop",
 }
 
 impl MaintenanceAction {
-    /// All whitelist variants in stable wire order.
-    pub const ALL: &'static [MaintenanceAction] = &[
-        Self::Refile,
-        Self::Pin,
-        Self::Unpin,
-        Self::SetBoost,
-        Self::SetTags,
-        Self::Archive,
-        Self::Unarchive,
-        Self::RebuildIndex,
-        Self::RebuildGraph,
-        Self::ReindexFts,
-        Self::Reembed,
-        Self::ReembedAll,
-        Self::CompileSource,
-        Self::ConsolidatePropose,
-        Self::Consolidate,
-        Self::RefreshStaleWiki,
-        Self::FileAnswer,
-        Self::ResolveStub,
-        Self::LintAndFixLinks,
-        Self::BuildOutline,
-        Self::MergeExactDup,
-        Self::MergeNearDup,
-        Self::DropTombstones,
-        Self::Vacuum,
-        Self::Checkpoint,
-        Self::Noop,
-    ];
-
-    /// Snake_case wire name (matches serde).
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Refile => "refile",
-            Self::Pin => "pin",
-            Self::Unpin => "unpin",
-            Self::SetBoost => "set_boost",
-            Self::SetTags => "set_tags",
-            Self::Archive => "archive",
-            Self::Unarchive => "unarchive",
-            Self::RebuildIndex => "rebuild_index",
-            Self::RebuildGraph => "rebuild_graph",
-            Self::ReindexFts => "reindex_fts",
-            Self::Reembed => "reembed",
-            Self::ReembedAll => "reembed_all",
-            Self::CompileSource => "compile_source",
-            Self::ConsolidatePropose => "consolidate_propose",
-            Self::Consolidate => "consolidate",
-            Self::RefreshStaleWiki => "refresh_stale_wiki",
-            Self::FileAnswer => "file_answer",
-            Self::ResolveStub => "resolve_stub",
-            Self::LintAndFixLinks => "lint_and_fix_links",
-            Self::BuildOutline => "build_outline",
-            Self::MergeExactDup => "merge_exact_dup",
-            Self::MergeNearDup => "merge_near_dup",
-            Self::DropTombstones => "drop_tombstones",
-            Self::Vacuum => "vacuum",
-            Self::Checkpoint => "checkpoint",
-            Self::Noop => "noop",
-        }
-    }
-
     /// Parse trimmed snake_case name; unknown → `None`.
     pub fn parse(name: &str) -> Option<Self> {
         let a = name.trim();
@@ -159,24 +104,19 @@ impl MaintenanceAction {
                 | Self::Unarchive
                 | Self::Reembed
                 | Self::CompileSource
-                | Self::ResolveStub
         )
     }
 
     /// Merge family (keep + drop / multi-id params).
     pub fn is_merge(self) -> bool {
-        matches!(self, Self::MergeExactDup | Self::MergeNearDup)
+        matches!(self, Self::MergeExactDup)
     }
 
     /// Higher-risk / confirm-friendly compress-adjacent ops.
     pub fn is_destructive(self) -> bool {
         matches!(
             self,
-            Self::MergeExactDup
-                | Self::MergeNearDup
-                | Self::DropTombstones
-                | Self::Archive
-                | Self::ReembedAll
+            Self::MergeExactDup | Self::DropTombstones | Self::Archive | Self::ReembedAll
         )
     }
 }
@@ -189,36 +129,6 @@ impl std::fmt::Display for MaintenanceAction {
 
 /// Alias for the whitelist enum (older name used by apply/organize).
 pub type MaintenanceActionKind = MaintenanceAction;
-
-/// Snake_case names of every allowed action (prompts / errors).
-pub const ALLOWED_ACTIONS: &[&str] = &[
-    "refile",
-    "pin",
-    "unpin",
-    "set_boost",
-    "set_tags",
-    "archive",
-    "unarchive",
-    "rebuild_index",
-    "rebuild_graph",
-    "reindex_fts",
-    "reembed",
-    "reembed_all",
-    "compile_source",
-    "consolidate_propose",
-    "consolidate",
-    "refresh_stale_wiki",
-    "file_answer",
-    "resolve_stub",
-    "lint_and_fix_links",
-    "build_outline",
-    "merge_exact_dup",
-    "merge_near_dup",
-    "drop_tombstones",
-    "vacuum",
-    "checkpoint",
-    "noop",
-];
 
 // ---------------------------------------------------------------------------
 // Plan item (LLM JSON step)
@@ -419,7 +329,7 @@ fn non_empty_id(id: &str) -> bool {
 /// Validate one plan item; normalizes empty params; enforces per-op constraints.
 pub fn validate_action(mut item: MaintenancePlanItem) -> Result<MaintenancePlanItem> {
     if !item.params.is_object() && !item.params.is_null() {
-        return Err(AppError::config(
+        return Err(AppError::invalid(
             "maintenance action params must be a JSON object",
         ));
     }
@@ -429,7 +339,7 @@ pub fn validate_action(mut item: MaintenancePlanItem) -> Result<MaintenancePlanI
 
     if let Some(ref tid) = item.target_id {
         if !non_empty_id(tid) {
-            return Err(AppError::config(
+            return Err(AppError::invalid(
                 "maintenance action target_id must not be empty when set",
             ));
         }
@@ -439,7 +349,7 @@ pub fn validate_action(mut item: MaintenancePlanItem) -> Result<MaintenancePlanI
         match item.target_id.as_deref() {
             Some(id) if non_empty_id(id) => {}
             _ => {
-                return Err(AppError::config(format!(
+                return Err(AppError::invalid(format!(
                     "maintenance action '{}' requires non-empty target_id",
                     item.action
                 )));
@@ -454,21 +364,21 @@ pub fn validate_action(mut item: MaintenancePlanItem) -> Result<MaintenancePlanI
             match boost {
                 Some(v) if v.is_number() => {}
                 Some(_) => {
-                    return Err(AppError::config(
+                    return Err(AppError::invalid(
                         "maintenance action 'set_boost' params.boost must be a number",
                     ));
                 }
                 None => {
-                    return Err(AppError::config(
+                    return Err(AppError::invalid(
                         "maintenance action 'set_boost' requires params.boost",
                     ));
                 }
             }
         }
-        MaintenanceAction::MergeExactDup | MaintenanceAction::MergeNearDup => {
+        MaintenanceAction::MergeExactDup => {
             // Apply may resolve peers by content_hash / embedding from target_id alone.
             let Some(obj) = item.params.as_object() else {
-                return Err(AppError::config(format!(
+                return Err(AppError::invalid(format!(
                     "maintenance action '{}' params must be a JSON object",
                     item.action
                 )));
@@ -488,15 +398,15 @@ pub fn validate_action(mut item: MaintenancePlanItem) -> Result<MaintenancePlanI
                     .unwrap_or(false);
             let has_target = item.target_id.as_deref().map(non_empty_id).unwrap_or(false);
             if !(has_group || has_target || has_pair) {
-                return Err(AppError::config(format!(
+                return Err(AppError::invalid(format!(
                     "maintenance action '{}' needs target_id and/or params.document_ids (or drop/source ids)",
                     item.action
                 )));
             }
         }
-        MaintenanceAction::ConsolidatePropose | MaintenanceAction::Consolidate => {
+        MaintenanceAction::Consolidate => {
             let Some(obj) = item.params.as_object() else {
-                return Err(AppError::config(format!(
+                return Err(AppError::invalid(format!(
                     "maintenance action '{}' params must be a JSON object",
                     item.action
                 )));
@@ -512,7 +422,7 @@ pub fn validate_action(mut item: MaintenancePlanItem) -> Result<MaintenancePlanI
                 .unwrap_or(false);
             let has_target = item.target_id.as_deref().map(non_empty_id).unwrap_or(false);
             if !has_sources && !has_target {
-                return Err(AppError::config(format!(
+                return Err(AppError::invalid(format!(
                     "maintenance action '{}' requires params.source_ids/document_ids or target_id",
                     item.action
                 )));
@@ -671,67 +581,80 @@ pub fn action_from_parts(
 // Heuristic + LLM planners
 // ---------------------------------------------------------------------------
 
-/// Build a deterministic plan from an [`AnalysisReport`] (no LLM).
-///
-/// Priority: FTS / embed mismatch → exact dups → stale wiki → near dups → archives → vacuum.
-pub fn heuristic_plan(report: &AnalysisReport, max_actions: usize) -> MaintenancePlan {
-    let max_actions = max_actions.max(1);
-    let mut actions: Vec<MaintenancePlanItem> = Vec::new();
+/// One heuristic rule: issues in the report → proposed steps.
+type HeuristicRule = fn(&AnalysisReport) -> Vec<MaintenancePlanItem>;
 
-    if report.embed_mismatch.is_some() {
-        push_capped(
-            &mut actions,
-            max_actions,
-            MaintenancePlanItem {
-                action: MaintenanceAction::ReembedAll,
-                reason: Some("embedding manifest disagrees with config".into()),
-                target_id: None,
-                params: empty_object(),
-            },
-        );
+fn step(
+    action: MaintenanceAction,
+    reason: String,
+    target_id: Option<String>,
+    params: serde_json::Value,
+) -> MaintenancePlanItem {
+    MaintenancePlanItem {
+        action,
+        reason: Some(reason),
+        target_id,
+        params,
     }
+}
 
-    if !report.fts_ready && report.counts.chunks > 0 {
-        push_capped(
-            &mut actions,
-            max_actions,
-            MaintenancePlanItem {
-                action: MaintenanceAction::ReindexFts,
-                reason: Some("FTS index not ready while chunks exist".into()),
-                target_id: None,
-                params: empty_object(),
-            },
-        );
+fn rule_embed_mismatch(report: &AnalysisReport) -> Vec<MaintenancePlanItem> {
+    report
+        .embed_mismatch
+        .iter()
+        .map(|_| {
+            step(
+                MaintenanceAction::ReembedAll,
+                "embedding manifest disagrees with config".into(),
+                None,
+                empty_object(),
+            )
+        })
+        .collect()
+}
+
+fn rule_fts_not_ready(report: &AnalysisReport) -> Vec<MaintenancePlanItem> {
+    if report.fts_ready || report.counts.chunks == 0 {
+        return Vec::new();
     }
+    vec![step(
+        MaintenanceAction::ReindexFts,
+        "FTS index not ready while chunks exist".into(),
+        None,
+        empty_object(),
+    )]
+}
 
-    for g in &report.exact_duplicates {
-        if actions.len() >= max_actions {
-            break;
-        }
-        let keep = g.document_ids.first().cloned();
-        actions.push(MaintenancePlanItem {
-            action: MaintenanceAction::MergeExactDup,
-            reason: Some(format!("{} documents share content_hash", g.count)),
-            target_id: keep,
-            params: serde_json::json!({
-                "document_ids": g.document_ids,
-                "content_hash": g.content_hash,
-                "titles": g.titles,
-            }),
-        });
-    }
+fn rule_exact_duplicates(report: &AnalysisReport) -> Vec<MaintenancePlanItem> {
+    report
+        .exact_duplicates
+        .iter()
+        .map(|g| {
+            step(
+                MaintenanceAction::MergeExactDup,
+                format!("{} documents share content_hash", g.count),
+                g.document_ids.first().cloned(),
+                serde_json::json!({
+                    "document_ids": g.document_ids,
+                    "content_hash": g.content_hash,
+                    "titles": g.titles,
+                }),
+            )
+        })
+        .collect()
+}
 
-    for w in &report.stale_wiki {
-        if actions.len() >= max_actions {
-            break;
-        }
-        actions.push(MaintenancePlanItem {
-            action: if w.link_kind == "source_missing" {
+fn rule_stale_wiki(report: &AnalysisReport) -> Vec<MaintenancePlanItem> {
+    report
+        .stale_wiki
+        .iter()
+        .map(|w| {
+            let action = if w.link_kind == "source_missing" {
                 MaintenanceAction::Noop
             } else {
                 MaintenanceAction::RefreshStaleWiki
-            },
-            reason: Some(match w.link_kind.as_str() {
+            };
+            let reason = match w.link_kind.as_str() {
                 "source_missing" => format!(
                     "source '{}' for wiki '{}' is unavailable; restore or relink before refresh",
                     w.raw_title, w.wiki_title
@@ -741,87 +664,84 @@ pub fn heuristic_plan(report: &AnalysisReport, max_actions: usize) -> Maintenanc
                     w.raw_title, w.wiki_title
                 ),
                 _ => format!("wiki '{}' older than raw '{}'", w.wiki_title, w.raw_title),
-            }),
-            target_id: Some(w.wiki_document_id.clone()),
-            params: serde_json::json!({
-                "raw_document_id": w.raw_document_id,
-            }),
-        });
-    }
+            };
+            step(
+                action,
+                reason,
+                Some(w.wiki_document_id.clone()),
+                serde_json::json!({ "raw_document_id": w.raw_document_id }),
+            )
+        })
+        .collect()
+}
 
-    for p in &report.near_duplicates {
-        if actions.len() >= max_actions {
-            break;
-        }
-        actions.push(MaintenancePlanItem {
-            action: MaintenanceAction::MergeNearDup,
-            reason: Some(format!("near-duplicate cosine={:.3}", p.cosine)),
-            target_id: Some(p.document_id_a.clone()),
-            params: serde_json::json!({
-                "document_id_a": p.document_id_a,
-                "document_id_b": p.document_id_b,
-                "cosine": p.cosine,
-            }),
-        });
-    }
+fn rule_archive_candidates(report: &AnalysisReport) -> Vec<MaintenancePlanItem> {
+    report
+        .archive_candidates
+        .iter()
+        .map(|a| {
+            step(
+                MaintenanceAction::Archive,
+                a.reason.clone(),
+                Some(a.document_id.clone()),
+                serde_json::json!({ "title": a.title, "boost": a.boost }),
+            )
+        })
+        .collect()
+}
 
-    for a in &report.archive_candidates {
-        if actions.len() >= max_actions {
-            break;
-        }
-        actions.push(MaintenancePlanItem {
-            action: MaintenanceAction::Archive,
-            reason: Some(a.reason.clone()),
-            target_id: Some(a.document_id.clone()),
-            params: serde_json::json!({
-                "title": a.title,
-                "boost": a.boost,
-            }),
-        });
+fn rule_stale_catalog(report: &AnalysisReport) -> Vec<MaintenancePlanItem> {
+    if report.stale_wiki.is_empty() && report.orphan_wiki_pages.is_empty() {
+        return Vec::new();
     }
+    vec![step(
+        MaintenanceAction::RebuildIndex,
+        "wiki catalog may be stale after refresh/orphans".into(),
+        None,
+        empty_object(),
+    )]
+}
 
-    for s in &report.unresolved_stubs {
-        if actions.len() >= max_actions {
-            break;
-        }
-        actions.push(MaintenancePlanItem {
-            action: MaintenanceAction::ResolveStub,
-            reason: Some(format!("unresolved stub '{}'", s.label)),
-            target_id: Some(s.node_id.clone()),
-            params: serde_json::json!({
-                "label": s.label,
-            }),
-        });
+fn rule_orphan_nodes(report: &AnalysisReport) -> Vec<MaintenancePlanItem> {
+    if report.orphan_nodes.is_empty() {
+        return Vec::new();
     }
+    vec![step(
+        MaintenanceAction::RebuildGraph,
+        format!(
+            "{} orphan graph nodes (degree 0)",
+            report.orphan_nodes.len()
+        ),
+        None,
+        serde_json::json!({ "dirty_only": false }),
+    )]
+}
 
-    if !report.stale_wiki.is_empty() || !report.orphan_wiki_pages.is_empty() {
-        push_capped(
-            &mut actions,
-            max_actions,
-            MaintenancePlanItem {
-                action: MaintenanceAction::RebuildIndex,
-                reason: Some("wiki catalog may be stale after refresh/orphans".into()),
-                target_id: None,
-                params: empty_object(),
-            },
-        );
-    }
+/// Heuristic rules in priority order; the plan takes steps from each rule in
+/// turn until `max_actions` is reached.
+const HEURISTIC_RULES: &[HeuristicRule] = &[
+    rule_embed_mismatch,
+    rule_fts_not_ready,
+    rule_exact_duplicates,
+    rule_stale_wiki,
+    rule_archive_candidates,
+    rule_stale_catalog,
+    rule_orphan_nodes,
+];
 
-    if !report.orphan_nodes.is_empty() {
-        push_capped(
-            &mut actions,
-            max_actions,
-            MaintenancePlanItem {
-                action: MaintenanceAction::RebuildGraph,
-                reason: Some(format!(
-                    "{} orphan graph nodes (degree 0)",
-                    report.orphan_nodes.len()
-                )),
-                target_id: None,
-                params: serde_json::json!({ "dirty_only": false }),
-            },
-        );
-    }
+/// Build a deterministic plan from an [`AnalysisReport`] (no LLM).
+///
+/// Priority: FTS / embed mismatch → exact dups → stale wiki → archives → vacuum.
+/// Near duplicates and unresolved stubs are reported by `analyze_corpus` but
+/// not planned: no apply step exists for them (`maintain_compress` handles near
+/// duplicates with confirmation).
+pub fn heuristic_plan(report: &AnalysisReport, max_actions: usize) -> MaintenancePlan {
+    let max_actions = max_actions.max(1);
+    let mut actions: Vec<MaintenancePlanItem> = HEURISTIC_RULES
+        .iter()
+        .flat_map(|rule| rule(report))
+        .take(max_actions)
+        .collect();
 
     let mut notes = format!(
         "heuristic plan from {} issues ({} actions)",
@@ -977,35 +897,33 @@ pub async fn plan_maintenance(
 
 /// Append `plan_maintenance` to ops_log (best-effort: failures are logged, not propagated).
 pub fn log_plan(store: &Store, plan: &MaintenancePlan) -> Result<()> {
-    if let Err(error) = store.append_ops_log(&OpsLogEntry {
-        id: Uuid::new_v4().to_string(),
-        seq: 0,
-        ts: plan.generated_at,
-        op: "plan_maintenance".into(),
-        prefix: Some("MAINT".into()),
-        message: format!(
-            "plan_maintenance: source={:?}, {} actions, {} rejected, {} issues",
-            plan.source,
-            plan.action_count,
-            plan.rejected.len(),
-            plan.issue_count
+    store.ops_log().record(
+        &OpsLogEntry::new(
+            "plan_maintenance",
+            "MAINT",
+            format!(
+                "plan_maintenance: source={:?}, {} actions, {} rejected, {} issues",
+                plan.source,
+                plan.action_count,
+                plan.rejected.len(),
+                plan.issue_count
+            ),
+        )
+        .at(plan.generated_at)
+        .entity(None, "maintenance")
+        .payload(
+            serde_json::json!({
+                "source": plan.source,
+                "action_count": plan.action_count,
+                "rejected_count": plan.rejected.len(),
+                "issue_count": plan.issue_count,
+                "llm_enabled": plan.llm_enabled,
+                "model": plan.model,
+                "actions": plan.actions.iter().map(|a| a.action.as_str()).collect::<Vec<_>>(),
+            })
+            .to_string(),
         ),
-        entity_id: None,
-        entity_kind: Some("maintenance".into()),
-        payload_json: serde_json::json!({
-            "source": plan.source,
-            "action_count": plan.action_count,
-            "rejected_count": plan.rejected.len(),
-            "issue_count": plan.issue_count,
-            "llm_enabled": plan.llm_enabled,
-            "model": plan.model,
-            "actions": plan.actions.iter().map(|a| a.action.as_str()).collect::<Vec<_>>(),
-        })
-        .to_string(),
-        agent_name: None,
-    }) {
-        tracing::warn!(%error, "failed to append plan_maintenance ops_log entry");
-    }
+    );
     Ok(())
 }
 
@@ -1014,402 +932,4 @@ pub fn log_plan(store: &Store, plan: &MaintenancePlan) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::diagnostics::DoctorReport;
-    use crate::maintain::analyze::{
-        AnalysisIssue, ArchiveCandidate, CorpusCounts, DuplicateGroup, EmbedMismatchInfo,
-        NearDuplicatePair, SizeStats, StaleWikiPage,
-    };
-
-    /// In-process LLM double: no HTTP server, fixed model output.
-    struct ScriptedLlm(&'static str);
-
-    #[async_trait::async_trait]
-    impl crate::llm::ChatCompleter for ScriptedLlm {
-        async fn complete(&self, _: &[crate::llm::ChatMessage]) -> Result<String> {
-            Ok(self.0.to_string())
-        }
-        async fn complete_with_max_tokens(
-            &self,
-            messages: &[crate::llm::ChatMessage],
-            _: u32,
-        ) -> Result<String> {
-            self.complete(messages).await
-        }
-        fn model(&self) -> &str {
-            "scripted"
-        }
-    }
-
-    #[tokio::test]
-    async fn llm_planner_keeps_whitelisted_actions_and_rejects_the_rest() {
-        let llm = ScriptedLlm(
-            "```json\n{\"actions\": [{\"action\": \"vacuum\", \"reason\": \"wal\"}, {\"action\": \"drop_table\"}], \"notes\": \"n\"}\n```",
-        );
-        let config = Config {
-            llm_enabled: true,
-            ..Config::for_tests()
-        };
-        let plan = plan_maintenance(
-            &empty_report(),
-            &config,
-            Some(&llm),
-            &PlanOptions::default(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(plan.model.as_deref(), Some("scripted"));
-        assert_eq!(plan.actions.len(), 1);
-        assert_eq!(plan.actions[0].action, MaintenanceAction::Vacuum);
-        assert_eq!(plan.rejected.len(), 1);
-    }
-
-    fn empty_report() -> AnalysisReport {
-        AnalysisReport {
-            generated_at: Utc::now(),
-            db_path: ":memory:".into(),
-            db_size_bytes: None,
-            counts: CorpusCounts::default(),
-            size: SizeStats::default(),
-            doctor: DoctorReport {
-                backend: "duckdb".into(),
-                storage_capabilities: crate::storage::duckdb_capability_names(),
-                schema_version: 1,
-                expected_schema_version: 1,
-                schema_ok: true,
-                fts_ready: true,
-                document_count: 0,
-                chunk_count: 0,
-                node_count: 0,
-                edge_count: 0,
-                embed_dims: 8,
-                manifest_dims: None,
-                embed_ok: true,
-                ready_for_search: false,
-                ingest_roots_configured: false,
-                db_path: ":memory:".into(),
-                wal_bytes: 0,
-                wal_warn_bytes: 256 * 1024 * 1024,
-                wal_too_large: false,
-                documents_without_chunks: 0,
-                orphan_chunks: 0,
-                orphan_document_nodes: 0,
-                orphan_edges: 0,
-                unscoped_documents: 0,
-                relational_integrity_ok: true,
-                repair_hint: None,
-                ok: true,
-            },
-            fts_ready: true,
-            embed_mismatch: None,
-            exact_duplicates: vec![],
-            near_duplicates: vec![],
-            orphan_nodes: vec![],
-            orphan_wiki_pages: vec![],
-            unresolved_stubs: vec![],
-            aging_stubs: vec![],
-            stale_wiki: vec![],
-            archive_candidates: vec![],
-            issues: vec![],
-            issue_count: 0,
-        }
-    }
-
-    #[test]
-    fn whitelist_accepts_known_ops() {
-        assert!(is_allowed_action("refile"));
-        assert!(is_allowed_action("vacuum"));
-        assert!(is_allowed_action("merge_exact_dup"));
-        assert!(is_allowed_action("consolidate_propose"));
-        assert!(is_allowed_action("resolve_stub"));
-        assert!(is_allowed_action("rebuild_index"));
-        assert!(is_allowed_action("reindex_fts"));
-        assert!(!is_allowed_action("drop_table"));
-        assert!(!is_allowed_action(""));
-        assert!(!is_allowed_action("Refile"));
-    }
-
-    #[test]
-    fn enum_roundtrip_snake_case() {
-        for &a in MaintenanceAction::ALL {
-            let s = serde_json::to_string(&a).unwrap();
-            assert_eq!(s, format!("\"{}\"", a.as_str()));
-            let back: MaintenanceAction = serde_json::from_str(&s).unwrap();
-            assert_eq!(back, a);
-        }
-        assert_eq!(MaintenanceAction::ALL.len(), ALLOWED_ACTIONS.len());
-        for (i, name) in ALLOWED_ACTIONS.iter().enumerate() {
-            assert_eq!(MaintenanceAction::ALL[i].as_str(), *name);
-        }
-    }
-
-    #[test]
-    fn validate_rejects_unknown() {
-        let err = action_from_parts("rm -rf", None, None, serde_json::json!({})).unwrap_err();
-        assert!(err.to_string().contains("whitelist"));
-    }
-
-    #[test]
-    fn validate_rejects_non_object_params_for_merge_and_consolidate() {
-        for action in ["merge_exact_dup", "consolidate"] {
-            for params in [serde_json::json!([1, 2]), serde_json::json!("x")] {
-                let err =
-                    action_from_parts(action, None, Some("doc-1".into()), params).unwrap_err();
-                assert!(err.to_string().contains("object"), "{action}: {err}");
-            }
-        }
-    }
-
-    #[test]
-    fn validate_plan_all_or_nothing() {
-        let plan = vec![
-            MaintenancePlanItem {
-                action: MaintenanceAction::Vacuum,
-                reason: Some("L0".into()),
-                target_id: None,
-                params: serde_json::json!({}),
-            },
-            MaintenancePlanItem {
-                action: MaintenanceAction::Pin,
-                reason: None,
-                target_id: None,
-                params: serde_json::json!({}),
-            },
-        ];
-        assert!(validate_plan(plan).is_err());
-    }
-
-    #[test]
-    fn filter_plan_keeps_valid_drops_invalid() {
-        let (ok, bad) = filter_raw_plan(vec![
-            RawPlanItem {
-                action: "vacuum".into(),
-                reason: None,
-                target_id: None,
-                params: serde_json::json!({}),
-            },
-            RawPlanItem {
-                action: "drop_table".into(),
-                reason: None,
-                target_id: None,
-                params: serde_json::json!({}),
-            },
-        ]);
-        assert_eq!(ok.len(), 1);
-        assert_eq!(ok[0].action, MaintenanceAction::Vacuum);
-        assert_eq!(bad.len(), 1);
-    }
-
-    #[test]
-    fn parse_plan_envelope_and_array() {
-        let raw =
-            r#"{"actions":[{"action":"reindex_fts","reason":"fts","params":{}}],"notes":"n"}"#;
-        let (acts, notes) = parse_plan_json(raw).unwrap();
-        assert_eq!(acts.len(), 1);
-        assert_eq!(acts[0]["action"], "reindex_fts");
-        assert_eq!(notes.as_deref(), Some("n"));
-
-        let arr = r#"[{"action":"vacuum","params":{}}]"#;
-        let (acts, notes) = parse_plan_json(arr).unwrap();
-        assert_eq!(acts[0]["action"], "vacuum");
-        assert!(notes.is_none());
-    }
-
-    #[test]
-    fn parse_plan_fenced_json() {
-        let raw = "```json\n{\"actions\":[{\"action\":\"noop\",\"params\":{}}]}\n```";
-        let (acts, _) = parse_plan_json(raw).unwrap();
-        assert_eq!(acts[0]["action"], "noop");
-        let (filtered, rejected, _) = parse_and_filter_plan(raw).unwrap();
-        assert_eq!(filtered[0].action, MaintenanceAction::Noop);
-        assert!(rejected.is_empty());
-    }
-
-    #[test]
-    fn heuristic_healthy_is_noop() {
-        let plan = heuristic_plan(&empty_report(), 10);
-        assert_eq!(plan.source, PlanSource::Heuristic);
-        assert_eq!(plan.actions.len(), 1);
-        assert_eq!(plan.actions[0].action, MaintenanceAction::Noop);
-    }
-
-    #[test]
-    fn heuristic_maps_dups_stale_embed_fts() {
-        let mut report = empty_report();
-        report.counts.chunks = 5;
-        report.fts_ready = false;
-        report.embed_mismatch = Some(EmbedMismatchInfo {
-            config_dims: 8,
-            config_provider: "mock".into(),
-            config_model: "mock".into(),
-            manifest_dims: Some(16),
-            manifest_provider: Some("mock".into()),
-            manifest_model: Some("old".into()),
-            message: "dims mismatch".into(),
-        });
-        report.exact_duplicates = vec![DuplicateGroup {
-            content_hash: "abc".into(),
-            document_ids: vec!["d1".into(), "d2".into()],
-            titles: vec!["A".into(), "B".into()],
-            count: 2,
-        }];
-        report.stale_wiki = vec![StaleWikiPage {
-            wiki_document_id: "w1".into(),
-            wiki_title: "Wiki".into(),
-            wiki_updated_at: Utc::now(),
-            raw_document_id: "r1".into(),
-            raw_title: "Raw".into(),
-            raw_updated_at: Some(Utc::now()),
-            link_kind: "graph_related".into(),
-        }];
-        report.near_duplicates = vec![NearDuplicatePair {
-            document_id_a: "n1".into(),
-            document_id_b: "n2".into(),
-            title_a: "N1".into(),
-            title_b: "N2".into(),
-            cosine: 0.99,
-        }];
-        report.archive_candidates = vec![ArchiveCandidate {
-            document_id: "a1".into(),
-            title: "Old".into(),
-            layer: "raw".into(),
-            boost: 0.2,
-            updated_at: Utc::now(),
-            reason: "low boost".into(),
-        }];
-        report.issues = vec![AnalysisIssue {
-            code: "exact_dup".into(),
-            severity: crate::models::IssueSeverity::Warn,
-            message: "dup".into(),
-            entity_id: Some("d1".into()),
-        }];
-        report.issue_count = 6;
-
-        let plan = heuristic_plan(&report, 30);
-        let names: Vec<&str> = plan.actions.iter().map(|a| a.action.as_str()).collect();
-        assert!(names.contains(&"reembed_all"), "{names:?}");
-        assert!(names.contains(&"reindex_fts"), "{names:?}");
-        assert!(names.contains(&"merge_exact_dup"), "{names:?}");
-        assert!(names.contains(&"refresh_stale_wiki"), "{names:?}");
-        assert!(names.contains(&"merge_near_dup"), "{names:?}");
-        assert!(names.contains(&"archive"), "{names:?}");
-        assert!(names.contains(&"rebuild_index"), "{names:?}");
-        assert!(names.contains(&"vacuum"), "{names:?}");
-        assert!(plan.rejected.is_empty(), "{:?}", plan.rejected);
-        for a in &plan.actions {
-            assert!(is_allowed_action(a.action.as_str()));
-        }
-    }
-
-    #[test]
-    fn heuristic_respects_max_actions() {
-        let mut report = empty_report();
-        for i in 0..20 {
-            report.archive_candidates.push(ArchiveCandidate {
-                document_id: format!("a{i}"),
-                title: format!("T{i}"),
-                layer: "raw".into(),
-                boost: 0.1,
-                updated_at: Utc::now(),
-                reason: "old".into(),
-            });
-        }
-        report.issue_count = 20;
-        let plan = heuristic_plan(&report, 5);
-        assert!(plan.action_count <= 5);
-    }
-
-    #[test]
-    fn json_schema_is_object() {
-        let s = maintenance_plan_json_schema();
-        assert!(s.is_object());
-        let s2 = maintenance_actions_json_schema();
-        assert!(s2.is_object());
-    }
-
-    #[test]
-    fn validate_named_variants_from_task() {
-        let plan = validate_plan(vec![
-            MaintenancePlanItem {
-                action: MaintenanceAction::Refile,
-                reason: None,
-                target_id: Some("d1".into()),
-                params: serde_json::json!({"wing": "w"}),
-            },
-            MaintenancePlanItem {
-                action: MaintenanceAction::Archive,
-                reason: None,
-                target_id: Some("d2".into()),
-                params: empty_object(),
-            },
-            MaintenancePlanItem {
-                action: MaintenanceAction::Pin,
-                reason: None,
-                target_id: Some("d3".into()),
-                params: empty_object(),
-            },
-            MaintenancePlanItem {
-                action: MaintenanceAction::MergeExactDup,
-                reason: None,
-                target_id: Some("keep".into()),
-                params: serde_json::json!({"document_ids": ["keep", "drop"]}),
-            },
-            MaintenancePlanItem {
-                action: MaintenanceAction::RebuildIndex,
-                reason: None,
-                target_id: None,
-                params: empty_object(),
-            },
-            MaintenancePlanItem {
-                action: MaintenanceAction::Vacuum,
-                reason: None,
-                target_id: None,
-                params: empty_object(),
-            },
-            MaintenancePlanItem {
-                action: MaintenanceAction::ReindexFts,
-                reason: None,
-                target_id: None,
-                params: empty_object(),
-            },
-            MaintenancePlanItem {
-                action: MaintenanceAction::ConsolidatePropose,
-                reason: None,
-                target_id: None,
-                params: serde_json::json!({"source_ids": ["a", "b"]}),
-            },
-            MaintenancePlanItem {
-                action: MaintenanceAction::ResolveStub,
-                reason: None,
-                target_id: Some("stub".into()),
-                params: serde_json::json!({"target_document_id": "doc"}),
-            },
-        ])
-        .unwrap();
-        assert_eq!(plan.len(), 9);
-    }
-
-    #[tokio::test]
-    async fn plan_maintenance_heuristic_when_llm_disabled() {
-        let cfg = Config {
-            db_path: std::path::PathBuf::from("./x.duckdb"),
-            embedding_model: "mock".into(),
-            embedding_dims: 8,
-            llm_enabled: false,
-            llm_timeout_secs: 30,
-            llm_max_tokens: 512,
-            ..Config::for_tests()
-        };
-        let report = empty_report();
-        let opts = PlanOptions {
-            max_actions: 10,
-            force_heuristic: false,
-            log_ops: false,
-        };
-        let plan = plan_maintenance(&report, &cfg, None, &opts).await.unwrap();
-        assert_eq!(plan.source, PlanSource::Heuristic);
-        assert!(!plan.llm_enabled);
-        assert_eq!(plan.actions[0].action, MaintenanceAction::Noop);
-    }
-}
+pub(crate) mod tests;

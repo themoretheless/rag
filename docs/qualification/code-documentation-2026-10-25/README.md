@@ -1,7 +1,7 @@
 # Source-documentation subset — 2026-10-25
 
 The earlier status always marked documentation coverage unavailable. The new
-[contract](../../CODE_DOCUMENTATION.md) records raw source-bound candidates and
+[contract](../../code-intelligence/CODE_DOCUMENTATION.md) records raw source-bound candidates and
 measures only qualified syntax forms, leaving full language/compiler coverage
 unverified. Syntax format 27 refreshes cached facts; schema stays 25.
 

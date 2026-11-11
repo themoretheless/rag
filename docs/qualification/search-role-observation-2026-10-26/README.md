@@ -1,6 +1,6 @@
 # Search roles and coherent observation — 2026-10-26
 
-See the [contract](../../SEARCH_ROLE_EVIDENCE.md). RAGRAF's pinned search_multi
+See the [contract](../../code-intelligence/SEARCH_ROLE_EVIDENCE.md). RAGRAF's pinned search_multi
 and duplicate-role evidence contracts motivate captured usage-based family
 ranking. This stage extends search_multi with file imports/resources and makes
 both search and duplicate observations use one scoped read transaction.

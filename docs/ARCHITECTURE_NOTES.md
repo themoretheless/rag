@@ -43,7 +43,7 @@ Hybrid BM25+vector does **not** replace compile; it makes raw fallback and large
 6. **Scope before flat scan.** `wing`, `room`, `source_file`, `layer`, tag filters on search and graph export.
 7. **Compounding memory.** Good answers are filed (`file_answer`); ops are append-only (`ops_log`); re-ingest is content-hash / uri idempotent.
 8. **MCP surface stays substrate-honest.** Do not rename existing tools into a 36-tool “palace” dialect. Add tools; do not rebrand `search` as drawers-only jargon by default.
-9. **Portable embeddings path.** Exact cosine in Rust over `embedding_json`
+9. **Portable embeddings path.** Exact cosine in Rust over `chunks.embedding` (`FLOAT[]`)
    remains default until the measured VSS/HNSW gate fails. FTS/BM25 is shipped
    substrate behavior.
 10. **Agent owns synthesis; server owns storage, search, graph hygiene, policy.**
@@ -70,7 +70,7 @@ Hybrid BM25+vector does **not** replace compile; it makes raw fallback and large
 | Layer | Karpathy analogue | MemPalace analogue | rag-mcp tables / tools |
 |-------|-------------------|--------------------|------------------------|
 | **L0 Verbatim** | Raw sources (immutable by write policy) | Drawers + full text | `documents` with `layer=raw`; `ingest_raw`, `get_source` |
-| **L1 Retrieval** | Raw fallback and compiled-page retrieval | Hybrid BM25+vector, scoped search | `chunks.embedding_json` + FTS; `search(mode=lex\|vec\|hybrid)` |
+| **L1 Retrieval** | Raw fallback and compiled-page retrieval | Hybrid BM25+vector, scoped search | `chunks.embedding` (`FLOAT[]`) + FTS; `search(mode=lex\|vec\|hybrid)` |
 | **L2 Graph** | Wikilinks in markdown / Obsidian view | Halls/tags; tunnels | `graph_nodes`, `graph_edges`; extract/resolve; `get_neighbors`, `get_backlinks` |
 | **L3 Compile** | Wiki + schema + index.md + log.md | Closets/summaries; wake-up and diary compatibility | `documents` with `layer=wiki`, `wiki_index`, `wiki_schema`, `ops_log` |
 | **L4 Agent** | Human+LLM workflows | wake_up, diaries, checkpoint | MCP tools; client protocols and hooks |
@@ -96,7 +96,7 @@ Hybrid BM25+vector does **not** replace compile; it makes raw fallback and large
 ### 4.1 Keep (SPEC v1 substrate)
 
 - `documents` — full text, uri, title, metadata, timestamps  
-- `chunks` — content, `embedding_json`, char offsets, document_id  
+- `chunks` — content, `embedding` (`FLOAT[]`), char offsets, document_id  
 - `graph_nodes` — kinds: `document | tag | stub | entity`  
 - `graph_edges` — types include `wikilink | tagged | related | mentions | tunnel`
 
@@ -146,6 +146,11 @@ Embeddings: JSON float arrays; rank cosine in Rust (portable). Connection: singl
   fail-closed until complete uncapped `reembed_all`;
   `schema_version` records migrations; `source_manifest` supports incremental
   source preflight and parent/subdirectory root rebinding.
+- Schema downgrades are not supported. Schema v26 (native `FLOAT[]`
+  embeddings) is not openable by pre-v26 builds, which fail with an SQL error.
+  From v26 on, a build refuses a database whose stored version is newer than
+  its own: `database schema vN is newer than this build supports (vM)`, for
+  both `Store::open` and `Store::open_read_only`, before running any DDL.
 - Recovery bundle v2 serializes that canonical manifest with chunk vectors and
   validates it on import. Vector-bearing v1 can cross the gateway boundary only
   with explicit live-provider re-embedding; the offline CLI refuses it, while a
@@ -250,21 +255,9 @@ Not required for wiki compile to work; orthogonal product depth for multi-sessio
 
 ## 6. Module ownership
 
-```
-src/
-  document_indexer.rs        # pure preparation: chunk, metadata, embed
-  ingest.rs, source_sync.rs  # application orchestration
-  retrieval.rs, revisions.rs # transport-independent commands
-  graph/, wiki/              # graph extraction and compiled knowledge policy
-  db/                        # DuckDB repositories and transaction owner
-  storage/                   # bounded document backend contract
-  mcp/, http_api/            # wire adapters
-crates/rag-mcp-ui/           # native HTTP client and focused workspaces
-```
-
-Detailed path ownership is maintained in [`SYSTEM_MAP.md`](SYSTEM_MAP.md). File
-size alone does not trigger a move; a slice moves only with behavior tests and
-a delegation-only compatibility façade.
+Code ownership (crates, layers, composition root, background tasks, schema
+v26) lives in one place: [`refactor/ARCHITECTURE.md`](refactor/ARCHITECTURE.md).
+This document keeps the data-plane mechanics only.
 
 **Important:** the server does **not** call an LLM to “cognify” the graph (no mandatory NER). Default compilation is tool-driven: the **MCP client LLM** writes pages using wiki tools. **Optional** server-side chat (`RAG_LLM_*`, Ollama/LM Studio) may power `compile_*` / maintenance helpers when enabled; see [`LOCAL_LLM_MAINTENANCE.md`](LOCAL_LLM_MAINTENANCE.md). Server always owns storage, search, graph hygiene, and immutability policy.
 
@@ -331,7 +324,7 @@ flowchart TB
       Raw["documents layer=raw\ncontent_hash · wing · room · immutable policy"]
     end
     subgraph L1["L1 Retrieval"]
-      Chunks["chunks + embedding_json"]
+      Chunks["chunks + embedding FLOAT[]"]
       FTS["FTS / BM25"]
       RRF["RRF fusion"]
     end
@@ -447,7 +440,7 @@ sequenceDiagram
 | MemPalace “never summarize” vs wiki summaries | **Split layers:** raw drawers never paraphrased; wiki summaries live only in L3 and cite raw ids. |
 | Palace rename of tools vs SPEC names | **Keep SPEC names;** add wing/room as data, not as mandatory tool vocabulary. |
 | LLM graph extract vs deterministic wikilinks | **Deterministic first;** entity kind reserved; cognify stays out of core. |
-| Chroma multi-backend vs single DuckDB | **One logical store;** DuckDB is the full default adapter. Markdown currently implements only the honest document slice; SQL/composite ports require evidence and conformance. Remote vector DB alone is not SoT. |
+| Chroma multi-backend vs single DuckDB | **One logical store;** DuckDB is the only adapter (the library-only Markdown document slice was deleted as unused); SQL/composite ports require evidence and conformance. Remote vector DB alone is not SoT. |
 | Closets vs wiki | Wiki `source_summary` / entity pages **are** the closet; no second parallel summary store. |
 | “Server never calls LLM” vs local maintain | **No LLM for graph NER.** Optional local chat for compile/maintain tools; client remains default author of wiki knowledge. |
 | Monolithic tool surface vs modular code | Default spine stays small; full compatibility tools are grouped in bounded routers without renaming public tools. |
@@ -506,7 +499,8 @@ rewrite.
 |-----|------|
 | [`ARCHITECTURE_VISION.md`](ARCHITECTURE_VISION.md) | **North star**: what the product is |
 | [`PRODUCT_PRINCIPLES.md`](PRODUCT_PRINCIPLES.md) | ordered laws + conflict resolutions |
-| [`SYSTEM_MAP.md`](SYSTEM_MAP.md) | layers, modules, tool clusters |
+| [`SYSTEM_MAP.md`](SYSTEM_MAP.md) | runtime topology and workflows |
+| [`refactor/ARCHITECTURE.md`](refactor/ARCHITECTURE.md) | code architecture: crates, layers, composition (single source of truth) |
 | [`SPEC.md`](../SPEC.md) | v1 implementation contract |
 | [`FEATURES.md`](../FEATURES.md) | research, tool list, proposed DDL, adversarial A1–A30 |
 | [`docs/ROADMAP.md`](ROADMAP.md) | current release gate and evidence-gated candidates |

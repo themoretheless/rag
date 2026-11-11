@@ -1,6 +1,6 @@
 # Inherited declaration candidates — 2026-10-25
 
-[Contract](../../METHOD_RELATIONS.md). RAGRAF's inspected graph/query relation
+[Contract](../../code-intelligence/METHOD_RELATIONS.md). RAGRAF's inspected graph/query relation
 allowlists at pinned 075caf86dc2f6274b9c48487e521915bcdfeaf2c include overrides.
 The local implementation previously resolved inherited calls but persisted no
 separate method declaration relation. This milestone adds those candidates with

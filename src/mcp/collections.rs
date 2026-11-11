@@ -1,5 +1,6 @@
 //! Collection, outline, and dependency-order tools.
 
+use crate::mcp::error::mcp_error;
 use chrono::Utc;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
@@ -27,7 +28,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<CollectionCreateParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("collection_create", move |store| {
             let now = Utc::now();
             let collection = Collection {
                 id: Uuid::new_v4().to_string(),
@@ -38,21 +39,23 @@ impl RagServer {
                 updated_at: now.to_rfc3339(),
             };
             let entries = Self::collection_entries(params.entries);
-            let detail = self.store.create_collection(&collection, &entries)?;
-            let _ = self.store.append_ops_log(&OpsLogEntry {
-                id: String::new(),
-                seq: 0,
-                ts: now,
-                op: "collection_create".into(),
-                prefix: Some("COLLECTION".into()),
-                message: detail.collection.name.clone(),
-                entity_id: Some(detail.collection.id.clone()),
-                entity_kind: Some("collection".into()),
-                payload_json: serde_json::json!({"entry_count": detail.entries.len()}).to_string(),
-                agent_name: None,
-            });
+            let detail = store
+                .collections()
+                .create_collection(&collection, &entries)
+                .map_err(mcp_error)?;
+            store.ops_log().record(
+                &OpsLogEntry::new(
+                    "collection_create",
+                    "COLLECTION",
+                    detail.collection.name.clone(),
+                )
+                .at(now)
+                .entity(Some(detail.collection.id.clone()), "collection")
+                .payload(serde_json::json!({"entry_count": detail.entries.len()}).to_string()),
+            );
             Self::json_result(&detail)
         })
+        .await
     }
 
     #[tool(
@@ -63,7 +66,10 @@ impl RagServer {
         &self,
         Parameters(_params): Parameters<CollectionListParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| Self::json_result(&self.store.list_collections()?))
+        self.blocking_tool("collection_list", move |store| {
+            Self::json_result(&store.collections().list_collections().map_err(mcp_error)?)
+        })
+        .await
     }
 
     #[tool(
@@ -76,18 +82,20 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<CollectionGetParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let detail = self
-                .store
-                .get_collection(params.collection_id.trim())?
+        self.blocking_tool("collection_get", move |store| {
+            let detail = store
+                .collections()
+                .get_collection(params.collection_id.trim())
+                .map_err(mcp_error)?
                 .ok_or_else(|| {
-                    McpError::from(AppError::not_found(format!(
+                    mcp_error(AppError::not_found(format!(
                         "collection not found: {}",
                         params.collection_id
                     )))
                 })?;
             Self::json_result(&detail)
         })
+        .await
     }
 
     #[tool(
@@ -100,7 +108,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<CollectionUpdateParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("collection_update", move |store| {
             let entries = params.entries.map(Self::collection_entries);
             let description = params.description.as_deref().map(|value| {
                 let trimmed = value.trim();
@@ -110,26 +118,27 @@ impl RagServer {
                     Some(trimmed)
                 }
             });
-            let detail = self.store.update_collection(
-                params.collection_id.trim(),
-                params.name.as_deref(),
-                description,
-                params.metadata_json.as_deref(),
-                entries.as_deref(),
-            )?;
-            let _ = self.store.append_ops_log(&OpsLogEntry {
-                id: String::new(),
-                seq: 0,
-                ts: Utc::now(),
-                op: "collection_update".into(),
-                prefix: Some("COLLECTION".into()),
-                message: detail.collection.name.clone(),
-                entity_id: Some(detail.collection.id.clone()),
-                entity_kind: Some("collection".into()),
-                payload_json: serde_json::json!({"entry_count": detail.entries.len()}).to_string(),
-                agent_name: None,
-            });
+            let detail = store
+                .collections()
+                .update_collection(
+                    params.collection_id.trim(),
+                    params.name.as_deref(),
+                    description,
+                    params.metadata_json.as_deref(),
+                    entries.as_deref(),
+                )
+                .map_err(mcp_error)?;
+            store.ops_log().record(
+                &OpsLogEntry::new(
+                    "collection_update",
+                    "COLLECTION",
+                    detail.collection.name.clone(),
+                )
+                .entity(Some(detail.collection.id.clone()), "collection")
+                .payload(serde_json::json!({"entry_count": detail.entries.len()}).to_string()),
+            );
             Self::json_result(&detail)
         })
+        .await
     }
 }

@@ -1,6 +1,6 @@
 # Dependency-scoped resolution qualification
 
-This advances requirement 8 of [the complete plan](../../CODE_INTELLIGENCE_PLAN.md).
+This advances requirement 8 of [the complete plan](../../code-intelligence/CODE_INTELLIGENCE_PLAN.md).
 It does not close representative Rust quality, competitor performance, remaining
 Cargo/compiler semantics, semantic rename or infrastructure requirements.
 

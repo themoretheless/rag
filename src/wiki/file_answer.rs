@@ -74,10 +74,10 @@ pub async fn file_answer(
         agent,
     } = request;
     if title.trim().is_empty() {
-        return Err(AppError::config("file_answer requires a non-empty title"));
+        return Err(AppError::invalid("file_answer requires a non-empty title"));
     }
     if body.trim().is_empty() {
-        return Err(AppError::config("file_answer requires a non-empty body"));
+        return Err(AppError::invalid("file_answer requires a non-empty body"));
     }
 
     let slug_src = slug
@@ -86,7 +86,9 @@ pub async fn file_answer(
         .unwrap_or(title);
     let slug = slugify(slug_src);
     if slug.is_empty() {
-        return Err(AppError::config("file_answer could not derive a wiki slug"));
+        return Err(AppError::invalid(
+            "file_answer could not derive a wiki slug",
+        ));
     }
 
     let cites = citations.unwrap_or_default();

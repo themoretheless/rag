@@ -7,33 +7,23 @@ use std::sync::Arc;
 
 use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
 use rag_mcp::models::DocumentMetaUpdate;
+use rag_mcp::testkit::open_temp_store;
 use rag_mcp::wiki::{
     self, assert_content_mutable, FileAnswerCitation, FileAnswerRequest, WikiPageWrite,
 };
 use rag_mcp::{
-    file_answer, get_wiki_page, list_wiki_pages, write_wiki_page, AppError, Config, Store,
-    LAYER_RAW, LAYER_WIKI,
+    file_answer, get_wiki_page, list_wiki_pages, write_wiki_page, AppError, Config, LAYER_RAW,
+    LAYER_WIKI,
 };
-use tempfile::TempDir;
 
 const DIMS: usize = 32;
 
-fn open_temp_store() -> (TempDir, Store) {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("wiki_test.duckdb");
-    let store = Store::open(&path).expect("open store");
-    (dir, store)
-}
-
+/// Shared baseline with small chunks so short pages still split.
 fn test_config(dims: usize) -> Config {
     Config {
-        db_path: std::path::PathBuf::from("./rag.duckdb"),
-        embedding_model: "mock".into(),
-        embedding_dims: dims,
         chunk_size: 200,
         chunk_overlap: 20,
-        llm_enabled: false,
-        ..Config::for_tests()
+        ..rag_mcp::testkit::test_config("./rag.duckdb".into(), dims)
     }
 }
 
@@ -88,6 +78,7 @@ async fn write_wiki_page_get_list_and_ops_log() {
     assert_eq!(listed[0].id, written.document_id);
 
     let idx = store
+        .wiki_index()
         .get_wiki_index_by_slug("rust-ownership")
         .expect("index lookup")
         .expect("index entry present");
@@ -95,7 +86,7 @@ async fn write_wiki_page_get_list_and_ops_log() {
     assert_eq!(idx.kind, "concept");
     assert_eq!(idx.category.as_deref(), Some("languages"));
 
-    let ops = store.list_ops_log(20).expect("list_ops_log");
+    let ops = store.ops_log().list_ops_log(20).expect("list_ops_log");
     let wiki_op = ops
         .iter()
         .find(|e| e.op == "wiki_write")
@@ -154,6 +145,7 @@ async fn file_answer_persists_citations_index_and_ops_log() {
     );
 
     let doc = store
+        .documents()
         .get_document(&wr.document_id)
         .expect("get")
         .expect("wiki doc");
@@ -169,13 +161,14 @@ async fn file_answer_persists_citations_index_and_ops_log() {
     assert_eq!(meta["citations"].as_array().expect("citations").len(), 1);
 
     let idx = store
+        .wiki_index()
         .get_wiki_index_by_slug("why-alpha-matters")
         .expect("index")
         .expect("entry");
     assert_eq!(idx.page_id.as_deref(), Some(wr.document_id.as_str()));
     assert_eq!(idx.category.as_deref(), Some("answers"));
 
-    let ops = store.list_ops_log(20).expect("ops");
+    let ops = store.ops_log().list_ops_log(20).expect("ops");
     let fa = ops
         .iter()
         .find(|e| e.op == "file_answer")
@@ -230,6 +223,7 @@ async fn rebuild_index_from_wiki_docs_drops_orphan_catalog_rows() {
 
     // Hand-written catalog row not backed by a wiki document.
     store
+        .wiki_index()
         .update_wiki_index_entry_fields(
             "orphan-note",
             Some("Orphan Note".into()),
@@ -240,25 +234,32 @@ async fn rebuild_index_from_wiki_docs_drops_orphan_catalog_rows() {
         )
         .expect("manual index row");
 
-    assert_eq!(store.list_wiki_index().expect("list").len(), 3);
+    assert_eq!(store.wiki_index().list_wiki_index().expect("list").len(), 3);
     assert!(store
+        .wiki_index()
         .get_wiki_index_by_slug("orphan-note")
         .expect("get orphan")
         .is_some());
 
     let n = store
+        .wiki_index()
         .rebuild_wiki_index_from_docs()
         .expect("rebuild_wiki_index_from_docs");
     assert_eq!(n, 2, "rebuild should index only layer=wiki documents");
 
-    let entries = store.list_wiki_index().expect("list after rebuild");
+    let entries = store
+        .wiki_index()
+        .list_wiki_index()
+        .expect("list after rebuild");
     assert_eq!(entries.len(), 2);
     assert!(store
+        .wiki_index()
         .get_wiki_index_by_slug("orphan-note")
         .expect("orphan gone")
         .is_none());
 
     let alpha = store
+        .wiki_index()
         .get_wiki_index_by_slug("alpha")
         .expect("alpha")
         .expect("present");
@@ -267,6 +268,7 @@ async fn rebuild_index_from_wiki_docs_drops_orphan_catalog_rows() {
     assert_eq!(alpha.category.as_deref(), Some("entities"));
 
     let beta = store
+        .wiki_index()
         .get_wiki_index_by_slug("beta")
         .expect("beta")
         .expect("present");
@@ -296,6 +298,7 @@ async fn raw_layer_immutable_content_update_refused_reingest_allowed() {
     .expect("ingest_raw");
 
     let raw_doc = store
+        .documents()
         .get_document(&raw.document_id)
         .expect("get")
         .expect("raw present");
@@ -313,6 +316,7 @@ async fn raw_layer_immutable_content_update_refused_reingest_allowed() {
 
     // Store meta path refuses content rewrite on layer=raw.
     let meta_err = store
+        .documents()
         .update_document_meta(
             &raw.document_id,
             &DocumentMetaUpdate {
@@ -364,6 +368,7 @@ async fn raw_layer_immutable_content_update_refused_reingest_allowed() {
         "expected Forbidden, got {write_err}"
     );
     let still_raw = store
+        .documents()
         .get_document(&collision.document_id)
         .expect("get")
         .expect("still present");
@@ -393,6 +398,7 @@ async fn raw_layer_immutable_content_update_refused_reingest_allowed() {
     assert_eq!(again.document_id, raw.document_id);
 
     let replaced = store
+        .documents()
         .get_document(&raw.document_id)
         .expect("get")
         .expect("present");
@@ -400,12 +406,13 @@ async fn raw_layer_immutable_content_update_refused_reingest_allowed() {
     assert_eq!(replaced.layer, LAYER_RAW);
 
     let sources = store
+        .documents()
         .list_documents_by_layer(LAYER_RAW)
         .expect("list_sources");
     assert_eq!(sources.len(), 2, "two raw uris: alpha + stolen-slug");
 
     // Re-ingest and initial ingest both append ops_log.
-    let ops = store.list_ops_log(50).expect("ops");
+    let ops = store.ops_log().list_ops_log(50).expect("ops");
     let ingest_ops: Vec<_> = ops.iter().filter(|e| e.op == "ingest_raw").collect();
     assert!(
         ingest_ops.len() >= 3,
@@ -460,6 +467,7 @@ async fn wiki_write_file_answer_and_rebuild_share_ops_log_timeline() {
 
     // Corrupt catalog then rebuild (MCP rebuild_index path = store rebuild + optional log).
     store
+        .wiki_index()
         .update_wiki_index_entry_fields(
             "ghost",
             Some("Ghost".into()),
@@ -469,15 +477,20 @@ async fn wiki_write_file_answer_and_rebuild_share_ops_log_timeline() {
             None,
         )
         .expect("ghost entry");
-    let rebuilt = store.rebuild_wiki_index_from_docs().expect("rebuild_index");
+    let rebuilt = store
+        .wiki_index()
+        .rebuild_wiki_index_from_docs()
+        .expect("rebuild_index");
     assert_eq!(rebuilt, 2);
     assert!(store
+        .wiki_index()
         .get_wiki_index_by_slug("ghost")
         .expect("lookup")
         .is_none());
 
     // Explicit ops_log append (Karpathy log.md style) after rebuild.
     let logged = store
+        .ops_log()
         .append_ops_log(&rag_mcp::OpsLogEntry {
             id: String::new(),
             seq: 0,
@@ -494,7 +507,7 @@ async fn wiki_write_file_answer_and_rebuild_share_ops_log_timeline() {
     assert!(logged.seq >= 1);
     assert_eq!(logged.op, "rebuild_index");
 
-    let ops = store.list_ops_log(50).expect("timeline");
+    let ops = store.ops_log().list_ops_log(50).expect("timeline");
     let ops_names: Vec<&str> = ops.iter().map(|e| e.op.as_str()).collect();
     assert!(
         ops_names.contains(&"wiki_write"),
@@ -510,7 +523,7 @@ async fn wiki_write_file_answer_and_rebuild_share_ops_log_timeline() {
     );
 
     // Newest-first: rebuild_index should appear before older wiki_write when listing recent.
-    let recent = store.list_ops_log(5).expect("recent");
+    let recent = store.ops_log().list_ops_log(5).expect("recent");
     assert_eq!(recent[0].op, "rebuild_index");
     assert!(recent
         .iter()

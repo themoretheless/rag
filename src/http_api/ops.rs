@@ -15,9 +15,8 @@ use super::{
     HttpState,
 };
 use crate::diagnostics::DiagnosticsService;
-use crate::mcp::surface::spine_tool_names;
-use crate::mcp::RagServer;
 use crate::telemetry;
+use crate::tool_spec::{spine_tool_names, TOOL_SPECS};
 use crate::util::resolve_allowlisted_output_file;
 
 /// Recent calls returned when `limit` is absent.
@@ -193,8 +192,9 @@ async fn status(
     State(st): State<HttpState>,
     Query(query): Query<StatusQuery>,
 ) -> impl IntoResponse {
-    crate::util::blocking_section(|| {
-        let service = DiagnosticsService::new(&st.store, &st.config);
+    let config = st.config.clone();
+    st.blocking_response("status", move |store| {
+        let service = DiagnosticsService::new(store, &config);
         let result = if query.summary {
             service.status_summary().map(api_ok)
         } else {
@@ -202,14 +202,17 @@ async fn status(
         };
         result.unwrap_or_else(api_err)
     })
+    .await
 }
 async fn doctor(State(st): State<HttpState>) -> impl IntoResponse {
-    crate::util::blocking_section(|| {
-        match DiagnosticsService::new(&st.store, &st.config).doctor() {
+    let config = st.config.clone();
+    st.blocking_response("doctor", move |store| {
+        match DiagnosticsService::new(store, &config).doctor() {
             Ok(value) => api_ok(value),
             Err(error) => api_err(error),
         }
     })
+    .await
 }
 async fn version() -> impl IntoResponse {
     api_ok(
@@ -217,10 +220,13 @@ async fn version() -> impl IntoResponse {
     )
 }
 async fn projects(State(st): State<HttpState>) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.list_projects() {
-        Ok(items) => api_ok(json!({"ok":true, "items":items})),
-        Err(error) => api_err(error),
+    st.blocking_response("projects", move |store| {
+        match store.documents().list_projects() {
+            Ok(items) => api_ok(json!({"ok":true, "items":items})),
+            Err(error) => api_err(error),
+        }
     })
+    .await
 }
 #[derive(Deserialize)]
 struct ProjectHomeQuery {
@@ -231,17 +237,23 @@ async fn project_home(
     State(st): State<HttpState>,
     Query(query): Query<ProjectHomeQuery>,
 ) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.project_home(&query.project) {
-        Ok(value) => api_ok(json!({"ok": true, "project": value})),
-        Err(error) => api_err(error),
+    st.blocking_response("project_home", move |store| {
+        match store.documents().project_home(&query.project) {
+            Ok(value) => api_ok(json!({"ok": true, "project": value})),
+            Err(error) => api_err(error),
+        }
     })
+    .await
 }
 
 async fn checkpoint(State(st): State<HttpState>) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.vacuum_store() {
-        Ok(report) => api_ok(json!({"ok": true, "report": report})),
-        Err(error) => api_err(error),
+    st.blocking_response("checkpoint", move |store| {
+        match store.maintenance().vacuum_store() {
+            Ok(report) => api_ok(json!({"ok": true, "report": report})),
+            Err(error) => api_err(error),
+        }
     })
+    .await
 }
 
 #[derive(Deserialize)]
@@ -265,7 +277,9 @@ async fn backup(State(st): State<HttpState>, Json(body): Json<BackupBody>) -> im
     }
     let store = st.store.clone();
     let backup = super::run_blocking("backup", move || {
-        store.backup_database(&path, body.dry_run, body.overwrite)
+        store
+            .recovery()
+            .backup_database(&path, body.dry_run, body.overwrite)
     })
     .await;
     match backup {
@@ -280,7 +294,7 @@ const fn default_true() -> bool {
 async fn capabilities(State(st): State<HttpState>) -> impl IntoResponse {
     api_ok(json!({
         "api_version":"v1", "mcp_http":st.mcp_http, "tool_surface":st.config.tool_surface.as_str(),
-        "tool_count": if st.config.tool_surface.as_str() == "spine" { spine_tool_names().len() } else { RagServer::registered_tool_count() },
+        "tool_count": if st.config.tool_surface.as_str() == "spine" { spine_tool_names().len() } else { TOOL_SPECS.len() },
         "features":CAPABILITY_FEATURES,
         "deprecated_tools":[],
         "auth":st.auth
@@ -374,7 +388,12 @@ async fn agents(State(st): State<HttpState>) -> impl IntoResponse {
         entry.last_tool = Some(activity.last_tool);
         entry.p95_ms = activity.p95_ms;
     }
-    let ops = match crate::util::blocking_section(|| st.store.list_recent_ops(AGENT_SCAN_ROWS)) {
+    let ops = match st
+        .blocking("recent ops", |store| {
+            store.ops_log().list_recent_ops(AGENT_SCAN_ROWS)
+        })
+        .await
+    {
         Ok(value) => value,
         Err(error) => return api_err(error),
     };
@@ -390,12 +409,15 @@ async fn agents(State(st): State<HttpState>) -> impl IntoResponse {
         }
     }
     // Counts and timestamps only: read diary rows without their bodies.
-    let diary =
-        match crate::util::blocking_section(|| st.store.list_diary_activity(None, AGENT_SCAN_ROWS))
-        {
-            Ok(value) => value,
-            Err(error) => return api_err(error),
-        };
+    let diary = match st
+        .blocking("diary activity", |store| {
+            store.documents().list_diary_activity(None, AGENT_SCAN_ROWS)
+        })
+        .await
+    {
+        Ok(value) => value,
+        Err(error) => return api_err(error),
+    };
     for entry in diary {
         let agent = row(&mut rows, &entry.agent_name);
         agent.diary_count += 1;
@@ -439,11 +461,13 @@ mod tests {
             tool_surface: "spine".parse().unwrap(),
             ..Config::for_tests()
         };
-        HttpState::new(
-            Arc::new(crate::db::Store::open(&config.db_path).unwrap()),
+        HttpState::from_context(
+            crate::context::AppContext::with_store(
+                Arc::new(crate::testkit::open_test_store(&config.db_path).unwrap()),
+                Arc::new(MockEmbedder::new(16)),
+                config,
+            ),
             mcp_http,
-            config,
-            Arc::new(MockEmbedder::new(16)),
         )
     }
 

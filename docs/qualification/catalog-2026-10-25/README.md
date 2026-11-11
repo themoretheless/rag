@@ -2,7 +2,7 @@
 
 The reference `op_catalog` is a project registry, not merely a file listing. The
 previous local operation exposed an immutable manifest but no project registry or
-continuation. The [new contract](../../CODE_CATALOG.md) preserves that default and
+continuation. The [new contract](../../code-intelligence/CODE_CATALOG.md) preserves that default and
 adds captured project inventory, declared corpus hash comparison, current sync
 roots and explicit unverified states.
 

@@ -1,7 +1,7 @@
 # Rust trait/impl qualification — 2026-10-25
 
-Scope: the bounded rules in [RUST_TRAIT_BINDING.md](../../RUST_TRAIT_BINDING.md).
-The complete [implementation plan](../../CODE_INTELLIGENCE_PLAN.md) remains open.
+Scope: the bounded rules in [RUST_TRAIT_BINDING.md](../../code-intelligence/RUST_TRAIT_BINDING.md).
+The complete [implementation plan](../../code-intelligence/CODE_INTELLIGENCE_PLAN.md) remains open.
 
 ## Reproduce
 
