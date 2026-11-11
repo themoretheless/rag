@@ -1900,16 +1900,22 @@ fn change_log_refresh_compacts_the_document_table_after_mass_deletes() {
         let generation = fts::chunks_generation(&conn).unwrap();
         previous = refresh_vector_snapshot(&conn, &previous, generation, None).unwrap();
     }
-    assert_eq!(previous.documents.ids.len(), 100, "below the threshold: kept");
+    assert_eq!(
+        previous.documents.ids.len(),
+        100,
+        "below the threshold: kept"
+    );
     // ... a mass delete compacts it.
     for id in &ids[10..80] {
         store.documents().delete_document(id).unwrap();
     }
     let conn = store.lock().unwrap();
     let generation = fts::chunks_generation(&conn).unwrap();
-    assert!(fts::changed_documents_since(&conn, previous.generation, generation)
-        .unwrap()
-        .is_some());
+    assert!(
+        fts::changed_documents_since(&conn, previous.generation, generation)
+            .unwrap()
+            .is_some()
+    );
     let refreshed = refresh_vector_snapshot(&conn, &previous, generation, None).unwrap();
     assert_eq!(refreshed.documents.ids.len(), 20);
     assert_eq!(refreshed.documents.index.len(), 20);
@@ -1917,7 +1923,13 @@ fn change_log_refresh_compacts_the_document_table_after_mass_deletes() {
         snapshot
             .chunks
             .iter()
-            .map(|c| (c.id.to_string(), snapshot.document_id(c).to_owned(), c.vector.to_vec()))
+            .map(|c| {
+                (
+                    c.id.to_string(),
+                    snapshot.document_id(c).to_owned(),
+                    c.vector.to_vec(),
+                )
+            })
             .collect::<Vec<_>>()
     };
     let rebuilt = build_vector_snapshot(&conn, generation).unwrap();
@@ -1954,7 +1966,13 @@ fn change_log_refresh_keeps_a_re_parented_chunk_once() {
         snapshot
             .chunks
             .iter()
-            .map(|c| (c.id.to_string(), snapshot.document_id(c).to_owned(), c.vector.to_vec()))
+            .map(|c| {
+                (
+                    c.id.to_string(),
+                    snapshot.document_id(c).to_owned(),
+                    c.vector.to_vec(),
+                )
+            })
             .collect::<Vec<_>>()
     };
     let ids: Vec<String> = view(&refreshed).into_iter().map(|row| row.0).collect();
@@ -1967,7 +1985,10 @@ fn change_log_refresh_keeps_a_re_parented_chunk_once() {
         .find(|row| row.0 == "a-1")
         .unwrap();
     assert_eq!(moved.1, "b", "the newest copy wins");
-    assert_eq!(view(&refreshed), view(&build_vector_snapshot(&conn, generation).unwrap()));
+    assert_eq!(
+        view(&refreshed),
+        view(&build_vector_snapshot(&conn, generation).unwrap())
+    );
 }
 
 fn parent_fixture_store() -> (tempfile::TempDir, Store) {

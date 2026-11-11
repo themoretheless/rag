@@ -374,7 +374,12 @@ fn interrupted_embedding_backfill_resumes_on_next_open() {
         let conn = duckdb::Connection::open(&path).unwrap();
         conn.execute_batch("ALTER TABLE chunks ADD COLUMN embedding FLOAT[]")
             .unwrap();
-        assert_eq!(backfill_chunk_embeddings(&conn, 4, Some(1)).unwrap().converted, 4);
+        assert_eq!(
+            backfill_chunk_embeddings(&conn, 4, Some(1))
+                .unwrap()
+                .converted,
+            4
+        );
         let pending: i64 = conn
             .query_row(
                 "SELECT count(*) FROM chunks WHERE embedding IS NULL",
@@ -478,10 +483,14 @@ fn unconvertible_embeddings_are_quarantined_and_the_store_still_opens() {
             expected,
             "raw text is kept verbatim"
         );
-        assert!(quarantined.iter().all(|(_, _, _, reason)| !reason.is_empty()));
+        assert!(quarantined
+            .iter()
+            .all(|(_, _, _, reason)| !reason.is_empty()));
         for (_, _, raw, reason) in &quarantined {
             let expected = match raw.as_str() {
-                "[null]" | "[0.5, null]" | "[1e39]" | "[-1e39, 0.5]" => "non_finite_or_null_element",
+                "[null]" | "[0.5, null]" | "[1e39]" | "[-1e39, 0.5]" => {
+                    "non_finite_or_null_element"
+                }
                 _ => "unparseable",
             };
             assert_eq!(reason, expected, "reason for {raw:?}");
@@ -522,7 +531,12 @@ fn unconvertible_embeddings_are_quarantined_and_the_store_still_opens() {
             .unwrap()
             .into_iter()
             .filter(|chunk| chunk.document_id != "doc-bad")
-            .map(|chunk| (chunk.id, chunk.embedding.iter().map(|v| v.to_bits()).collect()))
+            .map(|chunk| {
+                (
+                    chunk.id,
+                    chunk.embedding.iter().map(|v| v.to_bits()).collect(),
+                )
+            })
             .collect();
         chunks.sort();
         chunks
@@ -551,7 +565,11 @@ fn unconvertible_embeddings_are_quarantined_and_the_store_still_opens() {
         }
     );
     let kept: i64 = conn
-        .query_row("SELECT count(*) FROM chunk_embedding_quarantine", [], |row| row.get(0))
+        .query_row(
+            "SELECT count(*) FROM chunk_embedding_quarantine",
+            [],
+            |row| row.get(0),
+        )
         .unwrap();
     assert_eq!(kept as usize, BAD_EMBEDDINGS.len());
 }

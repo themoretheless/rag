@@ -814,8 +814,7 @@ fn migrate_core(conn: &Connection) -> Result<()> {
 /// once and every later open costs one aggregate. Rows keep `label` untouched:
 /// `label_key` is the match key, `label` stays the display form (§1.2).
 pub fn backfill_graph_node_label_keys(conn: &Connection) -> Result<u64> {
-    const COUNT_MISSING: &str =
-        "SELECT EXISTS (SELECT 1 FROM graph_nodes WHERE label_key IS NULL)";
+    const COUNT_MISSING: &str = "SELECT EXISTS (SELECT 1 FROM graph_nodes WHERE label_key IS NULL)";
     const PENDING: &str =
         "SELECT id, label FROM graph_nodes WHERE label_key IS NULL ORDER BY id ASC";
 
@@ -1062,8 +1061,9 @@ fn backfill_embedding_batch(
     const PENDING: &str = "embedding IS NULL AND ($1 IS NULL OR id > $1) \
          AND NOT EXISTS (SELECT 1 FROM chunk_embedding_quarantine q WHERE q.chunk_id = chunks.id)";
     let ids: Vec<String> = {
-        let mut stmt =
-            conn.prepare(&format!("SELECT id FROM chunks WHERE {PENDING} ORDER BY id LIMIT $2"))?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id FROM chunks WHERE {PENDING} ORDER BY id LIMIT $2"
+        ))?;
         crate::db::rows::query_vec(&mut stmt, duckdb::params![cursor, batch as i64], |row| {
             Ok(row.get(0)?)
         })?
@@ -1207,7 +1207,10 @@ pub(crate) fn drop_legacy_embedding_column_until(
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     })?;
     drop(stmt);
-    let ddl: Vec<String> = indexes.iter().map(|(_, sql)| create_index_if_not_exists(sql)).collect();
+    let ddl: Vec<String> = indexes
+        .iter()
+        .map(|(_, sql)| create_index_if_not_exists(sql))
+        .collect();
     conn.execute_batch(CREATE_META)?;
     upsert_meta(
         conn,
@@ -1222,7 +1225,9 @@ pub(crate) fn drop_legacy_embedding_column_until(
     }
     conn.execute_batch("ALTER TABLE chunks DROP COLUMN embedding_json")?;
     if crash_after_drop {
-        return Err(AppError::db("simulated crash after the embedding_json drop"));
+        return Err(AppError::db(
+            "simulated crash after the embedding_json drop",
+        ));
     }
     replay_pending_chunk_indexes(conn)?;
     Ok(())
@@ -1257,7 +1262,9 @@ fn replay_pending_chunk_indexes(conn: &Connection) -> Result<usize> {
         return Ok(0);
     };
     let ddl: Vec<String> = serde_json::from_str(&pending).map_err(|error| {
-        AppError::db(format!("meta {META_PENDING_CHUNK_INDEXES} is not a JSON list: {error}"))
+        AppError::db(format!(
+            "meta {META_PENDING_CHUNK_INDEXES} is not a JSON list: {error}"
+        ))
     })?;
     for sql in &ddl {
         conn.execute_batch(&create_index_if_not_exists(sql))?;

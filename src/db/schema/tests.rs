@@ -435,15 +435,27 @@ fn open_repairs_run_on_a_current_schema_store() {
     let store = crate::db::Store::open(&path).unwrap();
     let conn = store.lock().unwrap();
     let parent: Option<String> = conn
-        .query_row("SELECT parent_chunk_id FROM chunks WHERE id = 'c1'", [], |r| r.get(0))
+        .query_row(
+            "SELECT parent_chunk_id FROM chunks WHERE id = 'c1'",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
     assert_eq!(parent.as_deref(), Some("c0"));
     let digest: Option<i64> = conn
-        .query_row("SELECT embedding_digest FROM chunks WHERE id = 'c1'", [], |r| r.get(0))
+        .query_row(
+            "SELECT embedding_digest FROM chunks WHERE id = 'c1'",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
     assert!(digest.is_some());
     let key: Option<String> = conn
-        .query_row("SELECT label_key FROM graph_nodes WHERE id = 'n1'", [], |r| r.get(0))
+        .query_row(
+            "SELECT label_key FROM graph_nodes WHERE id = 'n1'",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
     assert!(key.is_some());
     let origins: Vec<(String, String)> = {
@@ -476,7 +488,10 @@ fn stored_schema_version_is_none_without_a_ledger_and_reads_it_otherwise() {
     assert_eq!(stored_schema_version(&conn).unwrap(), Some(SCHEMA_VERSION));
     conn.execute_batch("DROP TABLE schema_version; CREATE TABLE schema_version (version VARCHAR); INSERT INTO schema_version VALUES ('x')")
         .unwrap();
-    assert!(stored_schema_version(&conn).is_err(), "a broken ledger is an error, not 'no ledger'");
+    assert!(
+        stored_schema_version(&conn).is_err(),
+        "a broken ledger is an error, not 'no ledger'"
+    );
 }
 
 #[test]
@@ -496,8 +511,14 @@ fn a_newer_schema_is_refused_with_a_clear_error() {
         "database schema v{} is newer than this build supports (v{SCHEMA_VERSION})",
         SCHEMA_VERSION + 1
     );
-    let error = crate::db::Store::open(&path).err().expect("refused").to_string();
+    let error = crate::db::Store::open(&path)
+        .err()
+        .expect("refused")
+        .to_string();
     assert!(error.contains(&expected), "{error}");
-    let error = crate::db::Store::open_read_only(&path).err().expect("refused").to_string();
+    let error = crate::db::Store::open_read_only(&path)
+        .err()
+        .expect("refused")
+        .to_string();
     assert!(error.contains(&expected), "{error}");
 }
