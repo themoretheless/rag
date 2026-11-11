@@ -1204,10 +1204,17 @@ impl RawSnapshot {
                         chunk.chunk_index,
                     )
                 };
+                // A chunk re-parented into a changed document is read fresh;
+                // drop its stale copy under the old (unchanged) document so a
+                // chunk id appears once, newest wins.
+                let fresh_ids: HashSet<Arc<str>> =
+                    fresh.iter().map(|chunk| chunk.id.clone()).collect();
                 let mut kept = previous
                     .chunks
                     .iter()
-                    .filter(|chunk| !changed[chunk.document as usize])
+                    .filter(|chunk| {
+                        !changed[chunk.document as usize] && !fresh_ids.contains(&chunk.id)
+                    })
                     .peekable();
                 let mut fresh = fresh.into_iter().peekable();
                 let mut merged = Vec::with_capacity(previous.chunks.len() + fresh.len());

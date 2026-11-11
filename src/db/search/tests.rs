@@ -1924,6 +1924,52 @@ fn change_log_refresh_compacts_the_document_table_after_mass_deletes() {
     assert_eq!(view(&refreshed), view(&rebuilt));
 }
 
+#[test]
+fn change_log_refresh_keeps_a_re_parented_chunk_once() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&dir.path().join("reparent.duckdb")).expect("open");
+    for doc in ["a", "b"] {
+        plain_document(&store, doc);
+        store
+            .chunks()
+            .insert_chunks(&[two_dim_chunk(doc, 0, 0.1), two_dim_chunk(doc, 1, 0.4)])
+            .unwrap();
+    }
+    let previous = {
+        let conn = store.lock().unwrap();
+        let generation = fts::chunks_generation(&conn).unwrap();
+        build_vector_snapshot(&conn, generation).unwrap()
+    };
+    let conn = store.lock().unwrap();
+    // Move a-1 to document b with a new vector; the change log names only b.
+    conn.execute_batch(
+        "UPDATE chunks SET document_id = 'b', chunk_index = 2, embedding = [0.9, 0.1], \
+         embedding_digest = 99 WHERE id = 'a-1'",
+    )
+    .unwrap();
+    fts::mark_embeddings_changed_for(&conn, Some(&["b"])).unwrap();
+    let generation = fts::chunks_generation(&conn).unwrap();
+    let refreshed = refresh_vector_snapshot(&conn, &previous, generation, None).unwrap();
+    let view = |snapshot: &VectorSnapshot| {
+        snapshot
+            .chunks
+            .iter()
+            .map(|c| (c.id.to_string(), snapshot.document_id(c).to_owned(), c.vector.to_vec()))
+            .collect::<Vec<_>>()
+    };
+    let ids: Vec<String> = view(&refreshed).into_iter().map(|row| row.0).collect();
+    let mut unique = ids.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(ids.len(), unique.len(), "a chunk id appears once: {ids:?}");
+    let moved = view(&refreshed)
+        .into_iter()
+        .find(|row| row.0 == "a-1")
+        .unwrap();
+    assert_eq!(moved.1, "b", "the newest copy wins");
+    assert_eq!(view(&refreshed), view(&build_vector_snapshot(&conn, generation).unwrap()));
+}
+
 fn parent_fixture_store() -> (tempfile::TempDir, Store) {
     let root = tempfile::tempdir().unwrap();
     let store = Store::open(&root.path().join("parent.duckdb")).unwrap();
