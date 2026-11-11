@@ -197,6 +197,11 @@ pub struct BundleImportReport {
     pub documents_overwritten: u64,
     pub documents_skipped: u64,
     pub chunks_inserted: u64,
+    /// Chunks the bundle marked as quarantined (empty vector): not inserted,
+    /// recorded in `chunk_embedding_quarantine`, their document flagged for
+    /// re-embedding.
+    #[serde(default)]
+    pub chunks_quarantined: u64,
     pub conflicts: u64,
     pub errors: Vec<String>,
 }

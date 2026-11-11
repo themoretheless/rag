@@ -1443,3 +1443,112 @@ fn import_normalizes_document_columns_like_every_other_write() {
         )
     );
 }
+
+/// A chunk the v26 migration quarantined has a NULL embedding. Export must not
+/// produce a bundle its own import rejects, and the document must stay flagged
+/// for re-embedding on the other side.
+#[test]
+fn recovery_round_trip_keeps_quarantined_chunks_flagged() {
+    let root = tempfile::tempdir().unwrap();
+    let source = Store::open(&root.path().join("source.duckdb")).unwrap();
+    source
+        .embedding_manifest()
+        .set_embedding_manifest(&recovery_manifest())
+        .unwrap();
+    for (doc, chunk) in [("good-doc", "good-chunk"), ("bad-doc", "bad-chunk")] {
+        let mut document = recovery_document(doc, &format!("recovery://{doc}"), "body");
+        document.content_hash = Some(format!("{doc}-hash"));
+        source.documents().upsert_document(&document).unwrap();
+        source
+            .chunks()
+            .insert_chunks(&[recovery_chunk(chunk, doc, "chunk text")])
+            .unwrap();
+    }
+    {
+        // What `backfill_chunk_embeddings` + `record_embedding_quarantine`
+        // leave in a store migrated to v26 (its `embedding` column is nullable).
+        let conn = source.lock().unwrap();
+        let indexes: Vec<(String, String)> = conn
+            .prepare("SELECT index_name, sql FROM duckdb_indexes() WHERE table_name = 'chunks'")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap();
+        for (name, _) in &indexes {
+            conn.execute_batch(&format!("DROP INDEX {name}")).unwrap();
+        }
+        conn.execute_batch("ALTER TABLE chunks ALTER COLUMN embedding DROP NOT NULL")
+            .unwrap();
+        for (_, sql) in &indexes {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.execute_batch(
+            "UPDATE chunks SET embedding = NULL WHERE id = 'bad-chunk';
+             INSERT INTO chunk_embedding_quarantine
+               (chunk_id, document_id, raw_embedding_json, reason, quarantined_at)
+               VALUES ('bad-chunk', 'bad-doc', '[1,\"x\"]', 'non_numeric', CURRENT_TIMESTAMP);
+             UPDATE documents SET content_hash = NULL WHERE id = 'bad-doc';",
+        )
+        .unwrap();
+    }
+
+    let bundle = source.recovery().recovery_bundle().unwrap();
+    let bad = bundle
+        .documents
+        .iter()
+        .find(|item| item.document.id == "bad-doc")
+        .unwrap();
+    assert!(bad.chunks[0].embedding.is_empty(), "quarantine mark");
+    assert!(bad.document.content_hash.is_none());
+    // The bundle survives its own serialized form.
+    let bundle: RecoveryBundle =
+        serde_json::from_str(&serde_json::to_string(&bundle).unwrap()).unwrap();
+
+    let target = Store::open(&root.path().join("target.duckdb")).unwrap();
+    let report = target
+        .recovery()
+        .import_recovery_bundle(
+            &bundle,
+            ConflictPolicy::Error,
+            false,
+            Path::new("fixture.json"),
+            "json",
+        )
+        .unwrap();
+    assert!(report.success, "{report:?}");
+    assert_eq!(report.chunks_inserted, 1);
+    assert_eq!(report.chunks_quarantined, 1);
+
+    let conn = target.lock().unwrap();
+    let chunks: Vec<(String, i64)> = conn
+        .prepare("SELECT id, len(embedding) FROM chunks ORDER BY id")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<std::result::Result<_, _>>()
+        .unwrap();
+    assert_eq!(chunks, vec![("good-chunk".to_string(), 2)]);
+    let quarantined: Vec<String> = conn
+        .prepare("SELECT document_id FROM chunk_embedding_quarantine")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<std::result::Result<_, _>>()
+        .unwrap();
+    assert_eq!(quarantined, vec!["bad-doc".to_string()]);
+    let hashes: Vec<(String, Option<String>)> = conn
+        .prepare("SELECT id, content_hash FROM documents ORDER BY id")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<std::result::Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        hashes,
+        vec![
+            ("bad-doc".to_string(), None),
+            ("good-doc".to_string(), Some("good-doc-hash".to_string())),
+        ]
+    );
+}

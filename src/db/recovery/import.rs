@@ -115,6 +115,15 @@ pub(super) fn validate_bundle_structure(bundle: &RecoveryBundle) -> Result<()> {
     Ok(())
 }
 
+/// Reason recorded in `chunk_embedding_quarantine` for a chunk that arrived
+/// through a recovery bundle without a vector.
+const IMPORTED_QUARANTINE_REASON: &str = "recovery_bundle_without_embedding";
+
+/// Check every chunk vector against the bundle manifest. An empty vector is
+/// the bundle's mark for a quarantined chunk (NULL embedding in the source,
+/// see `chunk_embedding_quarantine`): it is exported as `[]`, accepted here
+/// and recorded as quarantined on import with its document flagged for
+/// re-embedding.
 pub(super) fn validate_bundle_embeddings(
     bundle: &RecoveryBundle,
 ) -> Result<Option<&EmbeddingManifest>> {
@@ -147,7 +156,7 @@ pub(super) fn validate_bundle_embeddings(
         .documents
         .iter()
         .flat_map(|item| &item.chunks)
-        .find(|chunk| chunk.embedding.len() != expected_dims)
+        .find(|chunk| !chunk.embedding.is_empty() && chunk.embedding.len() != expected_dims)
     {
         return Err(AppError::embeddings(format!(
             "recovery bundle chunk {} has dims={}, expected {} from embedding_manifest",
@@ -449,6 +458,7 @@ impl Recovery<'_> {
             documents_overwritten: 0,
             documents_skipped: 0,
             chunks_inserted: 0,
+            chunks_quarantined: 0,
             conflicts: 0,
             errors: Vec::new(),
         };
@@ -550,7 +560,13 @@ impl Recovery<'_> {
             } else {
                 report.documents_inserted += 1;
             }
-            report.chunks_inserted += item.chunks.len() as u64;
+            let quarantined = item
+                .chunks
+                .iter()
+                .filter(|chunk| chunk.embedding.is_empty())
+                .count() as u64;
+            report.chunks_inserted += item.chunks.len() as u64 - quarantined;
+            report.chunks_quarantined += quarantined;
             if let Some(existing_document_id) = existing_document_id {
                 crate::db::store::delete_document_locked(&tx, existing_document_id)?;
                 fts_marked_dirty = true;
@@ -571,6 +587,7 @@ impl Recovery<'_> {
             let chunks: Vec<Chunk> = item
                 .chunks
                 .iter()
+                .filter(|chunk| !chunk.embedding.is_empty())
                 .map(|chunk| Chunk {
                     document_id: d.id.clone(),
                     ..chunk.clone()
@@ -578,6 +595,7 @@ impl Recovery<'_> {
                 .collect();
             let embedding_json = crate::db::store::embedding_json(&chunks)?;
             crate::db::store::insert_chunks_locked(&tx, &chunks, &embedding_json)?;
+            restore_quarantined_chunks_locked(&tx, &d.id, &item.chunks)?;
         }
         if report.success && !dry_run {
             tx.commit()?;
@@ -586,4 +604,32 @@ impl Recovery<'_> {
         }
         Ok(report)
     }
+}
+
+/// Restore the quarantine of chunks the bundle marked with an empty vector.
+/// A fresh store's `chunks.embedding` is `NOT NULL`, so such a chunk is not
+/// inserted; it gets a `chunk_embedding_quarantine` row and its document's
+/// `content_hash` is cleared, so the next sync re-chunks and re-embeds it.
+fn restore_quarantined_chunks_locked(
+    conn: &duckdb::Connection,
+    document_id: &str,
+    chunks: &[Chunk],
+) -> Result<()> {
+    let mut any = false;
+    for chunk in chunks.iter().filter(|chunk| chunk.embedding.is_empty()) {
+        any = true;
+        conn.execute(
+            "INSERT OR REPLACE INTO chunk_embedding_quarantine \
+               (chunk_id, document_id, raw_embedding_json, reason, quarantined_at) \
+             VALUES (?, ?, NULL, ?, CURRENT_TIMESTAMP)",
+            duckdb::params![chunk.id, document_id, IMPORTED_QUARANTINE_REASON],
+        )?;
+    }
+    if any {
+        conn.execute(
+            "UPDATE documents SET content_hash = NULL WHERE id = ?",
+            duckdb::params![document_id],
+        )?;
+    }
+    Ok(())
 }
