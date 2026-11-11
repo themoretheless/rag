@@ -36,7 +36,7 @@ fn captured_byte_copy_groups_omit_legacy_and_invalidate_changed_text_metadata() 
     ] {
         let path = dir.path().join(format!("{id}.txt"));
         std::fs::write(&path, raw).unwrap();
-        let extracted = crate::file_ingest::extract_file(&path).unwrap();
+        let extracted = rag_mcp::file_ingest::extract_file(&path).unwrap();
         store
             .documents()
             .upsert_document(&Document {

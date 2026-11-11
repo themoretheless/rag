@@ -60,11 +60,7 @@ pub(crate) fn persist<'a>(conn: &Connection, doc: &'a Document) -> Result<Cow<'a
     normalized.metadata_json = serde_json::to_string(&metadata)?;
     Ok(Cow::Owned(normalized))
 }
-pub(crate) fn read<'a>(
-    conn: &Connection,
-    content: &'a str,
-    metadata: &str,
-) -> Result<Cow<'a, str>> {
+pub fn read<'a>(conn: &Connection, content: &'a str, metadata: &str) -> Result<Cow<'a, str>> {
     if !metadata.contains("code_source_hash") {
         return Ok(Cow::Borrowed(content));
     }
@@ -89,7 +85,7 @@ pub(crate) fn read<'a>(
     }
     Ok(Cow::Owned(source))
 }
-pub(crate) fn is_preserved_html(
+pub fn is_preserved_html(
     conn: &Connection,
     path: &std::path::Path,
     metadata: Option<&str>,
@@ -111,7 +107,7 @@ pub(crate) fn is_preserved_html(
             && read(conn, "", m).is_ok()
     })
 }
-pub(crate) fn same_attachment(
+pub fn same_attachment(
     old: Option<&str>,
     new: &serde_json::Map<String, serde_json::Value>,
 ) -> bool {

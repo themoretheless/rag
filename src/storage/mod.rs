@@ -121,17 +121,10 @@ pub(crate) fn install_store_hooks() {
     register_schema_extensions();
 }
 
-/// Composition: register the tables owned by the code-intelligence modules,
+/// Composition: register the tables owned by the code-intelligence crate,
 /// so every store opened afterwards has them from the start.
 pub fn register_schema_extensions() {
-    for extension in [
-        crate::analysis_tasks::SCHEMA,
-        crate::gate::SCHEMA,
-        crate::calibration::SCHEMA,
-        crate::external_db::SCHEMA,
-    ] {
-        crate::db::schema::register_schema_extension(extension);
-    }
+    rag_code_intel::register_schema_extensions();
 }
 
 /// Capability names of the DuckDB backend.

@@ -367,6 +367,6 @@ fn publication_drift_has_stable_cursors_and_ack_requires_write_role() {
         })
         .unwrap();
     assert_eq!(second["items"][0]["kind"], "modified");
-    assert!(!crate::access::AccessRole::Read.allows_tool("drift_ack"));
-    assert!(crate::access::AccessRole::Write.allows_tool("drift_ack"));
+    assert!(!rag_mcp::access::AccessRole::Read.allows_tool("drift_ack"));
+    assert!(rag_mcp::access::AccessRole::Write.allows_tool("drift_ack"));
 }

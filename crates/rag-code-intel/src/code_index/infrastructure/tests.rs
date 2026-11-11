@@ -8,7 +8,7 @@ impl Fixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let store = crate::testkit::open_test_store(&dir.path().join("infra.duckdb")).unwrap();
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let root = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
             .join("tests/fixtures/code-intelligence/infrastructure");
         let mut sources = BTreeMap::new();
         for path in [
@@ -113,7 +113,7 @@ fn service_image_multistage_executable_code_paths_have_exact_source_support() {
     assert_eq!(result["status"], "paths", "{result}");
     let expected: Value = serde_json::from_str(
         &std::fs::read_to_string(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
+            Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
                 .join("tests/fixtures/code-intelligence/infrastructure/expected.json"),
         )
         .unwrap(),

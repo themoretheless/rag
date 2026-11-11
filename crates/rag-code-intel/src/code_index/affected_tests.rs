@@ -335,7 +335,7 @@ mod tests {
         fn new() -> Self {
             let dir = tempfile::tempdir().unwrap();
             let store = crate::testkit::open_test_store(&dir.path().join("tests.duckdb")).unwrap();
-            let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
                 .join("tests/fixtures/code-intelligence/affected-tests");
             for relative in [
                 "Cargo.toml",
@@ -393,7 +393,7 @@ mod tests {
     }
     fn labels(key: &str) -> Vec<String> {
         serde_json::from_str::<Value>(include_str!(
-            "../../tests/fixtures/code-intelligence/affected-tests/expected.json"
+            "../../../../tests/fixtures/code-intelligence/affected-tests/expected.json"
         ))
         .unwrap()[key]
             .as_array()

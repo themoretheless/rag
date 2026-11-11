@@ -2,7 +2,6 @@
 use super::history::File;
 use super::*;
 use duckdb::Connection;
-use rmcp::schemars;
 use std::io::Read;
 use std::path::PathBuf;
 

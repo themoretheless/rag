@@ -1,6 +1,5 @@
 //! Permission-decision syntax traces. Computed returns remain unknown, never implicit allows.
 use super::*;
-use rmcp::schemars;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct PolicySpec {

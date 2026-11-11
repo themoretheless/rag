@@ -7,7 +7,6 @@ mod primary_comparison;
 mod source_bytes;
 pub use literal_mentions::Options as LiteralMentionOptions;
 pub use primary_comparison::Options as PrimaryComparisonOptions;
-use rmcp::schemars;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]

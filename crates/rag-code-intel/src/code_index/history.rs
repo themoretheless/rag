@@ -1,7 +1,6 @@
 //! Immutable source/index revisions with content-addressed source storage.
 use super::*;
 use duckdb::Connection;
-use rmcp::schemars;
 use std::collections::{BTreeMap, BTreeSet};
 
 type SourceRow = (String, String, String, i64, Option<String>, bool);

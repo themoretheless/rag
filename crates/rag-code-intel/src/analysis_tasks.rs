@@ -5,7 +5,6 @@ use crate::{
     error::{AppError, Result},
 };
 use duckdb::{params, Connection, OptionalExt};
-use rmcp::schemars;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -282,7 +281,7 @@ impl<'a> AnalysisTasks<'a> {
             )
         })
     }
-    pub(crate) fn analysis_call_start(&self, session_id: &str, tool: &str) -> Result<i64> {
+    pub fn analysis_call_start(&self, session_id: &str, tool: &str) -> Result<i64> {
         let session = session(session_id)?;
         if !index_tool(tool) {
             return Err(AppError::config(
@@ -299,12 +298,7 @@ impl<'a> AnalysisTasks<'a> {
             Ok(seq)
         })
     }
-    pub(crate) fn analysis_call_finish(
-        &self,
-        seq: i64,
-        ok: bool,
-        evidence: Option<i64>,
-    ) -> Result<()> {
+    pub fn analysis_call_finish(&self, seq: i64, ok: bool, evidence: Option<i64>) -> Result<()> {
         self.store.with_conn(|conn| {
             if conn.execute("UPDATE analysis_calls SET finished_ms=?,ok=?,evidence_count=? WHERE seq=? AND finished_ms IS NULL",params![now(),ok,if ok{evidence}else{None},seq])?!=1{return Err(AppError::Conflict("analysis call missing or already finished".into()));}
             Ok(())
@@ -383,11 +377,11 @@ impl<'a> AnalysisTasks<'a> {
     }
 }
 /// Fixed exact whitelist. A caller-provided tool prefix is not proof the index was used.
-pub(crate) fn index_tool(name: &str) -> bool {
+pub fn index_tool(name: &str) -> bool {
     crate::tool_spec::tool_spec(name).is_some_and(|spec| spec.index_evidence)
 }
 /// Count only known output containers. This measures returned records, not truthful/useful facts.
-pub(crate) fn evidence_count(value: &Value) -> Option<i64> {
+pub fn evidence_count(value: &Value) -> Option<i64> {
     if value.get("found") == Some(&Value::Bool(false)) {
         return Some(0);
     }

@@ -61,7 +61,7 @@ mod resolution_cache;
 mod resolve;
 pub use resolution_cache::IndexOptions;
 mod shell;
-pub(crate) mod source;
+pub mod source;
 pub mod sql;
 pub mod styles;
 pub(crate) const INDEX_FORMAT_VERSION: u32 = 68;
@@ -71,7 +71,6 @@ use crate::{
     util::content_hash,
 };
 use duckdb::params;
-use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use tree_sitter::{Node, Parser};
@@ -827,7 +826,7 @@ impl<'a> CodeIndex<'a> {
     }
 
     /// Restrict corpus reads before decoding source blobs or cached facts.
-    pub(crate) fn code_snapshot_in_project(&self, project: Option<&str>) -> Result<CodeSnapshot> {
+    pub fn code_snapshot_in_project(&self, project: Option<&str>) -> Result<CodeSnapshot> {
         self.store.with_conn(|conn| {
             let transaction = conn.transaction()?;
             let snapshot = snapshot_locked(&transaction, project)?;

@@ -14,28 +14,25 @@
 //! | [`llm`] | Optional local chat client (Ollama / OpenAI-compat) |
 //! | [`maintain`] | Corpus analyze / plan whitelist / organize / refresh (ops_log) |
 
+/// Code-intelligence layer, split into the `rag-code-intel` crate (Stage 8).
+pub use rag_code_intel::{analysis_tasks, calibration, code_index, external_db, gate};
 /// Domain and store layers, split into the `rag-store-duckdb` crate (Stage 8)
 /// and re-exported under their old paths.
 pub use rag_store_duckdb::{config, db, error, graph, models, search_pack, tool_spec, util};
 
 pub mod access;
 pub mod activity;
-pub mod analysis_tasks;
 pub mod app;
 pub mod background;
 pub mod bootstrap;
-pub mod calibration;
 pub mod chunking;
-pub mod code_index;
 pub mod context;
 pub mod diagnostics;
 pub mod diary;
 pub mod document_indexer;
 pub mod embeddings;
 pub mod eval;
-pub mod external_db;
 pub mod file_ingest;
-pub mod gate;
 pub mod http_api;
 pub mod ingest;
 pub mod jobs;

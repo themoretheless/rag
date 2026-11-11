@@ -1,7 +1,6 @@
 //! Syntax-based CSS definitions and static markup/DOM class applications.
 //! Name matching is evidence in a corpus, not proof of a browser cascade or liveness.
 use super::*;
-use rmcp::schemars;
 use std::collections::BTreeMap;
 
 const MAX_FACTS: usize = 50_000;
@@ -868,7 +867,7 @@ const noise = "className='fake'"; // el.className='comment'
 #[cfg(test)]
 mod persistence_tests {
     use super::*;
-    use crate::source_sync::{SourceSyncCommand, SourceSyncService};
+    use rag_mcp::source_sync::{SourceSyncCommand, SourceSyncService};
     #[tokio::test]
     async fn markup_policy_sync_reuses_persists_and_omits_stale_facts() {
         let root = tempfile::tempdir().unwrap();
@@ -889,8 +888,8 @@ mod persistence_tests {
             ..crate::Config::for_tests()
         };
         let store = crate::testkit::open_test_store(&config.db_path).unwrap();
-        let embedder: std::sync::Arc<dyn crate::embeddings::EmbeddingProvider> =
-            std::sync::Arc::new(crate::embeddings::MockEmbedder::new(16));
+        let embedder: std::sync::Arc<dyn rag_mcp::embeddings::EmbeddingProvider> =
+            std::sync::Arc::new(rag_mcp::embeddings::MockEmbedder::new(16));
         let service = SourceSyncService::new(&store, &embedder, &config);
         let command = SourceSyncCommand::new(root.path().into());
         let report = service.sync(command.clone()).await.unwrap();

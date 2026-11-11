@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/rag-mcp-core", "crates/rag-mcp-markup", "crates/rag-mcp-ui", "crates/rag-store-duckdb"]
+members = [".", "crates/rag-mcp-core", "crates/rag-mcp-markup", "crates/rag-mcp-ui", "crates/rag-store-duckdb", "crates/rag-code-intel"]
 default-members = ["."]
 resolver = "2"
 
@@ -33,6 +33,9 @@ encoding_rs = "=0.8.35"
 rag-mcp-core = { path = "crates/rag-mcp-core", version = "0.1.0" }
 rag-mcp-markup = { path = "crates/rag-mcp-markup", version = "0.1.0" }
 rag-store-duckdb = { path = "crates/rag-store-duckdb", version = "0.1.0" }
+rag-code-intel = { path = "crates/rag-code-intel", version = "0.1.0" }
+libc = "0.2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [package]
 name = "rag-mcp"
@@ -68,15 +71,15 @@ clap = { workspace = true }
 rag-mcp-core = { workspace = true }
 rag-mcp-markup = { workspace = true }
 rag-store-duckdb = { workspace = true }
+rag-code-intel = { workspace = true }
 anyhow = { workspace = true }
 async-trait = "0.1"
-futures-util = "0.3"
 axum = "0.8"
 blake3 = { workspace = true }
 chrono = { workspace = true }
 duckdb = { workspace = true }
 notify = "8"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { workspace = true }
 ring = { workspace = true }
 rmcp = { version = "=1.4.0", features = ["server", "transport-io", "transport-streamable-http-server"] }
 # rmcp 1.x did not keep macro/runtime compatibility across every minor; pin the
@@ -94,42 +97,17 @@ tower = { version = "0.5", features = ["util"] }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { workspace = true }
-unicode-normalization = { workspace = true }
 # Pure-Rust (miniz_oxide) zip reading for OOXML (.docx/.xlsx) extraction.
 zip = { version = "9", default-features = false, features = ["deflate"] }
 # XML event parser for OOXML document/styles/sheet parts.
 quick-xml = "0.42"
 # html5ever-based DOM queries for HTML main-content extraction (pure Rust).
 dom_query = "0.27"
-tree-sitter = "0.27.1"
-tree-sitter-rust = "0.24.2"
-tree-sitter-yaml = "0.7.2"
-toml_edit = { version = "0.25.13", default-features = false, features = ["parse"] }
-tree-sitter-go = "0.25.0"
-tree-sitter-java = "0.23.5"
-tree-sitter-c = "0.24.2"
-tree-sitter-cpp = "0.23.4"
-tree-sitter-python = "0.25.0"
-tree-sitter-javascript = "0.25.0"
-tree-sitter-typescript = "0.23.2"
-sqlparser = { version = "0.63.0", features = ["visitor"] }
-regex = "1.13.1"
-tree-sitter-css = "0.25.0"
-cssparser = "0.36.0"
-tree-sitter-html = "0.23.2"
-html-escape = "0.2"
-tree-sitter-php = "0.25.1"
-tree-sitter-bash = "0.25.1"
-tree-sitter-lua = "0.5.0"
-tree-sitter-ruby = "0.23.1"
-tree-sitter-c-sharp = "0.23.5"
-ts-parser-perl = "2.0.0"
-tree-sitter-pwsh = "0.38.1"
-sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-native-roots", "postgres", "mysql", "mysql-rsa"] }
+
 
 # Only read by ops::free_space_bytes for the automatic snapshot disk guard.
 [target.'cfg(unix)'.dependencies]
-libc = "0.2"
+libc = { workspace = true }
 
 [features]
 # Exact HF token counting when RAG_TOKENIZER_JSON points at a tokenizer.json;
@@ -138,7 +116,7 @@ default = ["tokenizers"]
 tokenizers = ["rag-store-duckdb/tokenizers"]
 # Exposes `rag_mcp::testkit` (shared fixtures) to the integration tests. Unit
 # tests get the module through `cfg(test)`; production builds never enable it.
-testkit = ["rag-store-duckdb/testkit"]
+testkit = ["rag-store-duckdb/testkit", "rag-code-intel/testkit"]
 
 [dev-dependencies]
 # Test fixtures encode legacy code pages (the decoder lives in the store crate).

@@ -5,7 +5,6 @@ use crate::{
     util::content_hash,
 };
 use duckdb::params;
-use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};

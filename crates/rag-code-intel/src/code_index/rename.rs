@@ -978,12 +978,12 @@ mod tests {
                 .is_err());
         }
         assert_eq!(
-            crate::access::required_tool_role("rename"),
-            Some(crate::access::AccessRole::Read)
+            rag_mcp::access::required_tool_role("rename"),
+            Some(rag_mcp::access::AccessRole::Read)
         );
         assert_eq!(
-            crate::access::required_tool_role("apply_rename"),
-            Some(crate::access::AccessRole::Admin)
+            rag_mcp::access::required_tool_role("apply_rename"),
+            Some(rag_mcp::access::AccessRole::Admin)
         );
     }
 }

@@ -1,6 +1,5 @@
 //! Offline SQL schema replay and table-use evidence. Never executes SQL.
 use super::*;
-use rmcp::schemars;
 use sqlparser::ast::{self as ast, Spanned, Visit, Visitor};
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser as SqlParser;
@@ -1777,7 +1776,7 @@ mod tests;
 #[cfg(test)]
 mod persistence_tests {
     use super::*;
-    use crate::source_sync::{SourceSyncCommand, SourceSyncService};
+    use rag_mcp::source_sync::{SourceSyncCommand, SourceSyncService};
     #[tokio::test]
     async fn sql_sync_cache_reuse_stale_guard_and_schema_refresh() {
         let root = tempfile::tempdir().unwrap();
@@ -1797,8 +1796,8 @@ mod persistence_tests {
             ..crate::Config::for_tests()
         };
         let store = crate::testkit::open_test_store(&config.db_path).unwrap();
-        let embedder: std::sync::Arc<dyn crate::embeddings::EmbeddingProvider> =
-            std::sync::Arc::new(crate::embeddings::MockEmbedder::new(16));
+        let embedder: std::sync::Arc<dyn rag_mcp::embeddings::EmbeddingProvider> =
+            std::sync::Arc::new(rag_mcp::embeddings::MockEmbedder::new(16));
         let service = SourceSyncService::new(&store, &embedder, &config);
         let command = SourceSyncCommand::new(root.path().to_path_buf());
         let report = service.sync(command.clone()).await.unwrap();

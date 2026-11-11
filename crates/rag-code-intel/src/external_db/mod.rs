@@ -12,7 +12,6 @@ use crate::{
     Store,
 };
 use futures_util::TryStreamExt;
-use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{ConnectOptions, Connection, Executor, Row};
@@ -1299,11 +1298,11 @@ mod fixture_tests {
                 embedding_dims: 16,
                 ..crate::Config::for_tests()
             };
-            let embedder: std::sync::Arc<dyn crate::embeddings::EmbeddingProvider> =
-                std::sync::Arc::new(crate::embeddings::MockEmbedder::new(16));
-            let mut command = crate::source_sync::SourceSyncCommand::new(sources);
+            let embedder: std::sync::Arc<dyn rag_mcp::embeddings::EmbeddingProvider> =
+                std::sync::Arc::new(rag_mcp::embeddings::MockEmbedder::new(16));
+            let mut command = rag_mcp::source_sync::SourceSyncCommand::new(sources);
             command.wing = Some("fixture".into());
-            let service = crate::source_sync::SourceSyncService::new(&store, &embedder, &config);
+            let service = rag_mcp::source_sync::SourceSyncService::new(&store, &embedder, &config);
             assert!(service.sync(command).await.unwrap().errors.is_empty());
             let cross = crate::external_db::ExternalDb::new(&store)
                 .external_db_query("db_cross", &drift_q)

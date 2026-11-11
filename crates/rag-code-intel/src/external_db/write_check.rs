@@ -1,7 +1,6 @@
 //! Assignment-plan checking against immutable external metadata; never opens a remote connection.
 use super::check_expr::{self, Outcome};
 use super::*;
-use rmcp::schemars;
 use std::collections::BTreeSet;
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
