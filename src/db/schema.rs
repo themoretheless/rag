@@ -608,9 +608,10 @@ fn migrate_core(conn: &Connection) -> Result<()> {
     // Databases from before v26 gain the column (nullable: DuckDB cannot add
     // NOT NULL to an indexed table), are backfilled in batches and lose the
     // JSON column.
+    let mut quarantined = Vec::new();
     if legacy_embedding {
         add_column_best_effort(conn, "chunks", "embedding", "FLOAT[]")?;
-        backfill_chunk_embeddings(conn, EMBEDDING_BACKFILL_BATCH, None)?;
+        quarantined = backfill_chunk_embeddings(conn, EMBEDDING_BACKFILL_BATCH, None)?.quarantined;
         drop_legacy_embedding_column(conn)?;
     }
 
@@ -743,6 +744,8 @@ fn migrate_core(conn: &Connection) -> Result<()> {
 
     backfill_graph_node_label_keys(conn)?;
     backfill_graph_edge_origins(conn)?;
+    conn.execute_batch(CREATE_CHUNK_EMBEDDING_QUARANTINE)?;
+    record_embedding_quarantine(conn, &quarantined)?;
 
     record_schema_version(conn)?;
     Ok(())
@@ -895,31 +898,75 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     Ok(count > 0)
 }
 
+/// Chunks whose legacy `embedding_json` could not become a `FLOAT[]` during
+/// the v26 migration. The raw text is kept verbatim (never deleted); the chunk
+/// keeps a NULL embedding, which vector readers skip, and its document is
+/// marked for re-embedding.
+pub const CREATE_CHUNK_EMBEDDING_QUARANTINE: &str = r#"
+CREATE TABLE IF NOT EXISTS chunk_embedding_quarantine (
+  chunk_id VARCHAR PRIMARY KEY,
+  document_id VARCHAR NOT NULL,
+  raw_embedding_json VARCHAR,
+  reason VARCHAR NOT NULL,
+  quarantined_at TIMESTAMP NOT NULL
+)
+"#;
+
+/// What [`backfill_chunk_embeddings`] did.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct EmbeddingBackfill {
+    /// Rows whose JSON became a native embedding.
+    pub converted: u64,
+    /// `(chunk_id, document_id)` of rows moved to the quarantine by this run.
+    pub quarantined: Vec<(String, String)>,
+}
+
+/// Why a legacy `embedding_json` value cannot become a usable vector, or
+/// `None` when it can. DuckDB's list cast is lenient (it accepts a trailing
+/// comma), so the text is also held to what pre-v26 readers accepted: a JSON
+/// array of numbers (`serde_json`).
+fn legacy_embedding_problem(raw: Option<&str>, converted: bool) -> Option<&'static str> {
+    let Some(raw) = raw else {
+        return Some("unparseable");
+    };
+    if !converted || serde_json::from_str::<Vec<f64>>(raw).is_err() {
+        return Some("unparseable");
+    }
+    None
+}
+
 /// Fill `chunks.embedding` from `embedding_json` for rows that have none, one
 /// transaction per `batch` rows, stopping after `max_batches` when given (a
 /// test seam for an interrupted run). Each committed batch stays done, so a
-/// run cut short resumes where it stopped. Returns the rows converted.
+/// run cut short resumes where it stopped.
+///
+/// Conversion uses `TRY_CAST`: a value DuckDB cannot read as `FLOAT[]`
+/// (malformed JSON, `null`, empty text, a trailing comma) is copied into
+/// `chunk_embedding_quarantine` with its raw text and left NULL instead of
+/// failing the open. The loop walks chunk ids in order with a cursor, so
+/// rows that stay NULL never make it spin.
 pub(crate) fn backfill_chunk_embeddings(
     conn: &Connection,
     batch: usize,
     max_batches: Option<usize>,
-) -> Result<u64> {
-    let mut converted = 0u64;
+) -> Result<EmbeddingBackfill> {
+    conn.execute_batch(CREATE_CHUNK_EMBEDDING_QUARANTINE)?;
+    let mut outcome = EmbeddingBackfill::default();
+    let mut cursor: Option<String> = None;
     let mut batches = 0usize;
     loop {
         if max_batches.is_some_and(|max| batches >= max) {
             break;
         }
         conn.execute_batch("BEGIN TRANSACTION")?;
-        let updated = conn.execute(
-            "UPDATE chunks SET embedding = CAST(embedding_json AS FLOAT[]) \
-             WHERE id IN (SELECT id FROM chunks WHERE embedding IS NULL ORDER BY id LIMIT ?)",
-            [batch as i64],
-        );
-        let updated = match updated {
-            Ok(updated) => {
+        match backfill_embedding_batch(conn, cursor.as_deref(), batch, &mut outcome) {
+            Ok(Some(last)) => {
                 conn.execute_batch("COMMIT")?;
-                updated
+                cursor = Some(last);
+            }
+            Ok(None) => {
+                conn.execute_batch("COMMIT")?;
+                break;
             }
             Err(error) => {
                 let _ = conn.execute_batch("ROLLBACK");
@@ -927,14 +974,125 @@ pub(crate) fn backfill_chunk_embeddings(
                     "migrate chunks.embedding backfill: {error}"
                 )));
             }
-        };
-        batches += 1;
-        converted += updated as u64;
-        if updated < batch {
-            break;
         }
+        batches += 1;
     }
-    Ok(converted)
+    Ok(outcome)
+}
+
+/// One batch of [`backfill_chunk_embeddings`] after `cursor`; returns the
+/// last chunk id handled, or `None` when no row was left.
+fn backfill_embedding_batch(
+    conn: &Connection,
+    cursor: Option<&str>,
+    batch: usize,
+    outcome: &mut EmbeddingBackfill,
+) -> Result<Option<String>> {
+    const PENDING: &str = "embedding IS NULL AND ($1 IS NULL OR id > $1) \
+         AND NOT EXISTS (SELECT 1 FROM chunk_embedding_quarantine q WHERE q.chunk_id = chunks.id)";
+    let ids: Vec<String> = {
+        let mut stmt =
+            conn.prepare(&format!("SELECT id FROM chunks WHERE {PENDING} ORDER BY id LIMIT $2"))?;
+        crate::db::rows::query_vec(&mut stmt, duckdb::params![cursor, batch as i64], |row| {
+            Ok(row.get(0)?)
+        })?
+    };
+    let Some(last) = ids.last().cloned() else {
+        return Ok(None);
+    };
+    let range = "($1 IS NULL OR id > $1) AND id <= $2";
+    conn.execute(
+        &format!(
+            "UPDATE chunks SET embedding = TRY_CAST(embedding_json AS FLOAT[]) \
+             WHERE embedding IS NULL AND {range}"
+        ),
+        duckdb::params![cursor, last],
+    )?;
+    // Check every row of the range, including ones a resumed run converted
+    // in an earlier batch but never checked.
+    let checked: Vec<(String, String, Option<String>, bool)> = {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id, document_id, embedding_json, embedding IS NOT NULL FROM chunks \
+             WHERE {range} AND NOT EXISTS \
+               (SELECT 1 FROM chunk_embedding_quarantine q WHERE q.chunk_id = chunks.id) \
+             ORDER BY id"
+        ))?;
+        crate::db::rows::query_vec(&mut stmt, duckdb::params![cursor, last], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?
+    };
+    let mut quarantine = conn.prepare(
+        "INSERT OR REPLACE INTO chunk_embedding_quarantine \
+           (chunk_id, document_id, raw_embedding_json, reason, quarantined_at) \
+         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
+    )?;
+    let mut clear = conn.prepare("UPDATE chunks SET embedding = NULL WHERE id = ?")?;
+    let mut bad = 0u64;
+    for (id, document_id, raw, converted) in checked {
+        let Some(reason) = legacy_embedding_problem(raw.as_deref(), converted) else {
+            continue;
+        };
+        quarantine.execute(duckdb::params![id, document_id, raw, reason])?;
+        clear.execute([&id])?;
+        outcome.quarantined.push((id, document_id));
+        bad += 1;
+    }
+    outcome.converted += (ids.len() as u64).saturating_sub(bad);
+    Ok(Some(last))
+}
+
+/// Mark the documents of chunks quarantined by this open for re-embedding
+/// (their `content_hash` is cleared, so the next source sync re-ingests them,
+/// and any `reembed_progress` row is dropped), log a warning and record the
+/// quarantine in `ops_log`. Runs once `documents`, `reembed_progress` and
+/// `ops_log` have their current shape.
+fn record_embedding_quarantine(conn: &Connection, quarantined: &[(String, String)]) -> Result<()> {
+    if quarantined.is_empty() {
+        return Ok(());
+    }
+    let mut documents: Vec<&str> = quarantined.iter().map(|(_, doc)| doc.as_str()).collect();
+    documents.sort_unstable();
+    documents.dedup();
+    for batch in documents.chunks(512) {
+        let placeholders = crate::db::sql::in_placeholders(batch.len());
+        conn.execute(
+            &format!("UPDATE documents SET content_hash = NULL WHERE id IN ({placeholders})"),
+            duckdb::params_from_iter(batch.iter()),
+        )?;
+        conn.execute(
+            &format!("DELETE FROM reembed_progress WHERE document_id IN ({placeholders})"),
+            duckdb::params_from_iter(batch.iter()),
+        )?;
+    }
+    let chunk_ids: Vec<&str> = quarantined.iter().map(|(id, _)| id.as_str()).collect();
+    tracing::warn!(
+        count = quarantined.len(),
+        documents = documents.len(),
+        chunk_ids = ?chunk_ids.iter().take(50).collect::<Vec<_>>(),
+        "schema v26 migration quarantined chunk embeddings that are not valid vectors; \
+         raw values kept in chunk_embedding_quarantine, documents marked for re-embedding"
+    );
+    let payload = serde_json::json!({
+        "count": quarantined.len(),
+        "chunk_ids": chunk_ids,
+        "document_ids": documents,
+        "table": "chunk_embedding_quarantine",
+    });
+    conn.execute(
+        "INSERT INTO ops_log (id, seq, ts, op, prefix, message, entity_kind, payload_json, agent_name) \
+         SELECT ?, COALESCE(MAX(seq), 0) + 1, CURRENT_TIMESTAMP, 'embedding_quarantine', 'MIGRATE', ?, \
+                'chunk', ?, 'schema-migration' FROM ops_log",
+        duckdb::params![
+            uuid::Uuid::new_v4().to_string(),
+            format!(
+                "schema v26: quarantined {} chunk embedding(s) in {} document(s); marked for re-embedding",
+                quarantined.len(),
+                documents.len()
+            ),
+            payload.to_string(),
+        ],
+    )?;
+    Ok(())
 }
 
 /// Drop `chunks.embedding_json` once every row has a native embedding.
@@ -947,7 +1105,8 @@ pub(crate) fn backfill_chunk_embeddings(
 /// core migration because the version is recorded last.
 fn drop_legacy_embedding_column(conn: &Connection) -> Result<()> {
     let missing: i64 = conn.query_row(
-        "SELECT count(*) FROM chunks WHERE embedding IS NULL",
+        "SELECT count(*) FROM chunks c WHERE c.embedding IS NULL AND NOT EXISTS \
+         (SELECT 1 FROM chunk_embedding_quarantine q WHERE q.chunk_id = c.id)",
         [],
         |row| row.get(0),
     )?;

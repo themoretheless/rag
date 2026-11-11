@@ -1162,11 +1162,17 @@ impl RawSnapshot {
             None => Arc::new(DocumentTable::default()),
         };
         let mut fresh = Vec::with_capacity(rows.len());
+        let mut skipped: Vec<String> = Vec::new();
         {
             let table = Arc::make_mut(&mut documents);
             for row in rows {
                 let vector = match row.vector {
                     RawVector::Reuse(vector) => vector,
+                    // No stored vector (NULL, quarantined): not searchable.
+                    RawVector::Parse(raw) if raw.is_empty() => {
+                        skipped.push(row.id);
+                        continue;
+                    }
                     RawVector::Parse(raw) => normalize_stored(&raw),
                 };
                 fresh.push(VectorSnapshotChunk {
@@ -1177,6 +1183,13 @@ impl RawSnapshot {
                     vector,
                 });
             }
+        }
+        if !skipped.is_empty() {
+            tracing::warn!(
+                count = skipped.len(),
+                chunk_ids = ?skipped.iter().take(20).collect::<Vec<_>>(),
+                "vector snapshot skipped chunks without a usable embedding"
+            );
         }
         let chunks = match base {
             None => fresh,

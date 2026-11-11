@@ -374,7 +374,7 @@ fn interrupted_embedding_backfill_resumes_on_next_open() {
         let conn = duckdb::Connection::open(&path).unwrap();
         conn.execute_batch("ALTER TABLE chunks ADD COLUMN embedding FLOAT[]")
             .unwrap();
-        assert_eq!(backfill_chunk_embeddings(&conn, 4, Some(1)).unwrap(), 4);
+        assert_eq!(backfill_chunk_embeddings(&conn, 4, Some(1)).unwrap().converted, 4);
         let pending: i64 = conn
             .query_row(
                 "SELECT count(*) FROM chunks WHERE embedding IS NULL",
@@ -399,4 +399,142 @@ fn interrupted_embedding_backfill_resumes_on_next_open() {
     resumed.maintenance().ensure_fts("porter").unwrap();
     native.maintenance().ensure_fts("porter").unwrap();
     assert_eq!(answers(&resumed), answers(&native));
+}
+
+/// Embedding texts a v25 database may hold that are not a usable vector.
+const BAD_EMBEDDINGS: &[&str] = &["broken JSON", "null", "", "[1,2,]"];
+
+/// Add a document whose chunks carry `BAD_EMBEDDINGS` to a legacy database.
+fn write_bad_rows(path: &std::path::Path) -> Vec<String> {
+    let conn = duckdb::Connection::open(path).unwrap();
+    conn.execute(
+        "INSERT INTO documents (id, uri, title, content, metadata_json, created_at, updated_at) \
+         VALUES ('doc-bad', 'legacy://bad', 'Bad vectors', 'bad', '{}', \
+                 CAST('2026-01-02 03:04:05' AS TIMESTAMP), CAST('2026-01-02 03:04:05' AS TIMESTAMP))",
+        [],
+    )
+    .unwrap();
+    BAD_EMBEDDINGS
+        .iter()
+        .enumerate()
+        .map(|(index, raw)| {
+            let id = format!("doc-bad-c{index}");
+            conn.execute(
+                "INSERT INTO chunks (id, document_id, chunk_index, content, embedding_json, \
+                 char_start, char_end, created_at, metadata_json, embedding_digest) \
+                 VALUES (?, 'doc-bad', ?, 'zzz quarantined text', ?, 0, 1, CURRENT_TIMESTAMP, '{}', ?)",
+                duckdb::params![id, index as i32, raw, crate::db::store::embedding_digest(raw)],
+            )
+            .unwrap();
+            id
+        })
+        .collect()
+}
+
+#[test]
+fn unconvertible_embeddings_are_quarantined_and_the_store_still_opens() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("bad.duckdb");
+    write_legacy(&path);
+    let bad_ids = write_bad_rows(&path);
+
+    let migrated = Store::open(&path).unwrap();
+    {
+        let conn = migrated.lock().unwrap();
+        assert_eq!(current_schema_version(&conn).unwrap(), Some(SCHEMA_VERSION));
+        assert!(!has_column(&conn, "embedding_json"));
+        let mut stmt = conn
+            .prepare(
+                "SELECT chunk_id, document_id, raw_embedding_json, reason \
+                 FROM chunk_embedding_quarantine ORDER BY chunk_id",
+            )
+            .unwrap();
+        let quarantined: Vec<(String, String, String, String)> =
+            crate::db::rows::query_vec(&mut stmt, [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })
+            .unwrap();
+        drop(stmt);
+        let expected: Vec<(String, String, String)> = bad_ids
+            .iter()
+            .zip(BAD_EMBEDDINGS)
+            .map(|(id, raw)| (id.clone(), "doc-bad".to_owned(), (*raw).to_owned()))
+            .collect();
+        assert_eq!(
+            quarantined
+                .iter()
+                .map(|(id, doc, raw, _)| (id.clone(), doc.clone(), raw.clone()))
+                .collect::<Vec<_>>(),
+            expected,
+            "raw text is kept verbatim"
+        );
+        assert!(quarantined.iter().all(|(_, _, _, reason)| !reason.is_empty()));
+        let nulls: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM chunks WHERE document_id = 'doc-bad' AND embedding IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(nulls as usize, BAD_EMBEDDINGS.len(), "chunk rows are kept");
+        let hash: Option<String> = conn
+            .query_row(
+                "SELECT content_hash FROM documents WHERE id = 'doc-bad'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(hash, None, "the document is marked for re-embedding");
+        let payload: String = conn
+            .query_row(
+                "SELECT payload_json FROM ops_log WHERE op = 'embedding_quarantine'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(payload["count"], BAD_EMBEDDINGS.len());
+    }
+
+    // Valid rows are bit-identical to a natively ingested store.
+    let native = write_native(&dir.path().join("native.duckdb"));
+    let bits = |store: &Store| {
+        let mut chunks: Vec<(String, Vec<u32>)> = store
+            .chunks()
+            .all_chunks_with_embeddings()
+            .unwrap()
+            .into_iter()
+            .filter(|chunk| chunk.document_id != "doc-bad")
+            .map(|chunk| (chunk.id, chunk.embedding.iter().map(|v| v.to_bits()).collect()))
+            .collect();
+        chunks.sort();
+        chunks
+    };
+    assert_eq!(bits(&migrated), bits(&native));
+    migrated.maintenance().ensure_fts("porter").unwrap();
+    native.maintenance().ensure_fts("porter").unwrap();
+    // The quarantined chunks keep their text, so BM25 corpus statistics (and
+    // lexical scores) differ; vector answers and lexical ranking must not.
+    let (got, want) = (answers(&migrated), answers(&native));
+    assert_eq!(got[0], want[0], "vector search");
+    assert_eq!(got[1], want[1], "vector search");
+    let ids = |hits: &[(String, u32, String)]| hits.iter().map(|h| h.0.clone()).collect::<Vec<_>>();
+    assert_eq!(ids(&got[2]), ids(&want[2]), "lexical search");
+    assert_eq!(ids(&got[3]), ids(&want[3]), "hybrid search");
+    drop(migrated);
+
+    // A second open does no DDL and keeps the quarantine.
+    let reopened = Store::open(&path).unwrap();
+    let conn = reopened.lock().unwrap();
+    assert_eq!(
+        migrate_with(&conn, &registered_schema_extensions()).unwrap(),
+        MigrateOutcome {
+            core_ddl: false,
+            extension_ddl: 0,
+        }
+    );
+    let kept: i64 = conn
+        .query_row("SELECT count(*) FROM chunk_embedding_quarantine", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(kept as usize, BAD_EMBEDDINGS.len());
 }

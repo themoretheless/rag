@@ -160,6 +160,8 @@ pub(crate) fn embedding(row: &duckdb::Row<'_>, index: usize) -> Result<Vec<f32>>
                 ))),
             })
             .collect(),
+        // A chunk without a usable vector (quarantined by the v26 migration).
+        Value::Null => Ok(Vec::new()),
         other => Err(AppError::db(format!(
             "embedding column is not a float list: {other:?}"
         ))),
