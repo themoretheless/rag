@@ -436,3 +436,38 @@ and edges; median of 7 opens per run):
 About 7 ms per open at 40 000 chunks, dominated by the guard scans
 (`metadata_json LIKE '%parent_chunk_id%'`); kept, since opens are rare
 (one writer process) and the repairs protect rebuild correctness.
+
+## Stage 8: crate split (build times before/after)
+
+Same machine (4 cores), rustc 1.99.1, debug profile of the repository
+(`dep opt-level 1`, `CARGO_PROFILE_DEV_DEBUG=0`), from an empty `target/`.
+Clean builds with `CARGO_INCREMENTAL=0`; the incremental rows run with
+`CARGO_INCREMENTAL=1` after one incremental build, then `touch` one file and
+time `cargo build --workspace --locked`. Before = `b63a8cc` (Stage 8 item 0,
+single root crate); after = `rag-store-duckdb` + `rag-code-intel` split.
+Load average (1 min) at the start of each run is given; the machine had no
+other work, but the numbers are single runs, expect ±5 %.
+
+| metric | before | after |
+|---|---:|---:|
+| clean `cargo build --workspace --locked` | 990 s (16 m 30 s; load 5.5 at start, 2.7 at end) | 938 s (15 m 38 s; load 4.9 / 2.7) |
+| incremental, `touch src/app/search.rs` (root crate) | 19 s | 10 s |
+| incremental, `touch` the store's `db/store.rs` (`src/db/store.rs` before, `crates/rag-store-duckdb/src/db/store.rs` after) | 19 s | 13 s |
+| clean `cargo build -p rag-mcp-ui` (default `direct-db`) | 1010 s (16 m 50 s; pulled in the whole root crate) | 755 s (12 m 35 s; store crate only) |
+| clean `cargo build -p rag-mcp-ui --no-default-features` | 224 s | 211 s |
+| `target/` after the clean + incremental runs | 5.2 GB | 5.2 GB |
+
+The clean workspace build barely moves: bundled DuckDB and the tree-sitter
+grammars dominate and are dependencies either way; the three crates now build
+in sequence (store → intel → root) instead of one large crate. Touching the
+root crate no longer recompiles the 50k lines of code intelligence or the
+store, which halves that rebuild. The UI's direct-db build drops the root
+crate, rmcp/axum, the tree-sitter grammars and sqlx (-25 %).
+
+Tests: 1 572 before = 1 572 after (lib tests are now split between
+`rag-store-duckdb` 280 + 8 ignored, `rag-code-intel` 513 + 1, root 505 + 1;
+the `it` binary has 81, one fewer because the `impl Store` check is now
+enforced by the orphan rule).
+
+LOC after the split (`.rs`, tests included): root `src/` 61 679,
+`crates/rag-store-duckdb` 38 326, `crates/rag-code-intel` 58 095.

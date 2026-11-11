@@ -1,7 +1,8 @@
 # Target architecture
 
-Status: target for Stages 2–8 of [PLAN.md](PLAN.md). The code does not follow
-it yet; the "Current violations" section lists where. The decision record is
+Status: target for Stages 2–8 of [PLAN.md](PLAN.md); Stage 8 (crate split) is
+done, see "Crates". The "Current violations" section is the historical list
+from the start of the refactor. The decision record is
 [ADR 0001](../adr/0001-layering-and-crate-split.md).
 
 ## Layers
@@ -34,7 +35,7 @@ No cycles between modules of one layer either.
 Consequences that follow from the rule:
 
 - `domain` has no `duckdb` import. `ToSql`/`FromSql` and `From<duckdb::Error>`
-  impls live in `store`.
+  impls live in `store` (`db/sql_types.rs`, same crate since Stage 8).
 - `store` does not call `intel` or `app`. Where a write must trigger work owned
   above it (today: `code_index::source::persist` inside the document upsert),
   `store` exposes a hook trait (`DocumentWriteHook`) and the composition root
@@ -46,7 +47,7 @@ Consequences that follow from the rule:
 - Environment variables are read in one place (`Config::from_env`).
 - An architecture test (`tests/it/architecture_test.rs`, Stage 2) parses
   `crate::` edges between top-level modules and fails on an edge that breaks
-  the rule. Its allow-list holds the edge still pending: `code_index → file_ingest` (`decode_text`, Stage 4). The
+  the rule. Its allow-list is empty since Stage 8 (`decode_text` moved to `util::decode`). The
   `db → analysis_tasks|gate|calibration|external_db` edges went in Stage 3:
   those modules export a `db::schema::SchemaExtension` that composition
   registers (`storage::register_schema_extensions`) and their repositories
@@ -99,15 +100,48 @@ Nothing below the root constructs its own dependencies or reads globals.
 
 ## Crates
 
-Boundaries are fixed inside the root crate first (Stages 2–4). At the end
-(Stage 8) only two crates are split out, because they have the slowest builds
-and the clearest seams:
+Boundaries were fixed inside the root crate first (Stages 2–4). Stage 8 split
+out the two layers with the slowest builds and the clearest seams:
 
-- `crates/rag-store-duckdb` — the `store` layer;
-- `crates/rag-code-intel` — the `intel` layer.
+```
+rag-mcp-core   rag-mcp-markup                     (wire types, link parsing)
+      ↑              ↑
+rag-store-duckdb      domain (models, error, config, util, graph,
+                      search_pack, tool_spec) + store (db/**)
+      ↑
+rag-code-intel        intel (code_index, external_db, gate, calibration,
+                      analysis_tasks)
+      ↑
+rag-mcp (root)        app, edge, bins; re-exports every moved module under
+                      its old path (rag_mcp::db, rag_mcp::models,
+                      rag_mcp::code_index, ...)
 
-`rag-mcp-core` (wire types) and `rag-mcp-markup` (link parsing) stay as they
-are. `rag-mcp-ui --features direct-db` will depend on the store crate only.
+rag-mcp-ui --features direct-db → rag-store-duckdb (+ core, markup) only
+```
+
+- The domain layer lives in `rag-store-duckdb`, not in a crate of its own:
+  the store implements DuckDB traits for domain types (`ToSql`/`FromSql` for
+  the string-coded enums, `From<duckdb::Error> for AppError`,
+  `db/sql_types.rs`), which the orphan rule allows only in the crate that
+  owns the types. A separate domain crate would have needed newtypes or a
+  `duckdb` feature on the domain crate. `rag-mcp-core` stays the serde-only
+  wire crate the gateway-only UI build uses without DuckDB.
+- For the same reason two impls in the root crate changed shape:
+  `impl From<AppError> for rmcp::ErrorData` is now `mcp::error::mcp_error`,
+  and `Config::apply_process_limits` is the `bootstrap::ApplyProcessLimits`
+  extension trait (import it to keep the method call).
+- `rag-code-intel` registers its four tables with
+  `rag_code_intel::register_schema_extensions` (called by
+  `storage::register_schema_extensions`). A few of its tests drive the
+  composed pipeline through a dev-dependency on `rag-mcp`; only `Store` from
+  the shared store crate crosses that cycle.
+- Test hooks of the store (`Store::lock`, `fts::test_fault`, FTS crash points,
+  wiki write fault ops) are compiled under `cfg(any(test, feature =
+  "testkit"))`; the root and code-intel `testkit` features enable the store's.
+- `tests/it/architecture_test.rs` now checks the rules left inside a crate
+  (domain modules do not reach `db`; app/edge/composition in the root crate;
+  `mcp` and `http_api` apart). The crate graph enforces the rest, and the
+  orphan rule keeps `impl Store` inside the store crate.
 
 ## Current violations (origin/main `facf533`)
 

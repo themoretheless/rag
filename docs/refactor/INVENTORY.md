@@ -118,3 +118,65 @@ data, `block_in_place` keeps the borrow); `mcp` `graph_expand_search` and
 and `analyze_corpus` (222) are still long. Wiki compile/consolidate and the
 answer judge keep their prompts in their own modules.
 
+
+## Stage 8: crate split
+
+Done: `crates/rag-store-duckdb` holds `db/**` plus the domain modules
+(`models`, `error`, `config`, `util`, `graph`, `search_pack`, `tool_spec`);
+`crates/rag-code-intel` holds `code_index`, `external_db`, `gate`,
+`calibration`, `analysis_tasks`. Paths in the module table above are the
+pre-split ones: `src/db/…`, `src/models.rs`, … now live under
+`crates/rag-store-duckdb/src/`, and `src/code_index/…`, `src/external_db/…`,
+`src/gate*`, `src/calibration.rs`, `src/analysis_tasks.rs` under
+`crates/rag-code-intel/src/`. The root crate re-exports all of them under
+their old paths. `file_ingest::decode_text` moved to `util::decode` (the last
+allow-listed layering edge). `rag-mcp-ui --features direct-db` depends on
+`rag-store-duckdb` only. Build times in BASELINE.md.
+
+Visibility widened for the split (all `pub(crate)` → `pub` unless noted):
+
+- store, used by the root crate: `Store::with_conn`,
+  `Store::ensure_schema_extensions`; repository methods on `Documents`
+  (`document_revision`, `document_id_and_uri`, `list_document_refs`,
+  `count_documents`, `count_documents_by_layer`,
+  `count_graph_rebuild_candidates`, `list_graph_rebuild_candidates_after`,
+  `list_document_ids_after`, `count_chunks_for_document_limit`,
+  `exact_duplicate_source_ids`, `list_active_unscoped_documents`,
+  `list_documents_missing_chunks`, `list_documents_by_layer_without_body`,
+  `document_contents`, `prepare_document_meta_update`,
+  `write_document_atomic`, `write_unchunked_document_with_audit`,
+  `write_source_document_atomic`, `write_wiki_document_atomic`,
+  `apply_document_dispositions_atomic`, `merge_exact_duplicates_atomic`,
+  `delete_source_state`), `Chunks` (`chunk_vectors_by_content`,
+  `representative_document_embeddings`, `first_chunk_embeddings`,
+  `update_chunk_embeddings_atomic`, `count_chunks_for_document`),
+  `CorpusLane` (`corpus_mutation_lane`, `try_corpus_mutation_guard`,
+  `with_corpus_mutation_guard`, `try_corpus_mutation_scope`,
+  `try_embedding_write_guard`, `record_fts_finalization_failure`),
+  `Maintenance` (`layer_health_counts`, `uncompiled_raw_shelves`),
+  `ReembedProgress` (all five methods), `list_diary_activity`, `SyncRepo`
+  (`previously_applied_sync`, `preflight_sync_batch`); types
+  `CorpusMutationGuard`, `EmbeddingWriteGuard`, `FtsFinalizationFailure`,
+  `DocumentDerivedWrite`, `AtomicDocumentWriteResult`,
+  `ExactDuplicateMergeResult`, `LayerHealthCounts`, `UncompiledShelfQueue`,
+  `DocumentEmbeddingSample`, `WikiDocumentWrite` (and its fields),
+  `DocumentRef`, `CorpusSearchGuard`, `sync::{SyncIdentity, SyncIdentity::current,
+  SyncIdentity::role, WikiSyncWrite, WikiSyncPayload, validate_wiki_change}`;
+  functions `store::{wiki_backlink_rows, embedding_migration_manifest,
+  get_embedding_manifest_locked}`, `search::{acquire_corpus_search_guard,
+  search_with_corpus_guard}`, `review::accept_locked`, `analytics::*` (11
+  helpers and `REPORT_LIST_CAP`); modules `db::payload_kv` and `db::sql`
+  (`#[doc(hidden)]`); macro `models::finding_codes` (`#[macro_export]`,
+  `#[doc(hidden)]`).
+- store test hooks, public only under `cfg(any(test, feature = "testkit"))`
+  and `#[doc(hidden)]`: `Store::lock`, `fts::test_fault::{fail, panic,
+  check}`, `fts::test_hooks::FTS_CRASH_ARMED`,
+  `store::TEST_FAIL_WIKI_WRITE_AFTER_INDEX_OP`,
+  `Chunks::all_chunks_with_embeddings`,
+  `Documents::update_document_meta_for_sync_test`.
+- code-intel, used by the root crate: module `code_index::source` (its
+  `persist`, `install_document_write_hook`, `SourceBlobHook` were already
+  `pub` inside it) plus `source::{read, is_preserved_html, same_attachment}`;
+  `CodeIndex::code_snapshot_in_project`; `analysis_tasks::{index_tool,
+  evidence_count}`; `AnalysisTasks::{analysis_call_start,
+  analysis_call_finish}`.
