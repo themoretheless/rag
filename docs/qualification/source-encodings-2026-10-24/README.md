@@ -13,4 +13,4 @@ Verification:
 - Actual stdio MCP encoding regression: `runtime.json` verifies Russian search/code symbols, both BOM forms, Western fallback, HTML source, warm no-extraction reuse and encoding-only source-sync refresh.
 - Existing search/family-role MCP regression: `search-regression.json`.
 
-The temporary test processes use mock embeddings and their own disposable database; production state is untouched. Heuristics remain uncertain, and live freshness/gate readers are not yet decoder-aware. See `docs/SOURCE_ENCODINGS.md`. This stage does not prove full RAGRAF transfer or universal encoding detection.
+The temporary test processes use mock embeddings and their own disposable database; production state is untouched. Heuristics remain uncertain, and live freshness/gate readers are not yet decoder-aware. See `docs/code-intelligence/SOURCE_ENCODINGS.md`. This stage does not prove full RAGRAF transfer or universal encoding detection.

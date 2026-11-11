@@ -1,6 +1,6 @@
 # Explicit Rust configuration qualification
 
-Scope: [one captured compilation target per package](../../RUST_BUILD_CONFIGURATIONS.md),
+Scope: [one captured compilation target per package](../../code-intelligence/RUST_BUILD_CONFIGURATIONS.md),
 index format 33. This is fixture evidence, not whole-Cargo or real-corpus proof.
 
 - `code-index-tests.log`: 243 current code-index tests passed, including seven

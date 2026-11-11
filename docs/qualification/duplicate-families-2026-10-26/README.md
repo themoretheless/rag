@@ -1,6 +1,6 @@
 # Independent duplicate families — 2026-10-26
 
-Implemented [exact/name family audit view](../../DUPLICATE_FAMILY_GROUPING.md),
+Implemented [exact/name family audit view](../../code-intelligence/DUPLICATE_FAMILY_GROUPING.md),
 covering reference groups that the earlier token-similarity view could omit.
 No full-parity claim is made.
 

@@ -87,11 +87,11 @@ macro/cfg expansion, arbitrary return-type inference, complex/generic/union type
 dynamic dispatch and arbitrary alias assignments. Without captured manifests,
 Rust modules retain the conventional `src` layout fallback. Captured `Cargo.toml`
 now adds partial target roots, declared modules, ordinary `#[path]`, custom crate
-names and renamed/inherited path dependencies; see [Rust Cargo graph](RUST_CARGO_GRAPH.md).
+names and renamed/inherited path dependencies; see [Rust Cargo graph](code-intelligence/RUST_CARGO_GRAPH.md).
 Feature/cfg configuration, full Cargo semantics and compiler-grade resolution remain open.
 Rust member calls now support a qualified AST subset of declared-return chains,
 await, named fields, array/slice/Vec elements, standard Box/Arc/Rc and explicit
-generic return arguments; see [receiver typing](RUST_RECEIVER_TYPES.md). This does
+generic return arguments; see [receiver typing](code-intelligence/RUST_RECEIVER_TYPES.md). This does
 not close arbitrary inference, traits/generic impls or the broader quality gates.
 Constructor-shaped Python assignments are a syntax heuristic, not a runtime
 guarantee. Class bodies retain lexical ownership rather than a runtime execution
@@ -216,14 +216,14 @@ Reference: https://github.com/paulmann/RAGRAF (reviewed 2026-10-23).
 `schema`, `table_usage` and `write_check` are implemented on the full MCP surface.
 SQL files share the persistent syntax cache and source-sync refresh; static SQL
 literals carry source/symbol evidence. Migration DDL replay and write checks fail
-closed on incomplete or ambiguous schemas. See [SQL_CODE_ANALYSIS.md](SQL_CODE_ANALYSIS.md)
+closed on incomplete or ambiguous schemas. See [SQL_CODE_ANALYSIS.md](code-intelligence/SQL_CODE_ANALYSIS.md)
 for supported changes, rollback conventions, examples and exact validation scope.
 
 ## Search and index history
 
 `search_multi`, `duplicates`, `index_revisions`, `diff`, `catalog`, `index_status`,
 `freshness`, `live_read`, `drift_report` and `drift_ack` are implemented.
-See [CODE_HISTORY.md](CODE_HISTORY.md) for consistency, evidence, limits and access
+See [CODE_HISTORY.md](code-intelligence/CODE_HISTORY.md) for consistency, evidence, limits and access
 contracts. The full RAGRAF goal remains open; this checklist does not substitute
 for end-to-end parity or superiority qualification.
 
@@ -232,7 +232,7 @@ for end-to-end parity or superiority qualification.
 `class_usage` and `policy_trace` are available on the full MCP surface. CSS/HTML
 syntax grammars and basic PHP declaration/call parsing extend the index. Remaining
 language/compiler/control-flow qualification is still open. See
-[CSS_POLICY_ANALYSIS.md](CSS_POLICY_ANALYSIS.md) for supported syntax, project
+[CSS_POLICY_ANALYSIS.md](code-intelligence/CSS_POLICY_ANALYSIS.md) for supported syntax, project
 isolation, fallback semantics, uncertainty and budgets.
 
 
@@ -406,31 +406,31 @@ matrix or establish deployment.
 
 ### Ruby syntax transfer
 
-[Ruby code analysis](RUBY_CODE_ANALYSIS.md) adds captured `.rb` declarations, owner-qualified method/constant candidates, conservative constructor locals, require-relative file scopes, single-superclass candidates and frozen/cache/sync integration. This closes part of the remaining language gap; runtime dispatch, framework and full language qualification remain open.
+[Ruby code analysis](code-intelligence/RUBY_CODE_ANALYSIS.md) adds captured `.rb` declarations, owner-qualified method/constant candidates, conservative constructor locals, require-relative file scopes, single-superclass candidates and frozen/cache/sync integration. This closes part of the remaining language gap; runtime dispatch, framework and full language qualification remain open.
 
 ### C# syntax transfer
 
-[The C# index](CSHARP_CODE_ANALYSIS.md) now captures namespaces, type/member declarations, calls and base syntax, with conservative namespace/alias/type/arity candidates. Source sync, stale guards, impact, cache equivalence and frozen base history are integrated. Compiler/build/overload/runtime conformance and the remaining language matrix stay open.
+[The C# index](code-intelligence/CSHARP_CODE_ANALYSIS.md) now captures namespaces, type/member declarations, calls and base syntax, with conservative namespace/alias/type/arity candidates. Source sync, stale guards, impact, cache equivalence and frozen base history are integrated. Compiler/build/overload/runtime conformance and the remaining language matrix stay open.
 
 ### Perl syntax and variables transfer
 
-[Perl code intelligence](PERL_CODE_ANALYSIS.md) uses the maintained grammar for package/sub/class/method syntax and scalar/array/hash declarations and references. Captured package/lexical calls, single-parent candidates and package-file relations integrate with source sync, stale guards, impact, cache equivalence and immutable history. INC/exports, dynamic/runtime/experimental forms and complete parity remain open.
+[Perl code intelligence](code-intelligence/PERL_CODE_ANALYSIS.md) uses the maintained grammar for package/sub/class/method syntax and scalar/array/hash declarations and references. Captured package/lexical calls, single-parent candidates and package-file relations integrate with source sync, stale guards, impact, cache equivalence and immutable history. INC/exports, dynamic/runtime/experimental forms and complete parity remain open.
 
 ### PowerShell syntax transfer
 
-[PowerShell code intelligence](POWERSHELL_CODE_ANALYSIS.md) adds functions/classes/methods/properties/enums, captured case-insensitive command scopes, literal source-load relations and static/this/single-base candidates. Source sync, stale guards, impact, cache equivalence and immutable history are integrated. Ambient session/alias/scope/export, full language/runtime behavior and complete parity remain open.
+[PowerShell code intelligence](code-intelligence/POWERSHELL_CODE_ANALYSIS.md) adds functions/classes/methods/properties/enums, captured case-insensitive command scopes, literal source-load relations and static/this/single-base candidates. Source sync, stale guards, impact, cache equivalence and immutable history are integrated. Ambient session/alias/scope/export, full language/runtime behavior and complete parity remain open.
 
 ### Duplicate candidate role evidence
 
-[Duplicate role contract 2](DUPLICATE_ROLE_EVIDENCE.md) extends primary-candidate ranking with bound values/types, module imports and HTML/CSS resource candidates. Source and target fingerprint/project guards, non-code published identity, complete evidence counts, deterministic bounded retention and primary visibility under member limits are integrated. Runtime activity, representative ranking/scale and complete parity remain open.
+[Duplicate role contract 2](code-intelligence/DUPLICATE_ROLE_EVIDENCE.md) extends primary-candidate ranking with bound values/types, module imports and HTML/CSS resource candidates. Source and target fingerprint/project guards, non-code published identity, complete evidence counts, deterministic bounded retention and primary visibility under member limits are integrated. Runtime activity, representative ranking/scale and complete parity remain open.
 
 ### Search family roles and coherent observations
 
-[Search role evidence](SEARCH_ROLE_EVIDENCE.md) now includes captured imports/resources and non-code identities outside target prefixes. Search and duplicates share a scoped corpus/index read transaction, retain independent evidence counts/caps and validate source fingerprints. A cloned-connection source/cache/history publication case qualifies read-view coherence; global ranking, runtime usage, representative scale and complete parity remain open.
+[Search role evidence](code-intelligence/SEARCH_ROLE_EVIDENCE.md) now includes captured imports/resources and non-code identities outside target prefixes. Search and duplicates share a scoped corpus/index read transaction, retain independent evidence counts/caps and validate source fingerprints. A cloned-connection source/cache/history publication case qualifies read-view coherence; global ranking, runtime usage, representative scale and complete parity remain open.
 
 ### Literal path mention roles
 
-[Literal path role evidence](LITERAL_PATH_ROLE_EVIDENCE.md) now supplements search/duplicate rankings with exact stored-text mentions such as JS endpoint constants. Same-project published identities, global basename guards, path/URL boundaries, typed-pair suppression and explicit work/retention budgets preserve uncertainty. Runtime path binding, representative quality/scale and complete parity remain open.
+[Literal path role evidence](code-intelligence/LITERAL_PATH_ROLE_EVIDENCE.md) now supplements search/duplicate rankings with exact stored-text mentions such as JS endpoint constants. Same-project published identities, global basename guards, path/URL boundaries, typed-pair suppression and explicit work/retention budgets preserve uncertainty. Runtime path binding, representative quality/scale and complete parity remain open.
 
 ### Duplicate member comparison (2026-10-26)
 
@@ -439,7 +439,7 @@ the selected primary and both directional unique-line deltas. The phase has
 independent pair/byte/line budgets, explicit null metrics for unchecked pairs,
 source identities and body-free output. It runs after returned group/member
 limits and does not change token-trigram grouping. See
-[DUPLICATE_PRIMARY_COMPARISON.md](DUPLICATE_PRIMARY_COMPARISON.md) and
+[DUPLICATE_PRIMARY_COMPARISON.md](code-intelligence/DUPLICATE_PRIMARY_COMPARISON.md) and
 [qualification](qualification/duplicate-comparison-2026-10-26/README.md).
 Full RAGRAF parity, runtime binding/deletion safety and representative quality
 and scale remain open.
@@ -452,7 +452,7 @@ independent exact stored-text partitions. Proper exact subgroups remain visible;
 only identical member sets suppress redundant family groups. Returned families
 classify as `family`, `same_name` or explicit `not_checked`, with bounded primary
 comparison coverage and unrounded threshold decisions. The default component
-view remains available. See [contract](DUPLICATE_FAMILY_GROUPING.md) and
+view remains available. See [contract](code-intelligence/DUPLICATE_FAMILY_GROUPING.md) and
 [qualification](qualification/duplicate-families-2026-10-26/README.md).
 Representative corpus quality/scale, broader runtime roles and full parity remain
 unverified; classification does not imply semantic equivalence or deletion safety.
@@ -465,7 +465,7 @@ All duplicate modes expose qualified capture evidence or explicit unknowns per
 member. Text decoding and PDF/OOXML extraction now bind to exactly the captured
 input; binary document extractors read a temporary snapshot. Source sync upgrades
 legacy metadata and refreshes byte-only changes with unchanged decoded text.
-[Contract](SOURCE_BYTE_DUPLICATES.md),
+[Contract](code-intelligence/SOURCE_BYTE_DUPLICATES.md),
 [qualification](qualification/source-byte-copies-2026-10-26/README.md).
 Direct byte comparison, current filesystem equality, arbitrary binary ingestion,
 representative scale and full RAGRAF parity remain unverified.
@@ -478,7 +478,7 @@ filters, captured read/write owner or ownerless-file evidence, and separately
 qualified route registrations/client mentions cover previously absent target
 kinds. Handler alternatives at one registration are grouped and do not become
 fake source owners or runtime dispatch proof. Counts precede output limits;
-stale facts remain excluded. [Contract](NON_CODE_REFERENCES.md),
+stale facts remain excluded. [Contract](code-intelligence/NON_CODE_REFERENCES.md),
 [qualification](qualification/non-code-references-2026-10-26/README.md).
 Translation keys, remaining non-code kinds, broader surfaces and representative
 quality/scale remain open; this does not close the full parity goal.
@@ -491,7 +491,7 @@ Exact decoded keys, quote-aware static PHP escapes, UTF-8 source provenance,
 per-project identity and explicit capture limits improve the reference's raw
 stripping/line-dedup behavior. Frozen relations preserve repeat counts, ignore
 position/literal-spelling churn and refuse fabricated comparisons against
-legacy or incomplete captures. [Contract](TRANSLATION_KEY_REFERENCES.md),
+legacy or incomplete captures. [Contract](code-intelligence/TRANSLATION_KEY_REFERENCES.md),
 [qualification](qualification/translation-keys-2026-10-26/README.md).
 Catalogue/locale/framework resolution, dynamic/named PHP forms, broader formats,
 shared-key symbol listing, remaining surfaces, representative quality/scale and
@@ -504,7 +504,7 @@ its unchanged default code-definition view. Project-scoped stable IDs, prefix/na
 lookups, literal contains selection, source-window counts and independently bounded
 proofs provide discoverable navigation through `reference_target`. Shared nodes
 have no invented last-writer definition location; schema/use-only tables and
-route handler alternatives remain explicit. [Contract](SHARED_SYMBOL_NODES.md),
+route handler alternatives remain explicit. [Contract](code-intelligence/SHARED_SYMBOL_NODES.md),
 [qualification](qualification/symbol-nodes-2026-10-26/README.md).
 Catalogue/framework binding, unresolved external placeholders, broader domains
 and surfaces, ranking/scale and full parity remain unverified.
@@ -517,23 +517,23 @@ before output caps. Route handlers remain alternatives, never fake source owners
 Shared symbol nodes provide impact selectors. A reproduced JS parse-error bridge
 is now excluded in the common symbol walker; SQL schema-only identities also
 participate in disambiguation before source/access filters.
-[Contract](LITERAL_TARGET_IMPACT.md),
+[Contract](code-intelligence/LITERAL_TARGET_IMPACT.md),
 [qualification](qualification/literal-impact-2026-10-26/README.md).
 Runtime binding/impact, unsupported import/ownership forms, broader surfaces and
 representative quality/scale remain unproven; full parity remains open.
 
 ### PHPDoc parameter contracts
 
-PHP/PHTML named callable symbols now retain structured stated parameter contracts, nested/optional shapes, AST parameter binding and explicit unsupported/ambiguous/limited evidence. See [contract and remaining boundaries](PHP_PARAMETER_CONTRACTS.md). Runtime type checking, inherited contracts, dialect precedence and semantic contract diffs remain open; this does not close whole-product parity.
+PHP/PHTML named callable symbols now retain structured stated parameter contracts, nested/optional shapes, AST parameter binding and explicit unsupported/ambiguous/limited evidence. See [contract and remaining boundaries](code-intelligence/PHP_PARAMETER_CONTRACTS.md). Runtime type checking, inherited contracts, dialect precedence and semantic contract diffs remain open; this does not close whole-product parity.
 
 ### Client HTTP endpoint syntax
 
-[Qualified contract](CLIENT_ENDPOINT_REFERENCES.md) extends fetch evidence with AST jQuery/Axios URL candidates, explicit method basis and legacy-aware immutable relations. Runtime client identity/defaults, library instances, XHR and relative URL resolution remain open.
+[Qualified contract](code-intelligence/CLIENT_ENDPOINT_REFERENCES.md) extends fetch evidence with AST jQuery/Axios URL candidates, explicit method basis and legacy-aware immutable relations. Runtime client identity/defaults, library instances, XHR and relative URL resolution remain open.
 
 ### Stored code read windows and ID navigation
 
-[Contract](CODE_READS.md) adds project-scoped file/document/ID reads, inclusive line windows and shared text budgets. Nested/partially overlapping source intervals are returned once, and chunk IDs require exact current source mapping. One read transaction binds selection to source identity. Broader source-mode/style/transformed-chunk and scale acceptance remains open.
+[Contract](code-intelligence/CODE_READS.md) adds project-scoped file/document/ID reads, inclusive line windows and shared text budgets. Nested/partially overlapping source intervals are returned once, and chunk IDs require exact current source mapping. One read transaction binds selection to source identity. Broader source-mode/style/transformed-chunk and scale acceptance remains open.
 
 ### Complete traversal of bounded source reads
 
-[Source cursors](CODE_SOURCE_PAGINATION.md) resume record/character/segment pages against a checked current view. UTF-8 byte windows and delimited IDs extend navigation; canonical partitions preserve unique bytes across pages. This improves large/single-line source reads while leaving historical snapshots, other source modes, styles and representative scale open.
+[Source cursors](code-intelligence/CODE_SOURCE_PAGINATION.md) resume record/character/segment pages against a checked current view. UTF-8 byte windows and delimited IDs extend navigation; canonical partitions preserve unique bytes across pages. This improves large/single-line source reads while leaving historical snapshots, other source modes, styles and representative scale open.

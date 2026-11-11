@@ -1,6 +1,6 @@
 # Stored code reads — 2026-10-26
 
-[Contract](../../CODE_READS.md). Pinned reference:
+[Contract](../../code-intelligence/CODE_READS.md). Pinned reference:
 075caf86dc2f6274b9c48487e521915bcdfeaf2c, `Facade.op_code` and `_drop_nested`.
 The local extension adds exact file/document and symbol/chunk-ID selection,
 line intersections, non-overlapping source segments and independent record/

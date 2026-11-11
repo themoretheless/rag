@@ -1,6 +1,6 @@
 # PowerShell index qualification — 2026-10-26
 
-See the [contract](../../POWERSHELL_CODE_ANALYSIS.md). The pinned RAGRAF profile
+See the [contract](../../code-intelligence/POWERSHELL_CODE_ANALYSIS.md). The pinned RAGRAF profile
 was inspected. The selected tree-sitter-pwsh 0.38.1 grammar covers using directives
 missing from the older cached crate; parser/source mapping is verified locally,
 not promoted to runspace or language conformance.

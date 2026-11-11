@@ -1,6 +1,6 @@
 # Literal key/URL impact and source-error guard — 2026-10-26
 
-Implemented [literal target impact](../../LITERAL_TARGET_IMPACT.md) through the
+Implemented [literal target impact](../../code-intelligence/LITERAL_TARGET_IMPACT.md) through the
 existing native/MCP impact surface, with shared symbol `impact_target` navigation.
 Full parity and runtime translator/router impact remain unproven.
 

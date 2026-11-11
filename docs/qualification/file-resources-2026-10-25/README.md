@@ -5,7 +5,7 @@ reference `075caf86dc2f6274b9c48487e521915bcdfeaf2c` extracts markup file refere
 in `extract/css_html.py`. This implementation adds AST-based, source-bound,
 project-isolated resource candidates with explicit unresolved URL/base cases,
 file-impact traversal, dead-file protection and immutable relation diffs.
-See the [contract](../../FILE_RESOURCE_RELATIONS.md).
+See the [contract](../../code-intelligence/FILE_RESOURCE_RELATIONS.md).
 
 Six native regressions cover HTML attributes/entities, CSS quoted/unquoted
 imports and declaration URLs, transitive graphs without symbols, whole-document

@@ -1,6 +1,6 @@
 # Shared symbol nodes — 2026-10-26
 
-Implemented the [typed symbol inventory](../../SHARED_SYMBOL_NODES.md) for captured
+Implemented the [typed symbol inventory](../../code-intelligence/SHARED_SYMBOL_NODES.md) for captured
 translation keys, SQL tables and literal URLs, alongside legacy code definitions.
 Full RAGRAF parity remains unproven.
 

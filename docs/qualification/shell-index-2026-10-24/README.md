@@ -11,4 +11,4 @@ Verification:
 - SQL MCP regression: `scripts/smoke_code_sql.py`, report `sql-regression.json`.
 - Python/Rust/TS bound-reference regression also passed (`references-regression.json`).
 
-No shell script, SQL statement or production database was executed/modified. Index format is 17; old caches are invalidated. See `docs/SHELL_CODE_ANALYSIS.md` for coverage limits. Relative source paths, expansion, runtime registration, external environment, full alias semantics and arbitrary execution effects remain unverified. This qualifies a subset of shell source analysis and does not complete the broader RAGRAF transfer goal.
+No shell script, SQL statement or production database was executed/modified. Index format is 17; old caches are invalidated. See `docs/code-intelligence/SHELL_CODE_ANALYSIS.md` for coverage limits. Relative source paths, expansion, runtime registration, external environment, full alias semantics and arbitrary execution effects remain unverified. This qualifies a subset of shell source analysis and does not complete the broader RAGRAF transfer goal.

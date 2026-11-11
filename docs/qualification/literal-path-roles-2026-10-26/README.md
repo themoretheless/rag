@@ -1,6 +1,6 @@
 # Literal path role qualification — 2026-10-26
 
-See the [contract](../../LITERAL_PATH_ROLE_EVIDENCE.md). RAGRAF's pinned
+See the [contract](../../code-intelligence/LITERAL_PATH_ROLE_EVIDENCE.md). RAGRAF's pinned
 075caf86dc2f6274b9c48487e521915bcdfeaf2c literal_refs helper and facade examples
 were inspected, including an endpoint constant with no code graph edge.
 

@@ -2,7 +2,7 @@
 
 This extends the native database block with separately labelled naming hypotheses.
 It does not establish full RAGRAF parity or whole-product superiority. The
-[operation contract](../../EXTERNAL_DATABASES.md) defines the supported rules and
+[operation contract](../../code-intelligence/EXTERNAL_DATABASES.md) defines the supported rules and
 remaining limits; the [acceptance matrix](../../RAGRAF_FEATURE_MATRIX.md) keeps the
 full transfer/improvement goal open.
 

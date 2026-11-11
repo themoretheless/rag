@@ -54,9 +54,9 @@ With `RAG_TOOLS=full`, `schema` derives tables/columns from ingested migration D
 `table_usage` finds static SQL reads and writes, and `write_check` validates a
 column/row plan without executing SQL. Source sync refreshes SQL facts alongside
 the code index. Incomplete schemas return an indeterminate verdict. See
-[`docs/SQL_CODE_ANALYSIS.md`](docs/SQL_CODE_ANALYSIS.md) for supported SQL and limits.
+[`docs/code-intelligence/SQL_CODE_ANALYSIS.md`](docs/code-intelligence/SQL_CODE_ANALYSIS.md) for supported SQL and limits.
 External PostgreSQL/MySQL snapshots, bounded samples and code/schema comparisons are
-configured separately: [`docs/EXTERNAL_DATABASES.md`](docs/EXTERNAL_DATABASES.md).
+configured separately: [`docs/code-intelligence/EXTERNAL_DATABASES.md`](docs/code-intelligence/EXTERNAL_DATABASES.md).
 
 ## Exact code search and index history
 
@@ -65,7 +65,7 @@ unions. `duplicates` groups exact/near copies with static usage evidence.
 Index publications now retain immutable revisions and deduplicated source blobs;
 `index_revisions`, `diff`, `catalog`, `freshness`, `live_read`, `drift_report` and
 `drift_ack` expose their history and source differences. See
-[`docs/CODE_HISTORY.md`](docs/CODE_HISTORY.md) for consistency and limits.
+[`docs/code-intelligence/CODE_HISTORY.md`](docs/code-intelligence/CODE_HISTORY.md) for consistency and limits.
 
 ## Features (implemented)
 
@@ -819,8 +819,8 @@ re-exporting JSON, not opening a second live handle.
 
 MIT
 
-Static CSS class navigation and permission-decision traces: [CSS_POLICY_ANALYSIS.md](docs/CSS_POLICY_ANALYSIS.md) (`class_usage`, `policy_trace`; `RAG_TOOLS=full`).
+Static CSS class navigation and permission-decision traces: [CSS_POLICY_ANALYSIS.md](docs/code-intelligence/CSS_POLICY_ANALYSIS.md) (`class_usage`, `policy_trace`; `RAG_TOOLS=full`).
 
-Task-scoped analysis notes and measured index usage: [ANALYSIS_TASKS.md](docs/ANALYSIS_TASKS.md) (`task_set`, `note`, `notes`, `task_stats`; `RAG_TOOLS=full`).
+Task-scoped analysis notes and measured index usage: [ANALYSIS_TASKS.md](docs/code-intelligence/ANALYSIS_TASKS.md) (`task_set`, `note`, `notes`, `task_stats`; `RAG_TOOLS=full`).
 
-Opt-in index-usage gate and labelled confidence-threshold reports: [GATE_CALIBRATION.md](docs/GATE_CALIBRATION.md) (`gate`, `rag_gate`, `calibrate`, `calibration_reports`).
+Opt-in index-usage gate and labelled confidence-threshold reports: [GATE_CALIBRATION.md](docs/code-intelligence/GATE_CALIBRATION.md) (`gate`, `rag_gate`, `calibrate`, `calibration_reports`).

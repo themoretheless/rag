@@ -4,7 +4,7 @@ The native database block now captures declared PostgreSQL enum/domain chains an
 MySQL enum/set members, integrates these facts into drift, and resolves supported
 domain identifiers without dropping their constraints. This is a locally verified
 subset, not completion of the full RAGRAF transfer/improvement goal. See the
-[contract](../../EXTERNAL_DATABASES.md) and [matrix](../../RAGRAF_FEATURE_MATRIX.md).
+[contract](../../code-intelligence/EXTERNAL_DATABASES.md) and [matrix](../../RAGRAF_FEATURE_MATRIX.md).
 
 ## Actual verification
 

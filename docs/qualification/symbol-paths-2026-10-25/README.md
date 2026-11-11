@@ -1,6 +1,6 @@
 # Symbol path qualification
 
-Contract: [SYMBOL_PATHS.md](../../SYMBOL_PATHS.md). This implements plan
+Contract: [SYMBOL_PATHS.md](../../code-intelligence/SYMBOL_PATHS.md). This implements plan
 requirement 7 over the supported captured symbol relationships; graph extraction
 coverage and compiler/runtime semantics retain their documented limits.
 
