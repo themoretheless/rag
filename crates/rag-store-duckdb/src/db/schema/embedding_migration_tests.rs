@@ -258,6 +258,7 @@ fn bundle_view(store: &Store) -> BundleView {
                     .chunks
                     .into_iter()
                     .map(|chunk| {
+                        let chunk = chunk.chunk;
                         (
                             chunk.id,
                             chunk.chunk_index,

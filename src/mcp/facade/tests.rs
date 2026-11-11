@@ -349,7 +349,8 @@ async fn import_bundle_finishes_with_generation_clean_fts() {
                 char_start: 0,
                 char_end: body.len() as i32,
                 metadata_json: "{}".into(),
-            }],
+            }
+            .into()],
         }],
     };
     std::fs::write(
@@ -450,7 +451,8 @@ async fn legacy_bundle_requires_opt_in_and_reembeds_before_import() {
                 char_start: 0,
                 char_end: body.len() as i32,
                 metadata_json: "{}".into(),
-            }],
+            }
+            .into()],
         }],
     };
     std::fs::write(
@@ -542,7 +544,8 @@ async fn legacy_reembed_preflight_rejects_oversized_vectors_before_provider_call
                 char_start: 0,
                 char_end: 4,
                 metadata_json: "{}".into(),
-            }],
+            }
+            .into()],
         }],
     };
 

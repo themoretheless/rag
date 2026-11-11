@@ -67,13 +67,18 @@ CREATE TABLE IF NOT EXISTS documents (
 "#;
 
 /// Create `chunks` table if missing (base v1 columns).
+///
+/// `embedding` is nullable in every store, fresh or migrated: a NULL vector is
+/// a chunk recorded in `chunk_embedding_quarantine` (by the v26 migration, or
+/// restored from a recovery bundle). Vector readers skip it and the backup
+/// verification rejects a NULL vector that has no quarantine row.
 pub const CREATE_CHUNKS: &str = r#"
 CREATE TABLE IF NOT EXISTS chunks (
   id VARCHAR PRIMARY KEY,
   document_id VARCHAR NOT NULL,
   chunk_index INTEGER NOT NULL,
   content TEXT NOT NULL,
-  embedding FLOAT[] NOT NULL,
+  embedding FLOAT[],
   char_start INTEGER NOT NULL,
   char_end INTEGER NOT NULL,
   created_at TIMESTAMP NOT NULL

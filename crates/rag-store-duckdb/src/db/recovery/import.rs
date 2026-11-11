@@ -115,10 +115,6 @@ pub(super) fn validate_bundle_structure(bundle: &RecoveryBundle) -> Result<()> {
     Ok(())
 }
 
-/// Reason recorded in `chunk_embedding_quarantine` for a chunk that arrived
-/// through a recovery bundle without a vector.
-const IMPORTED_QUARANTINE_REASON: &str = "recovery_bundle_without_embedding";
-
 /// Check every chunk vector against the bundle manifest. An empty vector is
 /// the bundle's mark for a quarantined chunk (NULL embedding in the source,
 /// see `chunk_embedding_quarantine`): it is exported as `[]`, accepted here
@@ -352,13 +348,17 @@ impl Recovery<'_> {
 
         // All chunks in one ordered scan, grouped by document in Rust (was
         // one prepare + query per document).
-        let mut chunks_by_document: std::collections::HashMap<String, Vec<Chunk>> =
+        let mut chunks_by_document: std::collections::HashMap<String, Vec<BundleChunk>> =
             std::collections::HashMap::with_capacity(documents.len());
         {
             let mut chunks_stmt = conn.prepare(
-                "SELECT id, document_id, chunk_index, content, embedding, char_start, \
-                char_end, COALESCE(metadata_json, '{}') FROM chunks ORDER BY document_id, \
-                chunk_index",
+                "SELECT c.id, c.document_id, c.chunk_index, c.content, c.embedding, \
+                c.char_start, c.char_end, COALESCE(c.metadata_json, '{}'), \
+                q.chunk_id IS NOT NULL, q.reason, q.raw_embedding_json, \
+                CAST(q.quarantined_at AS VARCHAR) \
+                FROM chunks c LEFT JOIN chunk_embedding_quarantine q \
+                  ON q.chunk_id = c.id AND c.embedding IS NULL \
+                ORDER BY c.document_id, c.chunk_index, c.id",
             )?;
             let mut rows = chunks_stmt.query([])?;
             crate::db::rows::visit_rows(&mut rows, |row| {
@@ -368,15 +368,27 @@ impl Recovery<'_> {
                         row.get::<_, String>(0).unwrap_or_else(|_| "unknown".into())
                     ))
                 })?;
-                let chunk = Chunk {
-                    id: row.get(0)?,
-                    document_id: row.get(1)?,
-                    chunk_index: row.get(2)?,
-                    content: row.get(3)?,
-                    embedding,
-                    char_start: row.get(5)?,
-                    char_end: row.get(6)?,
-                    metadata_json: row.get(7)?,
+                let quarantine = if row.get::<_, bool>(8)? {
+                    Some(BundleChunkQuarantine {
+                        reason: row.get(9)?,
+                        raw_embedding_json: row.get(10)?,
+                        quarantined_at: row.get(11)?,
+                    })
+                } else {
+                    None
+                };
+                let chunk = BundleChunk {
+                    chunk: Chunk {
+                        id: row.get(0)?,
+                        document_id: row.get(1)?,
+                        chunk_index: row.get(2)?,
+                        content: row.get(3)?,
+                        embedding,
+                        char_start: row.get(5)?,
+                        char_end: row.get(6)?,
+                        metadata_json: row.get(7)?,
+                    },
+                    quarantine,
                 };
                 chunks_by_document
                     .entry(chunk.document_id.clone())
@@ -563,7 +575,7 @@ impl Recovery<'_> {
             let quarantined = item
                 .chunks
                 .iter()
-                .filter(|chunk| chunk.embedding.is_empty())
+                .filter(|chunk| chunk.quarantine.is_some())
                 .count() as u64;
             report.chunks_inserted += item.chunks.len() as u64 - quarantined;
             report.chunks_quarantined += quarantined;
@@ -587,10 +599,9 @@ impl Recovery<'_> {
             let chunks: Vec<Chunk> = item
                 .chunks
                 .iter()
-                .filter(|chunk| !chunk.embedding.is_empty())
                 .map(|chunk| Chunk {
                     document_id: d.id.clone(),
-                    ..chunk.clone()
+                    ..chunk.chunk.clone()
                 })
                 .collect();
             let embedding_json = crate::db::store::embedding_json(&chunks)?;
@@ -606,28 +617,46 @@ impl Recovery<'_> {
     }
 }
 
-/// Restore the quarantine of chunks the bundle marked with an empty vector.
-/// A fresh store's `chunks.embedding` is `NOT NULL`, so such a chunk is not
-/// inserted; it gets a `chunk_embedding_quarantine` row and its document's
-/// `content_hash` is cleared, so the next sync re-chunks and re-embeds it.
+/// Restore the quarantine of chunks the bundle marks with `quarantine`.
+/// The chunk row is already inserted with its text, offsets and metadata; its
+/// embedding is set back to NULL (as in the source), the quarantine row is
+/// written verbatim and the document's `content_hash` is cleared so the next
+/// sync or re-embed pass gives it a vector again.
 fn restore_quarantined_chunks_locked(
     conn: &duckdb::Connection,
     document_id: &str,
-    chunks: &[Chunk],
+    chunks: &[BundleChunk],
 ) -> Result<()> {
     let mut any = false;
-    for chunk in chunks.iter().filter(|chunk| chunk.embedding.is_empty()) {
+    for chunk in chunks {
+        let Some(quarantine) = chunk.quarantine.as_ref() else {
+            continue;
+        };
         any = true;
+        conn.execute(
+            "UPDATE chunks SET embedding = NULL WHERE id = ?",
+            duckdb::params![chunk.id],
+        )?;
         conn.execute(
             "INSERT OR REPLACE INTO chunk_embedding_quarantine \
                (chunk_id, document_id, raw_embedding_json, reason, quarantined_at) \
-             VALUES (?, ?, NULL, ?, CURRENT_TIMESTAMP)",
-            duckdb::params![chunk.id, document_id, IMPORTED_QUARANTINE_REASON],
+             VALUES (?, ?, ?, ?, COALESCE(CAST(? AS TIMESTAMP), CURRENT_TIMESTAMP))",
+            duckdb::params![
+                chunk.id,
+                document_id,
+                quarantine.raw_embedding_json,
+                quarantine.reason,
+                quarantine.quarantined_at,
+            ],
         )?;
     }
     if any {
         conn.execute(
             "UPDATE documents SET content_hash = NULL WHERE id = ?",
+            duckdb::params![document_id],
+        )?;
+        conn.execute(
+            "DELETE FROM reembed_progress WHERE document_id = ?",
             duckdb::params![document_id],
         )?;
     }

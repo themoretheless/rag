@@ -554,6 +554,7 @@ pub(super) fn validate_bundle_document_json_shape(
                 "char_start",
                 "char_end",
                 "metadata_json",
+                "quarantine",
             ],
             &chunk_context,
         )?;

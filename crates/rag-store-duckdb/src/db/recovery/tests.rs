@@ -479,19 +479,13 @@ fn recovery_overwrite_cross_collision_conflicts_and_rolls_back_every_item() {
         documents: vec![
             BundleDocument {
                 document: recovery_document("new-document", "recovery://new", "must roll back"),
-                chunks: vec![recovery_chunk(
-                    "new-chunk",
-                    "new-document",
-                    "must roll back",
-                )],
+                chunks: vec![recovery_chunk("new-chunk", "new-document", "must roll back").into()],
             },
             BundleDocument {
                 document: recovery_document("document-a", "recovery://b", "cross collision"),
-                chunks: vec![recovery_chunk(
-                    "collision-chunk",
-                    "document-a",
-                    "cross collision",
-                )],
+                chunks: vec![
+                    recovery_chunk("collision-chunk", "document-a", "cross collision").into(),
+                ],
             },
         ],
     };
@@ -599,7 +593,8 @@ fn recovery_import_preserves_zero_and_single_match_overwrite_semantics() {
                     "replacement-chunk",
                     "replacement-document",
                     "replacement chunk",
-                )],
+                )
+                .into()],
             },
             BundleDocument {
                 document: recovery_document(
@@ -611,7 +606,8 @@ fn recovery_import_preserves_zero_and_single_match_overwrite_semantics() {
                     "inserted-chunk",
                     "inserted-document",
                     "inserted chunk",
-                )],
+                )
+                .into()],
             },
         ],
     };
@@ -700,7 +696,7 @@ fn recovery_import_refuses_missing_or_mismatched_embedding_identity() {
         .unwrap();
     let item = BundleDocument {
         document: recovery_document("imported", "recovery://imported", "body"),
-        chunks: vec![recovery_chunk("imported-chunk", "imported", "body")],
+        chunks: vec![recovery_chunk("imported-chunk", "imported", "body").into()],
     };
 
     let missing = RecoveryBundle {
@@ -761,7 +757,7 @@ fn recovery_import_refuses_forged_fingerprint_for_empty_target() {
     let store = Store::open(&root.path().join("empty-target.duckdb")).unwrap();
     let item = BundleDocument {
         document: recovery_document("imported", "recovery://imported", "body"),
-        chunks: vec![recovery_chunk("imported-chunk", "imported", "body")],
+        chunks: vec![recovery_chunk("imported-chunk", "imported", "body").into()],
     };
     let mut forged_manifest = recovery_manifest();
     forged_manifest.content_fingerprint = Some("attacker-controlled-fingerprint".into());
@@ -831,7 +827,7 @@ fn recovery_decoder_is_strict_but_preserves_v1_metadata_only_records() {
         embedding_manifest: Some(recovery_manifest()),
         documents: vec![BundleDocument {
             document: recovery_document("nested", "recovery://nested", "body"),
-            chunks: vec![recovery_chunk("nested-chunk", "nested", "body")],
+            chunks: vec![recovery_chunk("nested-chunk", "nested", "body").into()],
         }],
     };
     for (pointer, field) in [
@@ -865,7 +861,7 @@ fn recovery_import_rejects_empty_and_misparented_ids_without_writes() {
         embedding_manifest: Some(recovery_manifest()),
         documents: vec![BundleDocument {
             document: recovery_document("parent", "recovery://parent", "body"),
-            chunks: vec![recovery_chunk("chunk", "different-parent", "body")],
+            chunks: vec![recovery_chunk("chunk", "different-parent", "body").into()],
         }],
     };
 
@@ -913,7 +909,7 @@ fn recovery_import_rejects_empty_and_misparented_ids_without_writes() {
         embedding_manifest: Some(recovery_manifest()),
         documents: vec![BundleDocument {
             document: recovery_document("parent", "recovery://parent", "body"),
-            chunks: vec![recovery_chunk(" ", "parent", "body")],
+            chunks: vec![recovery_chunk(" ", "parent", "body").into()],
         }],
     };
     let error = store
@@ -1010,11 +1006,11 @@ fn recovery_dry_run_models_intra_bundle_chunk_id_conflicts() {
         documents: vec![
             BundleDocument {
                 document: recovery_document("first", "recovery://first", "first"),
-                chunks: vec![recovery_chunk("same-chunk", "first", "first")],
+                chunks: vec![recovery_chunk("same-chunk", "first", "first").into()],
             },
             BundleDocument {
                 document: recovery_document("second", "recovery://second", "second"),
-                chunks: vec![recovery_chunk("same-chunk", "second", "second")],
+                chunks: vec![recovery_chunk("same-chunk", "second", "second").into()],
             },
         ],
     };
@@ -1276,7 +1272,7 @@ fn import_preserves_document_timestamps_to_the_microsecond() {
         embedding_manifest: Some(recovery_manifest()),
         documents: vec![BundleDocument {
             document,
-            chunks: vec![recovery_chunk("timed-chunk", "timed", "timed body")],
+            chunks: vec![recovery_chunk("timed-chunk", "timed", "timed body").into()],
         }],
     };
     let report = store
@@ -1317,7 +1313,7 @@ fn preflight_bundle(chunks_per_doc: &[usize]) -> RecoveryBundle {
                 BundleDocument {
                     document: recovery_document(&id, &format!("recovery://{id}"), "body"),
                     chunks: (0..*count)
-                        .map(|c| recovery_chunk(&format!("{id}-c{c}"), &id, "chunk"))
+                        .map(|c| recovery_chunk(&format!("{id}-c{c}"), &id, "chunk").into())
                         .collect(),
                 }
             })
@@ -1401,7 +1397,7 @@ fn import_normalizes_document_columns_like_every_other_write() {
         embedding_manifest: Some(recovery_manifest()),
         documents: vec![BundleDocument {
             document,
-            chunks: vec![recovery_chunk("loose-chunk", "loose", "loose body")],
+            chunks: vec![recovery_chunk("loose-chunk", "loose", "loose body").into()],
         }],
     };
     let report = store
@@ -1444,54 +1440,101 @@ fn import_normalizes_document_columns_like_every_other_write() {
     );
 }
 
-/// A chunk the v26 migration quarantined has a NULL embedding. Export must not
-/// produce a bundle its own import rejects, and the document must stay flagged
-/// for re-embedding on the other side.
-#[test]
-fn recovery_round_trip_keeps_quarantined_chunks_flagged() {
-    let root = tempfile::tempdir().unwrap();
-    let source = Store::open(&root.path().join("source.duckdb")).unwrap();
+/// Build a store as the v26 migration leaves it after quarantining one chunk:
+/// `good-doc` has a vector, `bad-doc`'s chunk has a NULL embedding, a
+/// quarantine row with the raw legacy text and a cleared `content_hash`.
+fn store_with_quarantined_chunk(path: &Path) -> Store {
+    let source = Store::open(path).unwrap();
     source
         .embedding_manifest()
         .set_embedding_manifest(&recovery_manifest())
         .unwrap();
-    for (doc, chunk) in [("good-doc", "good-chunk"), ("bad-doc", "bad-chunk")] {
-        let mut document = recovery_document(doc, &format!("recovery://{doc}"), "body");
+    for (doc, chunk, text) in [
+        ("good-doc", "good-chunk", "ordinary chunk text"),
+        ("bad-doc", "bad-chunk", "quokka marsupial island"),
+    ] {
+        let mut document = recovery_document(doc, &format!("recovery://{doc}"), text);
         document.content_hash = Some(format!("{doc}-hash"));
         source.documents().upsert_document(&document).unwrap();
-        source
-            .chunks()
-            .insert_chunks(&[recovery_chunk(chunk, doc, "chunk text")])
-            .unwrap();
+        let mut chunk = recovery_chunk(chunk, doc, text);
+        chunk.char_start = 3;
+        chunk.metadata_json = r#"{"section":"s"}"#.into();
+        source.chunks().insert_chunks(&[chunk]).unwrap();
     }
-    {
-        // What `backfill_chunk_embeddings` + `record_embedding_quarantine`
-        // leave in a store migrated to v26 (its `embedding` column is nullable).
-        let conn = source.lock().unwrap();
-        let indexes: Vec<(String, String)> = conn
-            .prepare("SELECT index_name, sql FROM duckdb_indexes() WHERE table_name = 'chunks'")
-            .unwrap()
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-            .unwrap()
-            .collect::<std::result::Result<_, _>>()
-            .unwrap();
-        for (name, _) in &indexes {
-            conn.execute_batch(&format!("DROP INDEX {name}")).unwrap();
-        }
-        conn.execute_batch("ALTER TABLE chunks ALTER COLUMN embedding DROP NOT NULL")
-            .unwrap();
-        for (_, sql) in &indexes {
-            conn.execute_batch(sql).unwrap();
-        }
-        conn.execute_batch(
+    source
+        .lock()
+        .unwrap()
+        .execute_batch(
             "UPDATE chunks SET embedding = NULL WHERE id = 'bad-chunk';
              INSERT INTO chunk_embedding_quarantine
                (chunk_id, document_id, raw_embedding_json, reason, quarantined_at)
-               VALUES ('bad-chunk', 'bad-doc', '[1,\"x\"]', 'non_numeric', CURRENT_TIMESTAMP);
+               VALUES ('bad-chunk', 'bad-doc', '[1,\"x\"]', 'unparseable',
+                       TIMESTAMP '2026-01-02 03:04:05');
              UPDATE documents SET content_hash = NULL WHERE id = 'bad-doc';",
         )
         .unwrap();
-    }
+    source
+}
+
+type ChunkRow = (String, String, i32, i32, String, Option<i64>);
+
+fn chunk_rows(store: &Store) -> Vec<ChunkRow> {
+    store
+        .lock()
+        .unwrap()
+        .prepare(
+            "SELECT id, content, char_start, char_end, metadata_json, len(embedding) \
+             FROM chunks ORDER BY id",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
+        })
+        .unwrap()
+        .collect::<std::result::Result<_, _>>()
+        .unwrap()
+}
+
+type QuarantineRow = (String, String, Option<String>, String, String);
+
+fn quarantine_rows(store: &Store) -> Vec<QuarantineRow> {
+    store
+        .lock()
+        .unwrap()
+        .prepare(
+            "SELECT chunk_id, document_id, raw_embedding_json, reason, \
+             CAST(quarantined_at AS VARCHAR) FROM chunk_embedding_quarantine ORDER BY chunk_id",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })
+        .unwrap()
+        .collect::<std::result::Result<_, _>>()
+        .unwrap()
+}
+
+/// A quarantined chunk (NULL embedding) survives export and import into a
+/// fresh store: its row, text and quarantine record come back as the source
+/// had them, its text stays lexically searchable, its document stays flagged
+/// for re-embedding, and a second export is identical to the first.
+#[test]
+fn recovery_round_trip_restores_quarantined_chunks() {
+    let root = tempfile::tempdir().unwrap();
+    let source = store_with_quarantined_chunk(&root.path().join("source.duckdb"));
 
     let bundle = source.recovery().recovery_bundle().unwrap();
     let bad = bundle
@@ -1499,11 +1542,18 @@ fn recovery_round_trip_keeps_quarantined_chunks_flagged() {
         .iter()
         .find(|item| item.document.id == "bad-doc")
         .unwrap();
-    assert!(bad.chunks[0].embedding.is_empty(), "quarantine mark");
-    assert!(bad.document.content_hash.is_none());
-    // The bundle survives its own serialized form.
-    let bundle: RecoveryBundle =
-        serde_json::from_str(&serde_json::to_string(&bundle).unwrap()).unwrap();
+    assert!(bad.chunks[0].embedding.is_empty());
+    assert_eq!(
+        bad.chunks[0].quarantine,
+        Some(BundleChunkQuarantine {
+            reason: "unparseable".into(),
+            raw_embedding_json: Some("[1,\"x\"]".into()),
+            quarantined_at: Some("2026-01-02 03:04:05".into()),
+        })
+    );
+    let json = serde_json::to_string(&bundle).unwrap();
+    validate_recovery_bundle_json_shape(&serde_json::from_str(&json).unwrap()).unwrap();
+    let bundle: RecoveryBundle = serde_json::from_str(&json).unwrap();
 
     let target = Store::open(&root.path().join("target.duckdb")).unwrap();
     let report = target
@@ -1520,24 +1570,31 @@ fn recovery_round_trip_keeps_quarantined_chunks_flagged() {
     assert_eq!(report.chunks_inserted, 1);
     assert_eq!(report.chunks_quarantined, 1);
 
-    let conn = target.lock().unwrap();
-    let chunks: Vec<(String, i64)> = conn
-        .prepare("SELECT id, len(embedding) FROM chunks ORDER BY id")
+    assert_eq!(chunk_rows(&target), chunk_rows(&source));
+    assert_eq!(
+        chunk_rows(&target)[0].5,
+        None,
+        "bad-chunk embedding is NULL"
+    );
+    assert_eq!(quarantine_rows(&target), quarantine_rows(&source));
+
+    let hits = crate::db::fts::search_bm25(
+        &target,
+        "quokka",
+        10,
+        &crate::db::fts::LexFilters::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        hits.iter()
+            .map(|hit| hit.chunk_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["bad-chunk"]
+    );
+
+    let hashes: Vec<(String, Option<String>)> = target
+        .lock()
         .unwrap()
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-        .unwrap()
-        .collect::<std::result::Result<_, _>>()
-        .unwrap();
-    assert_eq!(chunks, vec![("good-chunk".to_string(), 2)]);
-    let quarantined: Vec<String> = conn
-        .prepare("SELECT document_id FROM chunk_embedding_quarantine")
-        .unwrap()
-        .query_map([], |row| row.get(0))
-        .unwrap()
-        .collect::<std::result::Result<_, _>>()
-        .unwrap();
-    assert_eq!(quarantined, vec!["bad-doc".to_string()]);
-    let hashes: Vec<(String, Option<String>)> = conn
         .prepare("SELECT id, content_hash FROM documents ORDER BY id")
         .unwrap()
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
@@ -1550,5 +1607,17 @@ fn recovery_round_trip_keeps_quarantined_chunks_flagged() {
             ("bad-doc".to_string(), None),
             ("good-doc".to_string(), Some("good-doc-hash".to_string())),
         ]
+    );
+    let verification = verify_embedding_contract(&target, 2, Some(&recovery_manifest())).unwrap();
+    assert_eq!(verification, (true, 1));
+
+    let again = target.recovery().recovery_bundle().unwrap();
+    assert_eq!(
+        serde_json::to_value(&again.documents).unwrap(),
+        serde_json::to_value(&bundle.documents).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(&again.embedding_manifest).unwrap(),
+        serde_json::to_value(&bundle.embedding_manifest).unwrap()
     );
 }

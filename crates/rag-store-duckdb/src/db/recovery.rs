@@ -67,7 +67,58 @@ pub struct RecoveryBundle {
 pub struct BundleDocument {
     pub document: Document,
     #[serde(default)]
-    pub chunks: Vec<Chunk>,
+    pub chunks: Vec<BundleChunk>,
+}
+
+/// One chunk in a recovery bundle: the chunk row plus, for a chunk whose
+/// vector is quarantined (`chunk_embedding_quarantine`), its quarantine row.
+///
+/// A quarantined chunk is serialized with `"embedding": []` and an explicit
+/// `quarantine` object; an empty vector without that marker is invalid.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BundleChunk {
+    #[serde(flatten)]
+    pub chunk: Chunk,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quarantine: Option<BundleChunkQuarantine>,
+}
+
+/// The `chunk_embedding_quarantine` row of a quarantined chunk, carried
+/// verbatim so an import restores it as the source had it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BundleChunkQuarantine {
+    /// Why the vector was quarantined (`chunk_embedding_quarantine.reason`).
+    pub reason: String,
+    /// The raw legacy embedding text, unchanged (may be absent in the source).
+    #[serde(default)]
+    pub raw_embedding_json: Option<String>,
+    /// When the chunk was quarantined, as DuckDB renders the timestamp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quarantined_at: Option<String>,
+}
+
+impl From<Chunk> for BundleChunk {
+    fn from(chunk: Chunk) -> Self {
+        Self {
+            chunk,
+            quarantine: None,
+        }
+    }
+}
+
+impl std::ops::Deref for BundleChunk {
+    type Target = Chunk;
+
+    fn deref(&self) -> &Chunk {
+        &self.chunk
+    }
+}
+
+impl std::ops::DerefMut for BundleChunk {
+    fn deref_mut(&mut self) -> &mut Chunk {
+        &mut self.chunk
+    }
 }
 
 /// Allocation-safe preflight summary for portable recovery materialization.

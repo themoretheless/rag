@@ -175,8 +175,10 @@ rule still holds because those modules are in the app layer.
 
 ## Schema v26
 
-- `SCHEMA_VERSION` is 26. `chunks.embedding` is a native `FLOAT[]` (fresh
-  databases: `NOT NULL`); `embedding_json` is gone. Writers still serialise a
+- `SCHEMA_VERSION` is 26. `chunks.embedding` is a native, nullable
+  `FLOAT[]` in fresh and migrated databases alike (DuckDB cannot drop a
+  `NOT NULL` while indexes exist, so one shape for both keeps quarantined
+  chunks restorable from a recovery bundle); `embedding_json` is gone. Writers still serialise a
   vector to JSON for `embedding_digest` and bind it as `CAST(? AS FLOAT[])`;
   readers decode the Arrow list directly.
 - Migration from v25 runs on the first `Store::open`: add a nullable
@@ -193,7 +195,9 @@ rule still holds because those modules are in the app layer.
   re-embedding. Backup verification (`verify_embedding_contract` in
   `db/recovery/publish.rs`) accepts those NULLs and reports them as
   `quarantined_chunks`; any other NULL or wrong-length vector fails the
-  embedding contract.
+  embedding contract. Recovery bundles carry a quarantined chunk with
+  `"embedding": []` plus a `quarantine` object (its quarantine row), and
+  import restores both.
 - Downgrade: a v26 database cannot be opened by a pre-v26 binary. Keep a
   verified backup taken before the upgrade if a rollback may be needed
   ([CHANGES.md](CHANGES.md)).

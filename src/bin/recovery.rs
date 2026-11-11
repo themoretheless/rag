@@ -359,7 +359,8 @@ mod tests {
                     char_start: 0,
                     char_end: 6,
                     metadata_json: "{}".into(),
-                }],
+                }
+                .into()],
             }],
         };
         let error = prepare_offline_import_bundle(with_vector)

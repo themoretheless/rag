@@ -30,9 +30,16 @@ HTTP statuses did not change anywhere below unless stated.
   re-embedding, so the next source sync or `reembed_all` repairs it.
 - The vector snapshot skips a stored vector that does not decode or is
   non-finite (with a warning) instead of failing every vector search.
-- Recovery bundles: an empty vector marks a quarantined chunk; import records
-  it in the quarantine table and clears the document's `content_hash`. The
-  import report gains `chunks_quarantined`.
+- `chunks.embedding` is nullable in fresh v26 databases too (it was
+  `NOT NULL` in earlier, unreleased commits of this branch); a NULL vector
+  always means a chunk recorded in `chunk_embedding_quarantine`.
+- Recovery bundles: a quarantined chunk is exported with its text, offsets
+  and metadata, `"embedding": []` and a `quarantine` object
+  (`reason`, `raw_embedding_json`, `quarantined_at`) copied from its
+  quarantine row. Import restores the chunk row with a NULL embedding (its
+  text stays lexically searchable), writes the quarantine row verbatim and
+  clears the document's `content_hash` so it is re-embedded. The import
+  report gains `chunks_quarantined`.
 - Backup verification (`recovery verify`, the backup sidecar
   `verification` object) gains `quarantined_chunks`; NULL vectors of
   quarantined chunks no longer fail `embedding_contract_ok`. Sidecars written
