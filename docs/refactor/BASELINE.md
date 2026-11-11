@@ -382,3 +382,33 @@ Medians; before and after binaries alternated, 3 runs each, load 1.6–3.5.
 | `integrity_counts` (`/health`), 2 200 documents | 12.10 ms | **9.43 ms** |
 
 All kept except the `kg_invalidate` / `kg_supersede` batching.
+
+### Item 6: release profile, `lto = "thin"` vs `"fat"`
+
+Method: the real release profile (`codegen-units = 1`, `strip =
+"debuginfo"`), only `CARGO_PROFILE_RELEASE_LTO` switched, each from an empty
+`target/release`: `cargo build --release -p rag-mcp --bin rag-mcp` for size
+and build time, and the lib test binary built with the same profile for
+`timing_hybrid_search_p50_p95` (10 000 documents), run alternately 3 times
+each, load 0.7–1.8.
+
+| metric | thin (current) | fat |
+|---|---:|---:|
+| `target/release/rag-mcp` | 116.9 MB (116 877 256 B) | 113.2 MB (113 203 056 B), −3.1 % |
+| clean build of `rag-mcp` | 1 138 s | 1 350 s (+19 %) |
+| hybrid search p50 / p95 | 85.6 / 94.8 ms | 88.1 / 100.5 ms |
+
+Kept `thin`: fat LTO is 3 % smaller but not faster (p50 +2.9 %, inside the
+run-to-run spread of 84–91 ms) and costs 3.5 more minutes per release build;
+neither wins clearly, so the current setting stays.
+
+### Stage 5 summary (40 000 chunks, release, same harness settings)
+
+| metric | before Stage 5 | after Stage 5 |
+|---|---:|---:|
+| vector snapshot build (cold vector search) | 128.8 ms (150.6 ms re-measured before item 2) | 67.2 ms |
+| vector search right after a one-document write, p50 | 25.5 ms | 16.8 ms |
+| concurrent search p50 / write p95 | 53.7 / 41.0 ms | 37.0 / 24.3 ms (item 1) |
+| hybrid search p50 / p95 (LTO off, 16 codegen units) | 95.9 / 105.9 ms | 89.4 / 100.1 ms |
+| hybrid search with neighbour context p50 | 111.3 ms | 94.7 ms |
+| document insert throughput (2 000 docs) | 93 docs/s | 86 docs/s |
