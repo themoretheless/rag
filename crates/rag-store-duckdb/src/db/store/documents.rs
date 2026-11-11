@@ -891,6 +891,15 @@ impl Documents<'_> {
     /// Callers must finish chunking and embedding before entering this method.
     /// Embedding JSON is also prepared before the database lock/transaction so
     /// serialization failures cannot leave a partially-updated document.
+    ///
+    /// # Caller-guarded
+    ///
+    /// This method does not take the corpus mutation lane itself. The caller
+    /// must hold an [`EmbeddingWriteGuard`](crate::db::store::EmbeddingWriteGuard)
+    /// from `corpus_lane().try_embedding_write_guard` (or run inside a scope
+    /// from `try_corpus_mutation_scope`) for the whole embed-then-write step,
+    /// so the write cannot race an exclusive corpus mutation or a manifest
+    /// change. See `docs/refactor/ARCHITECTURE.md` (caller-guarded writes).
     pub fn write_document_atomic(
         &self,
         doc: &Document,
@@ -925,6 +934,15 @@ impl Documents<'_> {
 
     /// Persist a synchronized source document and its manifest ownership in the
     /// same transaction as chunks and graph state.
+    ///
+    /// # Caller-guarded
+    ///
+    /// This method does not take the corpus mutation lane itself. The caller
+    /// must hold an [`EmbeddingWriteGuard`](crate::db::store::EmbeddingWriteGuard)
+    /// from `corpus_lane().try_embedding_write_guard` (or run inside a scope
+    /// from `try_corpus_mutation_scope`) for the whole embed-then-write step,
+    /// so the write cannot race an exclusive corpus mutation or a manifest
+    /// change. See `docs/refactor/ARCHITECTURE.md` (caller-guarded writes).
     pub fn write_source_document_atomic(
         &self,
         doc: &Document,
@@ -1114,6 +1132,14 @@ impl Documents<'_> {
     /// Every target must exist and an id may occur only once across the two
     /// lists. Any validation or storage failure rolls back the entire group, so
     /// a compression caller never loses a partial prefix without a report.
+    ///
+    /// # Caller-guarded
+    ///
+    /// This method does not take the corpus mutation lane itself. The caller
+    /// must run it on a store returned by `corpus_lane().try_corpus_mutation_scope`
+    /// (or `with_corpus_mutation_guard`), so no guarded search or other bulk
+    /// mutation runs at the same time. See `docs/refactor/ARCHITECTURE.md`
+    /// (caller-guarded writes).
     pub fn apply_document_dispositions_atomic(
         &self,
         delete_ids: &[String],
@@ -1176,6 +1202,14 @@ impl Documents<'_> {
     /// `content_hash` values and caller-provided ids are never trusted as proof
     /// of equality. All sources are validated before the first mutation and any
     /// later storage failure rolls the whole group back.
+    ///
+    /// # Caller-guarded
+    ///
+    /// This method does not take the corpus mutation lane itself. The caller
+    /// must run it on a store returned by `corpus_lane().try_corpus_mutation_scope`
+    /// (or `with_corpus_mutation_guard`), so no guarded search or other bulk
+    /// mutation runs at the same time. See `docs/refactor/ARCHITECTURE.md`
+    /// (caller-guarded writes).
     pub fn merge_exact_duplicates_atomic(
         &self,
         keep_id: &str,

@@ -122,6 +122,19 @@ root registers:
 | store construction | `src/storage/mod.rs` (`open_store`, `open_configured`, hook and schema-extension registration) |
 | composition | `src/main.rs`, `src/bootstrap.rs`, `src/context.rs`, `src/background.rs` |
 
+### Caller-guarded writes
+
+The atomic store writes `Documents::write_document_atomic`,
+`write_source_document_atomic`, `merge_exact_duplicates_atomic`,
+`apply_document_dispositions_atomic` and `Chunks::update_chunk_embeddings_atomic`
+do not take the corpus mutation lane themselves; each carries a
+`# Caller-guarded` doc section. Embedding writes run under
+`corpus_lane().try_embedding_write_guard` (or inside a mutation scope); bulk
+maintenance runs on a store from `try_corpus_mutation_scope` /
+`with_corpus_mutation_guard`. Their callers use several guard kinds (shared
+embedding guard, exclusive lease, sync lane), so the guard is not a
+parameter.
+
 ## Composition root
 
 `src/main.rs` (and each `src/bin/*` through `bootstrap::open_offline`):

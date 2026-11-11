@@ -321,6 +321,15 @@ impl Chunks<'_> {
     /// vectors. The chunk generation advances to invalidate vector snapshots;
     /// a clean FTS generation advances with it because indexed text did not
     /// change, while an already-dirty FTS stays dirty.
+    ///
+    /// # Caller-guarded
+    ///
+    /// This method does not take the corpus mutation lane itself. The caller
+    /// must hold an [`EmbeddingWriteGuard`](crate::db::store::EmbeddingWriteGuard)
+    /// from `corpus_lane().try_embedding_write_guard` (or run inside a scope
+    /// from `try_corpus_mutation_scope`) for the whole embed-then-write step,
+    /// so the write cannot race an exclusive corpus mutation or a manifest
+    /// change. See `docs/refactor/ARCHITECTURE.md` (caller-guarded writes).
     pub fn update_chunk_embeddings_atomic(
         &self,
         document_id: &str,
