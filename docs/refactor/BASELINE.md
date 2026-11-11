@@ -1,4 +1,50 @@
-# Baseline (before the refactor)
+# Baseline and results
+
+## Summary: before / after
+
+Before = `origin/main` `facf533` (2026-11-09); after = this branch at the end
+of Stage 9 (2026-11-11). Each row names the section below that holds the
+method. Runtime rows use the Stage 5 release harness (40 000 chunks, 32 dims,
+LTO off, 16 codegen units, median of 3 runs) unless stated; the machine is
+shared, so treat differences under ~10 % as noise.
+
+| metric | before | after | source |
+|---|---:|---:|---|
+| Rust LOC, root `src/` | 149 172 | 61 679 | Structure (`scripts/refactor_metrics.py`) |
+| Rust LOC, `crates/` | 21 620 | 118 110 (store 38 326, code-intel 58 095, ui 20 047, core + markup 1 573 at the Stage 8 count) | Structure, Stage 8 |
+| Rust LOC, `tests/` | 5 162 | 6 843 | Structure |
+| production functions > 80 lines | 255 | 254 (46 over 200; see BACKLOG.md) | Structure |
+| `Store` methods (production `fn` in `impl Store`) | 258 (40 outside `src/db`) | 39, all in `crates/rag-store-duckdb`: 10 core (open, read-only open, path, `lock` in two cfg variants, `lock_connection`, `with_conn`, `with_tx`, vector cache, `ensure_schema_extensions`), 14 repository accessors, 15 UI forwarders | Structure |
+| `impl Store` blocks outside the store | 19 | 0 (orphan rule) | Structure |
+| `self.lock()` sites in `db` / outside `db` | 140 / 33 | 1 / 0 (repositories call `self.store.lock()`, 170 sites inside the store crate) | Structure |
+| integration test binaries linking DuckDB | 4 | 1 | Structure |
+| tests run | 1 523 | 1 573 | Build and test, Stage 8 (+1 in Stage 9) |
+| full `cargo test --workspace`, binaries built | 476 s (lib 422 s) | 89 s (dep `opt-level = 1`, Stage 1; not re-timed after the crate split) | Build and test |
+| clean `cargo build --workspace` | 893 s (rustc 1.97.0, all targets) | 938 s (rustc 1.99.1, default targets; 990 s on the same toolchain just before the split) | Build and test, Stage 8 |
+| incremental build after touching the root crate | 19 s | 10 s | Stage 8 |
+| clean build of `rag-mcp-ui` (direct-db) | 1 010 s | 755 s | Stage 8 |
+| vector snapshot build (cold vector search) | 128.8 ms (150.6 ms re-measured before item 2) | 67.2 ms | Stage 5 items 1–2 |
+| warm vector search p50 | 10.4 ms | 10.0 ms | Stage 5 items 1–2 |
+| vector search right after a one-document write, p50 | 25.5 ms | 16.8 ms | Stage 5 items 1–2 |
+| concurrent search p50 / write p95 | 53.7 / 41.0 ms | 37.0 / 24.3 ms | Stage 5 item 1 |
+| hybrid search p50 / p95 | 95.9 / 105.9 ms | 89.4 / 100.1 ms | Stage 5 item 3 |
+| hybrid search with neighbour context p50 | 111.3 ms | 94.7 ms | Stage 5 item 3 |
+| document insert / update throughput (2 000 docs) | 93 / 61 docs/s | 86 / 56 docs/s (the `FLOAT[]` cast; BACKLOG.md) | Stage 5 item 2 |
+| `Store::open` of a current-schema store (40 000 chunks) | 16.8 ms | 23.6 ms (guarded repairs on every open) | Stage 5 review follow-up |
+| N+1: `set_document_tags`, 100 nodes × 20 labels | 6 691.6 ms | 706.9 ms | Stage 5 item 5 |
+| N+1: `create_collection` / `get_collection`, 200 members | 440.1 / 160.6 ms | 23.6 / 3.1 ms | Stage 5 item 5 |
+| N+1: `kg_stats` (2 000 facts) / `integrity_counts` (2 200 docs) | 5.81 / 12.10 ms | 2.45 / 9.43 ms | Stage 5 item 5 |
+| telemetry post-processing per `tools/call` (ordinary / analysis tool) | 34.7 / 52.0 µs | 17.9 / 17.8 µs | Stage 5 item 4 |
+| database file, 40 000 chunks × 32 dims | 39.07 MB | 39.07 MB | Stage 5 item 2 |
+| `target/debug/rag-mcp` (no debug info) | 313 MB | not re-measured | Build and test |
+| `target/release/rag-mcp` (thin LTO) | not measured | 116.9 MB (fat LTO: 113.2 MB, not adopted) | Stage 5 item 6 |
+| eval, example set (lex, mock 32 dims) recall@k / MRR | gates passed (values not recorded) | 1.0 / 1.0 | Structure, after Stage 4 |
+| eval, `data/eval/repository-v1.json` (lex) recall@k / MRR (gates 0.9 / 0.75) | gates passed (values not recorded) | 0.958 / 0.800 | Structure, after Stage 4 |
+
+Not measured: web bundle size and end-to-end MCP `tools/call` latency
+(BACKLOG.md).
+
+## Before the refactor
 
 Measured on `origin/main` `facf533` plus the Stage 0 commits, 2026-11-09.
 Later stages add a column to each table; they do not overwrite "before".

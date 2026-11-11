@@ -1,5 +1,76 @@
 # Inventory (origin/main `facf533`)
 
+## Final status (Stage 9, 2026-11-11)
+
+Every finding of the tables below, with its outcome. done = fixed and covered
+by a test or an enforced check; partly = the main part done, the rest in
+[BACKLOG.md](BACKLOG.md); not done = deliberately left, reason given. Paths
+are the current ones (`crates/rag-store-duckdb/src/…` = store crate,
+`crates/rag-code-intel/src/…` = intel crate). The tables after this section
+are the historical record from the start of the refactor.
+
+### Headline findings
+
+| finding | status | outcome / reason |
+|---|---|---|
+| `Store` god object (258 methods, 46 blocks) | done | Stage 3: 14 repository types behind accessors; `Store` keeps open/lock/tx, accessors and 15 forwarders for rag-mcp-ui (`db/store/ui_compat.rs`, removal with the egui stage). 39 `fn` items on `Store`, 3 `impl Store` blocks, all in the store crate. |
+| `Store::lock` leaks the connection (140 + 33 sites) | done | Stage 2: private to `db` outside `cfg(any(test, feature = "testkit"))`; 0 production `store.lock()` outside the store crate; the orphan rule keeps `impl Store` in it. |
+| cycle `db → code_index` | done | Stage 2: `DocumentWriteHook`, registered at composition. |
+| cycle `db ↔ graph` | done | Stage 2: `db` uses `rag_mcp_markup` directly. |
+| cycle `db → external_db` | done | Stage 3: `SchemaExtension` registered at composition. |
+| cycle `code_index ↔ external_db` | not done | Both are in `rag-code-intel` now, so it no longer blocks a split; untangling needs a shared `sql_check` module (BACKLOG). |
+| `config →` llm / rerank / maintain / db | partly | Stage 2: provider enums and limits in `config`; `apply_process_limits` moved to `bootstrap`. Three process globals remain (BACKLOG). |
+| `models` / `error → duckdb` | done | Stage 2: impls in `db/sql_types.rs`. |
+| `http_api → mcp` | done | Stage 4: `main` builds the MCP service and passes it to `http_api`. |
+| sync DuckDB on the async worker (`mcp/analysis.rs`) | done | Stage 4: every analysis tool on `run_blocking`. |
+| 7 blocking helper shapes | partly | Edges use `RagServer::blocking*` / `HttpState::blocking*` over `run_blocking`; 86 `blocking_section` sites left where data is borrowed or callers are synchronous (BACKLOG). |
+| `OpsLogEntry` built by hand (31 literals) | done | Stage 3: `OpsLogEntry::new` builder, `OpsLog::record` / `append`. |
+| maintain action list written 4 times | done | Stage 4: declared once; 5 unimplemented actions deleted (CHANGES.md). |
+| `storage` abstraction unused | done | Stage 3: `Storage` trait and Markdown backend deleted. |
+| status literals (26 lines) | done | Stage 3: `db::sql::ACTIVE_DOCUMENT_SQL`. |
+| env reads outside `config` (24 in 12 files) | partly | Moved into `Config` except four groups that run before or without a `Config` (BACKLOG, ARCHITECTURE.md). |
+| fixture copies (`open_temp_store` ×9, `test_config` ×15) | done | Stage 1: `testkit`, `Config::for_tests`. |
+| long functions (255 over 80 lines) | partly | The three worst maintenance functions split (451 → 119, 356 → 131, 263 → 146); 254 remain over 80 lines and 46 over 200 (BACKLOG). |
+| vector snapshot built under the Store mutex, process-global cache | done | Stage 5 item 1: `VectorCache` owned by `Store`, built outside the mutex. |
+| embeddings stored as JSON text | done | Stage 5 item 2: schema v26 `FLOAT[]`, quarantine for unconvertible rows. |
+| RRF clones, lex fallback re-run, neighbour N+1 | done | Stage 5 item 3. |
+| tool results parsed up to 3 times | done | Stage 5 item 4. |
+| N+1 queries (tags, collections, kg_stats, health) | done | Stage 5 item 5; `kg_invalidate` batching measured and reverted (no gain). |
+| `Config` cloned per request | done | Stage 4: `Arc<Config>`. |
+| tool names in 4–5 hand lists | done | Stage 4: `tool_spec.rs` table plus a two-way registry test. |
+| 3 extra test binaries linking DuckDB | done | Stage 1: one `it` binary. |
+
+### Per module
+
+| module | status | outcome / reason |
+|---|---|---|
+| code_index (now `rag-code-intel`) | partly | Boundary done (repository over `with_conn`, write hook, own crate). Per-language `walk` monoliths (30 functions over 200 lines) left: L-size split with no behaviour gain (BACKLOG). |
+| db (now `rag-store-duckdb`) | done | Repositories, private `lock`, write hook and schema extensions, `insert_document_row_locked` / `replace_chunks_locked`, schema v26, owned vector cache. Left: `Documents` still 60 methods; `RAG_DB_THREADS` / `RAG_DB_MEMORY_LIMIT` read at open (BACKLOG). |
+| http_api | partly | Use cases, no `mcp` edge, `Arc<Config>`, eval/feedback call the use case. `mod.rs` size left (S, BACKLOG). |
+| maintain | partly | Whitelist once, typed params, `MaintenanceStep`, phases for compress/organize/reembed_all. `maintain_refresh` 226 and `analyze_corpus` 222 lines left. |
+| mcp | done | Analysis tools on the blocking pool; tool names from `tool_spec`; `Arc<Config>`; shared router; ingest/admin/search/graph/wiki tools over `src/app`. |
+| wiki | partly | One write entrypoint (`app::WikiUseCase::write` → `wiki::write_page`); ops-log entries through the builder. `lint_wiki` 306 and `write_wiki_page_synced_command` 297 lines left; `tests.rs` size left. |
+| external_db (now `rag-code-intel`) | partly | Repository and DDL registration done; cycle with `code_index` and its own env reads (credentials resolved at use) left. |
+| source_sync | not done | `sync_with_control` (317 lines) left: orchestration with many cancellation and audit points; split into phases is M (BACKLOG). |
+| bin | partly | clap in every binary (CHANGES.md); `bin/eval.rs` still calls `db::search` directly to time legs separately (BACKLOG). |
+| eval | not done | Logic still split between `src/eval`, `bin/eval.rs` and `http_api/eval_ops.rs`; eval/feedback replays now call the search use case. No drift left that a client sees. |
+| ingest | done | MCP ingest tools and HTTP URL ingest go through `IngestUseCase`; ops-log builder. |
+| models | done | Typed `DocumentLayer`, `DocStatus`, `DocumentKind`; duckdb impls moved out. |
+| config | partly | Values only, enums in `config::providers`, limits in `config::limits`; 3 process globals and `from_env` (306 lines) left. |
+| retrieval | done | Behind `SearchUseCase`; both edges call it. |
+| storage | done | Deleted; `src/storage/mod.rs` is store construction only. |
+| gate, calibration, analysis_tasks (now `rag-code-intel`) | done | Repositories, DDL registered at composition. |
+| chunking, embeddings, llm, rerank, query_transform | partly | One LLM seam (`ChatCompleter`); `RAG_EMBED_CONCURRENCY` read outside `Config` (BACKLOG). |
+| diagnostics, ops, jobs, watch, telemetry, access, revisions, diary | done | Tool-name lists from `tool_spec`; every background loop in `BackgroundTasks`; `RAG_WATCH_*` in `Config`. `RAG_WORKER_THREADS` read before the runtime exists (BACKLOG). |
+| file_ingest, ooxml, web_ingest, document_indexer, source_scan, search_pack, util, memory_lifecycle | partly | `decode_text` moved to `util::decode`; `RAG_TOKENIZER_JSON` read lazily in `search_pack` (BACKLOG). P3 otherwise, left as is. |
+| main, lib, bootstrap, context | done | One composition root (`main.rs`, `bootstrap`, `AppContext`, `BackgroundTasks`). |
+| tests | done | One `it` binary, shared `testkit`, parity and architecture tests. |
+| crates/rag-mcp-ui | not done | Egui stage 6 is not part of this branch; its direct-db build now depends on the store crate only (Stage 8). |
+| crates/rag-mcp-core, crates/rag-mcp-markup | not done | P3: small and cohesive. |
+| web-svelte/src | not done | Web stage 7 is not part of this branch. |
+
+## Historical record (start of the refactor)
+
 Derived from the code, not from earlier docs. LOC and function lengths come
 from `scripts/refactor_metrics.py --modules` (LOC includes in-file tests;
 "fns >80" counts production functions only). `status` is updated as stages
@@ -72,13 +143,8 @@ without a construction change that belongs to Stage 3/4:
 
 ## Residual backlog (outside this refactor)
 
-Items found on the way that need their own task; each has an `ignore` entry
-with a reason in `deny.toml`.
-
-| item | why it is not done here | trigger to revisit |
-|---|---|---|
-| rmcp 1.4 → 3.x migration (RUSTSEC-2026-0462) | Two-major migration of the MCP SDK; the manifest pins `=1.4.0` because macro and runtime must match. The advisory is in the Streamable HTTP *client* transports, which are not enabled (`server`, `transport-io`, `transport-streamable-http-server` only), so the affected code is not compiled. | Before enabling any rmcp client feature, or when 1.x stops receiving fixes. |
-| DuckDB 2.0 crates (`duckdb`/`libduckdb-sys` 1.20000.x) | Storage-engine major upgrade. Needed to drop `zip 6.0.0`, which stays as a build-dependency of `libduckdb-sys 1.10505.0` (RUSTSEC-2026-0367/0368/0369/0429, all in `ZipArchive::extract`); the build script only unpacks DuckDB's own bundled archive. `duckdb = "1"` in `Cargo.toml` accepts 1.20000.x, so an unqualified `cargo update` performs this upgrade silently: pin or review before updating. | With the Stage 5 schema migration at the earliest; needs a recovery/compat test on an existing database. |
+Moved to [BACKLOG.md](BACKLOG.md) (rmcp 3.x, DuckDB 2.0 and everything else
+deferred, with reasons and sizes).
 
 ## Stage 4 status
 

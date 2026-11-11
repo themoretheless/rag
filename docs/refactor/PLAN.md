@@ -103,6 +103,17 @@ After Stage 2–4 make it mechanical: extract `crates/rag-store-duckdb` (db) and
 ## Stage 9. Wrap-up
 Update `ARCHITECTURE.md`, ADRs, `INVENTORY.md` statuses; merge the three overlapping architecture docs; move code-intelligence contract docs under `docs/code-intelligence/`; fix the stale claims in `REFACTOR_PLAN.md`. Before/after table; residual backlog. Re-ingest edited docs via `ingest_file` and update the wiki page with CAS, per `CLAUDE.md`.
 
+Status: done except the re-ingest and wiki update, which need the running
+`rag-mcp` gateway (CLAUDE.md forbids opening the store directly). Results:
+[ARCHITECTURE.md](ARCHITECTURE.md) (final), [INVENTORY.md](INVENTORY.md)
+(final status per finding), [BACKLOG.md](BACKLOG.md), [CHANGES.md](CHANGES.md),
+the summary table at the top of [BASELINE.md](BASELINE.md); code-intelligence
+contracts in [`docs/code-intelligence/`](../code-intelligence/);
+`docs/ARCHITECTURE_NOTES.md`, `docs/ARCHITECTURE_VISION.md` and
+`docs/SYSTEM_MAP.md` point to ARCHITECTURE.md for code structure;
+`docs/REFACTOR_PLAN.md` carries corrections. Small fix: backup verification
+skips NULL vectors of quarantined chunks and reports `quarantined_chunks`.
+
 ## Execution
 - Branch `claude/optimistic-pascal-8x90fc`, restarted from `origin/main`. One PR per stage (draft), one intention per commit, merge only on the user's word.
 - Stages 0–5 and 8 are sequential on the server. Stages 6 and 7 touch other directories and run in parallel worktree agents. Inside a stage, independent modules go to parallel agents; merges are sequential.
@@ -150,6 +161,10 @@ depth 1 and the same nodes/edges; wire codes `INVALID_REQUEST`, `CONFLICT`,
 `NOT_FOUND` on both sides.
 
 ## Stage 4 intentional changes
+
+The client-facing changelog of the whole refactor, with the schema v26
+upgrade/downgrade note, is [CHANGES.md](CHANGES.md); the list below is the
+engineering record of Stage 4.
 
 Envelopes stay transport-specific and are not drift: MCP returns the bare
 use-case result (JSON-RPC error with `data.code` on failure); HTTP wraps it as
