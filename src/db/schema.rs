@@ -924,12 +924,23 @@ pub(crate) struct EmbeddingBackfill {
 /// Why a legacy `embedding_json` value cannot become a usable vector, or
 /// `None` when it can. DuckDB's list cast is lenient (it accepts a trailing
 /// comma), so the text is also held to what pre-v26 readers accepted: a JSON
-/// array of numbers (`serde_json`).
+/// array of numbers (`serde_json`). A `null` element or a value beyond
+/// `f32` (an infinity once cast) makes the vector unusable as well.
 fn legacy_embedding_problem(raw: Option<&str>, converted: bool) -> Option<&'static str> {
     let Some(raw) = raw else {
         return Some("unparseable");
     };
-    if !converted || serde_json::from_str::<Vec<f64>>(raw).is_err() {
+    // `null` elements parse here so they get their own reason.
+    let Ok(values) = serde_json::from_str::<Vec<Option<f64>>>(raw) else {
+        return Some("unparseable");
+    };
+    let finite = values
+        .iter()
+        .all(|value| value.is_some_and(|value| (value as f32).is_finite()));
+    if !finite {
+        return Some("non_finite_or_null_element");
+    }
+    if !converted {
         return Some("unparseable");
     }
     None

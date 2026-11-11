@@ -402,7 +402,17 @@ fn interrupted_embedding_backfill_resumes_on_next_open() {
 }
 
 /// Embedding texts a v25 database may hold that are not a usable vector.
-const BAD_EMBEDDINGS: &[&str] = &["broken JSON", "null", "", "[1,2,]"];
+const BAD_EMBEDDINGS: &[&str] = &[
+    "broken JSON",
+    "null",
+    "",
+    "[1,2,]",
+    "[null]",
+    "[0.5, null]",
+    "[NaN]",
+    "[1e39]",
+    "[-1e39, 0.5]",
+];
 
 /// Add a document whose chunks carry `BAD_EMBEDDINGS` to a legacy database.
 fn write_bad_rows(path: &std::path::Path) -> Vec<String> {
@@ -469,6 +479,13 @@ fn unconvertible_embeddings_are_quarantined_and_the_store_still_opens() {
             "raw text is kept verbatim"
         );
         assert!(quarantined.iter().all(|(_, _, _, reason)| !reason.is_empty()));
+        for (_, _, raw, reason) in &quarantined {
+            let expected = match raw.as_str() {
+                "[null]" | "[0.5, null]" | "[1e39]" | "[-1e39, 0.5]" => "non_finite_or_null_element",
+                _ => "unparseable",
+            };
+            assert_eq!(reason, expected, "reason for {raw:?}");
+        }
         let nulls: i64 = conn
             .query_row(
                 "SELECT count(*) FROM chunks WHERE document_id = 'doc-bad' AND embedding IS NULL",

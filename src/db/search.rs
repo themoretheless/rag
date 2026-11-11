@@ -1168,8 +1168,11 @@ impl RawSnapshot {
             for row in rows {
                 let vector = match row.vector {
                     RawVector::Reuse(vector) => vector,
-                    // No stored vector (NULL, quarantined): not searchable.
-                    RawVector::Parse(raw) if raw.is_empty() => {
+                    // No stored vector (NULL, quarantined) or one with a
+                    // non-finite element: skip the chunk, not the snapshot.
+                    RawVector::Parse(raw)
+                        if raw.is_empty() || raw.iter().any(|value| !value.is_finite()) =>
+                    {
                         skipped.push(row.id);
                         continue;
                     }
@@ -1605,7 +1608,7 @@ fn read_full(
             id: row.get(0)?,
             document_id: row.get(1)?,
             chunk_index: row.get(2)?,
-            vector: RawVector::Parse(crate::db::rows::embedding(row, 3)?),
+            vector: RawVector::Parse(snapshot_embedding(row, 3)),
             embedding_hash: row.get(4)?,
         })
     })?;
@@ -1706,6 +1709,16 @@ fn read_refresh(
     })
 }
 
+/// A chunk's stored embedding for a snapshot build. A value that does not
+/// decode (a NULL element) reads as empty, so [`RawSnapshot::finish`] skips
+/// that one chunk with a warning instead of failing the whole snapshot.
+fn snapshot_embedding(row: &duckdb::Row<'_>, index: usize) -> Vec<f32> {
+    crate::db::rows::embedding(row, index).unwrap_or_else(|error| {
+        tracing::warn!(%error, "vector snapshot: unreadable stored embedding");
+        Vec::new()
+    })
+}
+
 /// Stored embeddings of `ids`, in `IN` batches.
 fn read_embeddings<S: AsRef<str>>(
     conn: &duckdb::Connection,
@@ -1720,7 +1733,7 @@ fn read_embeddings<S: AsRef<str>>(
         ))?;
         let binds: Vec<&str> = batch.iter().map(AsRef::as_ref).collect();
         crate::db::rows::for_each_row(&mut stmt, params_from_iter(binds.iter()), |row| {
-            stored.insert(row.get(0)?, crate::db::rows::embedding(row, 1)?);
+            stored.insert(row.get(0)?, snapshot_embedding(row, 1));
             Ok(())
         })?;
     }

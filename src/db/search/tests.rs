@@ -1791,6 +1791,61 @@ fn change_log_refresh_matches_a_full_rebuild_and_falls_back_when_unscoped() {
     }
 }
 
+#[test]
+fn snapshot_skips_chunks_with_unusable_vectors_instead_of_failing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&dir.path().join("bad-vectors.duckdb")).expect("open");
+    store
+        .documents()
+        .upsert_document(&Document {
+            id: "a".into(),
+            uri: "uri://a".into(),
+            title: "a".into(),
+            content: "a".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let chunks: Vec<Chunk> = (0..4)
+        .map(|index| Chunk {
+            id: format!("a-{index}"),
+            document_id: "a".into(),
+            chunk_index: index,
+            content: format!("a {index}"),
+            embedding: vec![1.0, index as f32],
+            char_start: 0,
+            char_end: 1,
+            metadata_json: "{}".into(),
+        })
+        .collect();
+    store.chunks().insert_chunks(&chunks).unwrap();
+    let previous = {
+        let conn = store.lock().unwrap();
+        let generation = fts::chunks_generation(&conn).unwrap();
+        build_vector_snapshot(&conn, generation).unwrap()
+    };
+    let conn = store.lock().unwrap();
+    conn.execute_batch(
+        "UPDATE chunks SET embedding = [CAST('nan' AS FLOAT), 1.0], embedding_digest = 11 WHERE id = 'a-0';
+         UPDATE chunks SET embedding = [CAST(NULL AS FLOAT), 1.0], embedding_digest = 12 WHERE id = 'a-1';
+         UPDATE chunks SET embedding = [CAST('inf' AS FLOAT), 1.0], embedding_digest = 13 WHERE id = 'a-2';",
+    )
+    .unwrap();
+    fts::mark_embeddings_changed_for(&conn, Some(&["a"])).unwrap();
+    let generation = fts::chunks_generation(&conn).unwrap();
+    let ids = |snapshot: &VectorSnapshot| {
+        snapshot
+            .chunks
+            .iter()
+            .map(|chunk| chunk.id.to_string())
+            .collect::<Vec<_>>()
+    };
+    let rebuilt = build_vector_snapshot(&conn, generation).expect("full build tolerates bad rows");
+    assert_eq!(ids(&rebuilt), vec!["a-3"]);
+    let refreshed = refresh_vector_snapshot(&conn, &previous, generation, None)
+        .expect("refresh tolerates bad rows");
+    assert_eq!(ids(&refreshed), vec!["a-3"]);
+}
+
 fn parent_fixture_store() -> (tempfile::TempDir, Store) {
     let root = tempfile::tempdir().unwrap();
     let store = Store::open(&root.path().join("parent.duckdb")).unwrap();
