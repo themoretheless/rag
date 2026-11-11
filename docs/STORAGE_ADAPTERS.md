@@ -7,11 +7,12 @@
 > store hooks and schema extensions, and reports `duckdb_capability_names`.
 > The sections below that describe the `Storage` contract and the Markdown
 > adapter are the design record of the removed code, kept for a future
-> backend; `RAG_STORAGE_BACKEND=markdown` and `RAG_VAULT_PATH` are still parsed
-> but no longer open anything.
+> backend; `RAG_STORAGE_BACKEND=markdown` (like `sqlite`, `postgres`, `memory`)
+> is still recognized and fails at startup with "recognized but not
+> implemented"; `RAG_VAULT_PATH` is parsed and unused.
 
 
-**Status:** DuckDB production adapter and a bounded Markdown document adapter are implemented; the full multi-backend contract remains a design boundary.
+**Status:** DuckDB is the only adapter; the multi-backend contract below is a design record (see the note above).
 
 **Default backend:** DuckDB (single-file, bundled, local-first)
 
@@ -19,7 +20,7 @@
 
 **Principles:** one logical store, explicit physical capabilities. See [`PRODUCT_PRINCIPLES.md`](PRODUCT_PRINCIPLES.md) §1.2 · [`ARCHITECTURE_VISION.md`](ARCHITECTURE_VISION.md) · map: [`SYSTEM_MAP.md`](SYSTEM_MAP.md) §6.
 
-Current implementation status: `RAG_STORAGE_BACKEND=duckdb` opens the only full application adapter. The backend-neutral factory also supports opt-in `markdown` document CRUD when an explicit `RAG_VAULT_PATH` is set. `sqlite`, `postgres`, and `memory` are recognized names that fail explicitly. Markdown files and frontmatter are the document source of truth, but search, chunks, graph, transactions, and vectors are not adapter capabilities. The Markdown adapter can rebuild a lightweight lexical JSONL sidecar or explicitly watch it without changing the default runtime.
+Current implementation status: `RAG_STORAGE_BACKEND=duckdb` opens the only adapter. `markdown`, `sqlite`, `postgres`, and `memory` are recognized names that fail explicitly at startup.
 
 A remote vector DB alone is **not** a primary store. Any future split must retain a metadata/graph source of truth and publish explicit capabilities.
 

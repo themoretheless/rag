@@ -255,21 +255,9 @@ Not required for wiki compile to work; orthogonal product depth for multi-sessio
 
 ## 6. Module ownership
 
-```
-src/
-  document_indexer.rs        # pure preparation: chunk, metadata, embed
-  ingest.rs, source_sync.rs  # application orchestration
-  retrieval.rs, revisions.rs # transport-independent commands
-  graph/, wiki/              # graph extraction and compiled knowledge policy
-  db/                        # DuckDB repositories and transaction owner
-  storage/                   # bounded document backend contract
-  mcp/, http_api/            # wire adapters
-crates/rag-mcp-ui/           # native HTTP client and focused workspaces
-```
-
-Detailed path ownership is maintained in [`SYSTEM_MAP.md`](SYSTEM_MAP.md). File
-size alone does not trigger a move; a slice moves only with behavior tests and
-a delegation-only compatibility façade.
+Code ownership (crates, layers, composition root, background tasks, schema
+v26) lives in one place: [`refactor/ARCHITECTURE.md`](refactor/ARCHITECTURE.md).
+This document keeps the data-plane mechanics only.
 
 **Important:** the server does **not** call an LLM to “cognify” the graph (no mandatory NER). Default compilation is tool-driven: the **MCP client LLM** writes pages using wiki tools. **Optional** server-side chat (`RAG_LLM_*`, Ollama/LM Studio) may power `compile_*` / maintenance helpers when enabled; see [`LOCAL_LLM_MAINTENANCE.md`](LOCAL_LLM_MAINTENANCE.md). Server always owns storage, search, graph hygiene, and immutability policy.
 
@@ -452,7 +440,7 @@ sequenceDiagram
 | MemPalace “never summarize” vs wiki summaries | **Split layers:** raw drawers never paraphrased; wiki summaries live only in L3 and cite raw ids. |
 | Palace rename of tools vs SPEC names | **Keep SPEC names;** add wing/room as data, not as mandatory tool vocabulary. |
 | LLM graph extract vs deterministic wikilinks | **Deterministic first;** entity kind reserved; cognify stays out of core. |
-| Chroma multi-backend vs single DuckDB | **One logical store;** DuckDB is the full default adapter. Markdown currently implements only the honest document slice; SQL/composite ports require evidence and conformance. Remote vector DB alone is not SoT. |
+| Chroma multi-backend vs single DuckDB | **One logical store;** DuckDB is the only adapter (the library-only Markdown document slice was deleted as unused); SQL/composite ports require evidence and conformance. Remote vector DB alone is not SoT. |
 | Closets vs wiki | Wiki `source_summary` / entity pages **are** the closet; no second parallel summary store. |
 | “Server never calls LLM” vs local maintain | **No LLM for graph NER.** Optional local chat for compile/maintain tools; client remains default author of wiki knowledge. |
 | Monolithic tool surface vs modular code | Default spine stays small; full compatibility tools are grouped in bounded routers without renaming public tools. |
@@ -511,7 +499,8 @@ rewrite.
 |-----|------|
 | [`ARCHITECTURE_VISION.md`](ARCHITECTURE_VISION.md) | **North star**: what the product is |
 | [`PRODUCT_PRINCIPLES.md`](PRODUCT_PRINCIPLES.md) | ordered laws + conflict resolutions |
-| [`SYSTEM_MAP.md`](SYSTEM_MAP.md) | layers, modules, tool clusters |
+| [`SYSTEM_MAP.md`](SYSTEM_MAP.md) | runtime topology and workflows |
+| [`refactor/ARCHITECTURE.md`](refactor/ARCHITECTURE.md) | code architecture: crates, layers, composition (single source of truth) |
 | [`SPEC.md`](../SPEC.md) | v1 implementation contract |
 | [`FEATURES.md`](../FEATURES.md) | research, tool list, proposed DDL, adversarial A1–A30 |
 | [`docs/ROADMAP.md`](ROADMAP.md) | current release gate and evidence-gated candidates |

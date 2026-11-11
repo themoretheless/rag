@@ -409,49 +409,13 @@ raw (L0) → agent wiki write (L3) → index + ops_log → query cascade → fil
 
 ## 8. Module map
 
-Current high-level ownership. One binary; layered modules, not separate
-products.
-
-```
-src/
-  document_indexer.rs        pure chunk/embed preparation
-  ingest.rs, source_sync.rs  application orchestration
-  retrieval.rs, revisions.rs shared use cases
-  graph/, wiki/              structure and compiled-knowledge policy
-  db/                        DuckDB repositories + transaction owner
-  storage/                   bounded document adapter contract
-  mcp/, http_api/            wire adapters
-crates/rag-mcp-ui/           optional native gateway client
-```
-
-### 8.1 Ownership status
-
-| Boundary | Status |
-|----------|--------|
-| L0/L3 document preparation | `DocumentIndexer` + `IngestService` are transport-independent; raw registration compatibility functions still live in `wiki/` |
-| Content persistence | document, chunks and derived graph commit through one atomic Store transaction |
-| Retrieval/diagnostics/revisions | application services are shared by MCP and HTTP |
-| Ports | MCP tool families and HTTP route clusters are split; composition roots remain |
-| Invariant tests | immutable raw, CAS, embedding failure and graph rollback paths are covered |
-
-The residual L0 compatibility concentration is not scheduled work. Extract it
-only when a tested behavior slice meets the measurable rule in
-[`SOLID_DRY_AUDIT.md`](SOLID_DRY_AUDIT.md); it is never permission to rewrite the
-public raw-source contract.
-
-### 8.2 Current reality (honest)
-
-| Area | Today (approx.) | Boundary |
-|------|-----------------|----------|
-| `mcp/facade.rs` + `mcp/{domain}.rs` | ~0.8k core, 0.2–1k per domain | `server.rs` composes per-domain `#[tool_router]`s; the facade owns shared state, service adapters and dispatch |
-| `db/store.rs` | ~4.1k LOC | compatibility façade and transaction owner; focused repositories own search/FTS/graph/catalog/manifest algorithms |
-| `wiki/mod.rs` | ~3.1k LOC | L3 behavior plus legacy raw compatibility entry points |
-| `crates/rag-mcp-ui/src/app/` | ~4.7k LOC in 6 files (largest `frame.rs` ~1.7k) | workspace/navigation coordinator split into state, events, frame, graph, wiki and revisions |
-| `Storage` | document lifecycle slice | DuckDB remains the only full application backend |
-
-Refactor order is now **freeze behavior → route through an application seam →
-extract a tested slice → leave compatibility delegation**. Mechanical file
-splitting is not progress.
+The code map (crates, layers, where each concern lives, composition root,
+background tasks, schema) is maintained in one place:
+[`refactor/ARCHITECTURE.md`](refactor/ARCHITECTURE.md). The product layers
+L0–L4 above map onto it as: L0/L1 → the store (`rag-store-duckdb`), L2 → store
+graph repositories plus `rag-mcp-markup`, L3 → `src/wiki`, `src/maintain`,
+`src/revisions`, L4 → `src/mcp`, `src/http_api` over `src/app` and the
+native/web clients.
 
 ---
 
@@ -579,10 +543,11 @@ the measurable gates in §17 and [`ROADMAP.md`](ROADMAP.md).
 | **ARCHITECTURE_VISION.md** (this file) | Product/architecture core: identity, layers, surface, storage, consistency |
 | ARCHITECTURE_NOTES.md | Current layer mechanics + mermaid; defer to this file on product-identity conflicts |
 | SPEC.md | v1 implementation contract (substrate) |
-| README / SYSTEM_MAP | Current operator behavior and code ownership |
+| README | Current operator behavior |
+| [refactor/ARCHITECTURE.md](refactor/ARCHITECTURE.md) | Code ownership: crates, layers, composition (single source of truth) |
 | ROADMAP | Current release gate and evidence-gated candidates only |
 | FEATURES / MCP_TOOL_MATRIX | Historical research; not execution queues |
-| STORAGE_ADAPTERS.md | Current bounded adapter truth plus capability gates |
+| STORAGE_ADAPTERS.md | Capability gates; DuckDB is the only backend (the Markdown adapter was deleted) |
 | LOCAL_LLM_* | Experimental assist contracts; must not redefine client-owned compile |
 | MEMPALACE_PARITY / ORGANIZE | Parity/chrome; park relative to spine |
 
