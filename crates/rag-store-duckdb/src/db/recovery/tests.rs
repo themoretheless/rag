@@ -1621,3 +1621,75 @@ fn recovery_round_trip_restores_quarantined_chunks() {
         serde_json::to_value(&bundle.embedding_manifest).unwrap()
     );
 }
+
+#[test]
+fn import_rejects_empty_embedding_without_quarantine_marker() {
+    let root = tempfile::tempdir().unwrap();
+    let store = Store::open(&root.path().join("strict.duckdb")).unwrap();
+    let mut chunk = recovery_chunk("empty-chunk", "empty", "body");
+    chunk.embedding.clear();
+    let bundle = RecoveryBundle {
+        format: "rag-recovery-bundle".into(),
+        version: BUNDLE_VERSION,
+        exported_at: Utc::now(),
+        embedding_manifest: Some(recovery_manifest()),
+        documents: vec![BundleDocument {
+            document: recovery_document("empty", "recovery://empty", "body"),
+            chunks: vec![chunk.into()],
+        }],
+    };
+    let error = store
+        .recovery()
+        .import_recovery_bundle(
+            &bundle,
+            ConflictPolicy::Error,
+            true,
+            Path::new("fixture.json"),
+            "json",
+        )
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("empty-chunk has an empty embedding and no quarantine marker"),
+        "{error}"
+    );
+
+    // A marker on a chunk that still carries a vector is rejected as well.
+    let mut marked: BundleChunk = recovery_chunk("marked-chunk", "empty", "body").into();
+    marked.quarantine = Some(BundleChunkQuarantine {
+        reason: "unparseable".into(),
+        raw_embedding_json: None,
+        quarantined_at: None,
+    });
+    let bundle = RecoveryBundle {
+        documents: vec![BundleDocument {
+            document: recovery_document("empty", "recovery://empty", "body"),
+            chunks: vec![marked],
+        }],
+        ..bundle
+    };
+    let error = validate_bundle_embeddings(&bundle).unwrap_err();
+    assert!(
+        error.to_string().contains("has a quarantine marker"),
+        "{error}"
+    );
+}
+
+#[test]
+fn export_refuses_null_embedding_without_quarantine_row() {
+    let root = tempfile::tempdir().unwrap();
+    let source = store_with_quarantined_chunk(&root.path().join("source.duckdb"));
+    source
+        .lock()
+        .unwrap()
+        .execute_batch("UPDATE chunks SET embedding = NULL WHERE id = 'good-chunk'")
+        .unwrap();
+    let error = source.recovery().recovery_bundle().unwrap_err();
+    assert!(
+        error.to_string().contains(
+            "chunk good-chunk has a NULL embedding but no chunk_embedding_quarantine row"
+        ),
+        "{error}"
+    );
+}

@@ -115,11 +115,11 @@ pub(super) fn validate_bundle_structure(bundle: &RecoveryBundle) -> Result<()> {
     Ok(())
 }
 
-/// Check every chunk vector against the bundle manifest. An empty vector is
-/// the bundle's mark for a quarantined chunk (NULL embedding in the source,
-/// see `chunk_embedding_quarantine`): it is exported as `[]`, accepted here
-/// and recorded as quarantined on import with its document flagged for
-/// re-embedding.
+/// Check every chunk vector against the bundle manifest. A chunk with a
+/// `quarantine` marker (NULL embedding in the source, see
+/// `chunk_embedding_quarantine`) must carry an empty vector; every other
+/// chunk must carry a vector of the manifest's dimensions. An empty vector
+/// without the marker is rejected rather than guessed to be quarantined.
 pub(super) fn validate_bundle_embeddings(
     bundle: &RecoveryBundle,
 ) -> Result<Option<&EmbeddingManifest>> {
@@ -148,18 +148,32 @@ pub(super) fn validate_bundle_embeddings(
                 manifest.dims
             ))
         })?;
-    if let Some(chunk) = bundle
-        .documents
-        .iter()
-        .flat_map(|item| &item.chunks)
-        .find(|chunk| !chunk.embedding.is_empty() && chunk.embedding.len() != expected_dims)
-    {
-        return Err(AppError::embeddings(format!(
-            "recovery bundle chunk {} has dims={}, expected {} from embedding_manifest",
-            chunk.id,
-            chunk.embedding.len(),
-            expected_dims
-        )));
+    for chunk in bundle.documents.iter().flat_map(|item| &item.chunks) {
+        match (chunk.quarantine.is_some(), chunk.embedding.len()) {
+            (true, 0) => {}
+            (true, dims) => {
+                return Err(AppError::embeddings(format!(
+                    "recovery bundle chunk {} has a quarantine marker but carries a vector \
+                    (dims={dims}); a quarantined chunk must have an empty embedding",
+                    chunk.id
+                )));
+            }
+            (false, 0) => {
+                return Err(AppError::embeddings(format!(
+                    "recovery bundle chunk {} has an empty embedding and no quarantine marker; \
+                    only a chunk with a 'quarantine' object may omit its vector",
+                    chunk.id
+                )));
+            }
+            (false, dims) if dims != expected_dims => {
+                return Err(AppError::embeddings(format!(
+                    "recovery bundle chunk {} has dims={dims}, expected {expected_dims} from \
+                    embedding_manifest",
+                    chunk.id
+                )));
+            }
+            (false, _) => {}
+        }
     }
     Ok(Some(manifest))
 }
@@ -368,6 +382,15 @@ impl Recovery<'_> {
                         row.get::<_, String>(0).unwrap_or_else(|_| "unknown".into())
                     ))
                 })?;
+                let embedding_is_null = matches!(row.get_ref(4)?, duckdb::types::ValueRef::Null);
+                if embedding_is_null && !row.get::<_, bool>(8)? {
+                    return Err(AppError::db(format!(
+                        "chunk {} has a NULL embedding but no chunk_embedding_quarantine row; \
+                        refusing to export it as quarantined (re-embed it or record it in \
+                        the quarantine table first)",
+                        row.get::<_, String>(0).unwrap_or_else(|_| "unknown".into())
+                    )));
+                }
                 let quarantine = if row.get::<_, bool>(8)? {
                     Some(BundleChunkQuarantine {
                         reason: row.get(9)?,

@@ -40,6 +40,12 @@ HTTP statuses did not change anywhere below unless stated.
   text stays lexically searchable), writes the quarantine row verbatim and
   clears the document's `content_hash` so it is re-embedded. The import
   report gains `chunks_quarantined`.
+- Bundle validation is strict about the marker: an empty vector without a
+  `quarantine` object, or a `quarantine` object next to a non-empty vector,
+  fails import with an `EMBEDDINGS` error; export refuses a NULL embedding
+  that has no quarantine row instead of writing it as `[]`. Bundles written
+  by earlier commits of this branch (bare `[]`, no marker) were never
+  released, so no compatibility shim reads them.
 - Backup verification (`recovery verify`, the backup sidecar
   `verification` object) gains `quarantined_chunks`; NULL vectors of
   quarantined chunks no longer fail `embedding_contract_ok`. Sidecars written
