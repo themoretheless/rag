@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Context;
+use rag_mcp::bootstrap::ApplyProcessLimits;
 use rag_mcp::config::Config;
 use rag_mcp::db::schema::SCHEMA_VERSION;
 use rag_mcp::db::store::embedding_manifest_matches_config;

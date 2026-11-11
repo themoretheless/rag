@@ -4,6 +4,7 @@
 //! Tool methods live in the sibling domain modules, one `#[tool_router]`
 //! each; `server.rs` composes them into the public router.
 
+use crate::mcp::error::mcp_error;
 use crate::models::OpsLogEntry;
 use crate::source_sync::{
     sync_sources_nonblocking, SourceSyncCommand, SourceSyncControl, SourceSyncOutcome,
@@ -295,7 +296,7 @@ impl RagServer {
         let store = self.store.clone();
         crate::util::run_blocking(operation, move || Ok(work(&store)))
             .await
-            .map_err(McpError::from)?
+            .map_err(mcp_error)?
     }
 
     /// The wired chat client as the domain LLM seam (None when unavailable).
@@ -899,7 +900,7 @@ impl RagServer {
 
 impl RagServer {
     pub(super) fn map_err(error: AppError) -> McpError {
-        error.into()
+        mcp_error(error)
     }
 }
 
@@ -1133,7 +1134,7 @@ mod task_scope_tests {
     #[test]
     fn task_context_is_unique_per_server_and_explicit_for_shared_http() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("scopes.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&dir.path().join("scopes.duckdb")).unwrap();
         let config = Config {
             embedding_dims: 8,
             ..Config::for_tests()

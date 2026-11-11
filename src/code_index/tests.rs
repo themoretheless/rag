@@ -62,7 +62,7 @@ fn code_index_nested_scopes_and_method_receivers() {
 fn code_index_persists_reuses_and_omits_stale_deleted_and_archived_sources() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("index.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     store
         .documents()
         .upsert_document(&doc(
@@ -112,7 +112,7 @@ fn code_index_persists_reuses_and_omits_stale_deleted_and_archived_sources() {
     assert_eq!(snap.query("symbol", &q)["truncated"], true);
     assert_eq!(snap.query("callers", &q)["total"], 1);
     drop(store);
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     assert_eq!(
         crate::code_index::CodeIndex::new(&store)
             .code_snapshot()
@@ -180,7 +180,7 @@ fn code_index_arrows_generics_and_call_target_arguments() {
 #[test]
 fn code_index_body_map_and_impact_are_bounded_and_honest() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&dir.path().join("code.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&dir.path().join("code.duckdb")).unwrap();
     store
         .documents()
         .upsert_document(&doc(
@@ -250,7 +250,7 @@ fn code_index_import_aliases_and_typed_receivers() {
             ("/p/main.ts", "import { go as run, Worker } from './a'; function main(worker: Worker) { run(); worker.work(); }", "/p/a.ts", "export function go() {} export class Worker { work() {} }"),
             ("/p/main.py", "from a import go as run, Worker\ndef main(worker: Worker):\n    run()\n    worker.work()\n", "/p/a.py", "def go():\n    pass\nclass Worker:\n    def work(self):\n        pass\n"),
         ] {
-            let dir=tempfile::tempdir().unwrap();let store=Store::open(&dir.path().join("code.duckdb")).unwrap();
+            let dir=tempfile::tempdir().unwrap();let store=crate::testkit::open_test_store(&dir.path().join("code.duckdb")).unwrap();
             store.documents().upsert_document(&doc("main",main_path,main)).unwrap();
             store.documents().upsert_document(&doc("lib",lib_path,library)).unwrap();
             store.documents().upsert_document(&doc("decoy","/other/decoy.rs","fn go() {} struct Worker; impl Worker { fn work() {} }")).unwrap();
@@ -267,7 +267,7 @@ fn code_index_import_aliases_and_typed_receivers() {
 #[test]
 fn code_index_shadowed_unknown_receivers_do_not_match_unrelated_methods() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&dir.path().join("code.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&dir.path().join("code.duckdb")).unwrap();
     store
         .documents()
         .upsert_document(&doc(
@@ -303,7 +303,7 @@ fn code_index_namespace_default_exports_self_and_type_aliases() {
             ("/p/main.py", "import a as api\ndef main():\n    w=api.Worker()\n    w.work()\n    api.go()\nclass Local:\n    def main(self):\n        self.work()\n    def work(self):\n        pass\n", "/p/a.py", "def go():\n    pass\nclass Worker:\n    def work(self):\n        pass\n"),
             ("/p/src/sub/main.rs", "use crate::a as api; use crate::a::Worker; type Alias = Worker; fn main(w: Alias) { api::go(); w.work(); }", "/p/src/a.rs", "pub fn go() {} pub struct Worker; impl Worker { pub fn work(&self) {} }"),
         ] {
-            let dir=tempfile::tempdir().unwrap(); let store=Store::open(&dir.path().join("code.duckdb")).unwrap();
+            let dir=tempfile::tempdir().unwrap(); let store=crate::testkit::open_test_store(&dir.path().join("code.duckdb")).unwrap();
             store.documents().upsert_document(&doc("main",main_path,main)).unwrap();store.documents().upsert_document(&doc("lib",lib_path,library)).unwrap();
             crate::code_index::CodeIndex::new(&store).index_code().unwrap(); let snap=crate::code_index::CodeIndex::new(&store).code_snapshot().unwrap();
             assert!(snap.parse_errors.is_empty(),"{main_path}: {snap:?}");
@@ -314,7 +314,7 @@ fn code_index_namespace_default_exports_self_and_type_aliases() {
 #[test]
 fn code_index_rust_inline_modules_and_super_imports() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&dir.path().join("code.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&dir.path().join("code.duckdb")).unwrap();
     store
         .documents()
         .upsert_document(&doc(
@@ -346,7 +346,7 @@ fn code_index_rust_inline_modules_and_super_imports() {
 #[test]
 fn code_index_external_imports_and_bare_methods_do_not_gain_false_edges() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&dir.path().join("code.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&dir.path().join("code.duckdb")).unwrap();
     store.documents().upsert_document(&doc("main","/p/main.ts","import { go } from 'external'; import {hidden} from './a'; class Local { run() { work(); go(); hidden(); this.inner.work(); } work() {} } function shadowed() { hidden(); const hidden=()=>{}; } function nested(w: Local) { w.inner.work(); }" )).unwrap();
     store
         .documents()
@@ -370,7 +370,7 @@ fn code_index_external_imports_and_bare_methods_do_not_gain_false_edges() {
 #[test]
 fn code_index_invalidates_older_payloads_and_project_scope_changes() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&dir.path().join("code.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&dir.path().join("code.duckdb")).unwrap();
     let mut main = doc(
         "main",
         "/p/main.py",

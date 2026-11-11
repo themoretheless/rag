@@ -14,7 +14,7 @@ fn state(root: &std::path::Path, name: &str) -> HttpState {
     };
     HttpState::from_context(
         crate::context::AppContext::with_store(
-            Arc::new(crate::Store::open(&config.db_path).unwrap()),
+            Arc::new(crate::testkit::open_test_store(&config.db_path).unwrap()),
             Arc::new(crate::embeddings::MockEmbedder::new(16)),
             config,
         ),

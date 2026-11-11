@@ -477,7 +477,7 @@ mod tests {
     fn resource_impact_dead_files_refresh_and_frozen_legacy_diff() {
         use crate::models::Document;
         let temp = tempfile::tempdir().unwrap();
-        let store = Store::open(&temp.path().join("resources.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&temp.path().join("resources.duckdb")).unwrap();
         let doc = |id: &str, path: &str, body: &str| Document {
             id: id.into(),
             uri: format!("file://{path}"),

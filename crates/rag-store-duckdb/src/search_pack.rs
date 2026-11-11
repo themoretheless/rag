@@ -13,7 +13,7 @@
 //! providers). crates.io is unreachable from this environment, so the
 //! dependency stays optional and the calibrated heuristic remains the default.
 
-use rmcp::schemars::{self, JsonSchema};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::models::SearchHit;

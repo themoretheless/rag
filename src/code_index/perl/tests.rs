@@ -268,7 +268,7 @@ fn perl_function_values_and_modern_class_methods_remain_distinct() {
 fn perl_store_body_cache_refresh_and_frozen_legacy_relations() {
     use crate::models::Document;
     let temp = tempfile::tempdir().unwrap();
-    let store = Store::open(&temp.path().join("perl.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&temp.path().join("perl.duckdb")).unwrap();
     let doc = |id: &str, path: &str, source: &str| Document {
         id: id.into(),
         uri: format!("file://{id}"),

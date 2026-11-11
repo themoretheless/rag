@@ -1,6 +1,7 @@
 //! Ingest, source inventory, document integrity, taxonomy, and health tools.
 
 use crate::config::Config;
+use crate::mcp::error::mcp_error;
 use std::path::PathBuf;
 
 use rmcp::handler::server::wrapper::Parameters;
@@ -50,7 +51,8 @@ impl RagServer {
                 kind: "document".into(),
                 immutable: false,
             })
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         Self::json_result(&result)
     }
 
@@ -72,7 +74,8 @@ impl RagServer {
                 wing: params.wing,
                 room: params.room,
             })
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         Self::json_result(&result)
     }
 
@@ -110,7 +113,8 @@ impl RagServer {
             },
             control,
         )
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         let report = match outcome {
             SourceSyncOutcome::Completed(report) | SourceSyncOutcome::Cancelled(report) => report,
         };
@@ -138,7 +142,8 @@ impl RagServer {
                 kind: "document".into(),
                 immutable: true,
             })
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         Self::json_result(&result)
     }
 
@@ -154,15 +159,13 @@ impl RagServer {
         let wing = params.wing.trim();
         let room = params.room.trim();
         if wing.is_empty() {
-            return Err(McpError::from(AppError::invalid("wing must be non-empty")));
+            return Err(mcp_error(AppError::invalid("wing must be non-empty")));
         }
         if room.is_empty() {
-            return Err(McpError::from(AppError::invalid("room must be non-empty")));
+            return Err(mcp_error(AppError::invalid("room must be non-empty")));
         }
         if params.content.is_empty() {
-            return Err(McpError::from(AppError::invalid(
-                "content must be non-empty",
-            )));
+            return Err(mcp_error(AppError::invalid("content must be non-empty")));
         }
 
         let result = self
@@ -178,7 +181,8 @@ impl RagServer {
                 kind: "document".into(),
                 immutable: false,
             })
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         Self::json_result(&result)
     }
 
@@ -199,7 +203,8 @@ impl RagServer {
                     params.uri.as_deref(),
                 )
             })
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         Self::json_result(&body)
     }
 
@@ -213,7 +218,7 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let source_file = params.source_file.trim();
         if source_file.is_empty() {
-            return Err(McpError::from(AppError::invalid(
+            return Err(mcp_error(AppError::invalid(
                 "source_file (or source) must be non-empty",
             )));
         }
@@ -228,7 +233,8 @@ impl RagServer {
                 .blocking("delete_by_source preview", move |store| {
                     store.documents().list_documents_filtered(&filter)
                 })
-                .await?;
+                .await
+                .map_err(mcp_error)?;
             let document_ids: Vec<String> = matched.iter().map(|d| d.id.clone()).collect();
             return Self::json_result(&serde_json::json!({
                 "success": true,
@@ -243,7 +249,8 @@ impl RagServer {
         let mutation_guard = self
             .store
             .corpus_lane()
-            .try_corpus_mutation_guard("source deletion")?;
+            .try_corpus_mutation_guard("source deletion")
+            .map_err(mcp_error)?;
         let owned_source = source_file.to_string();
         // Delete and FTS refresh share one blocking task that owns the lane:
         // a cancelled request cannot release it or skip the refresh.
@@ -254,7 +261,8 @@ impl RagServer {
                 move |store| store.documents().delete_by_source_ids(&owned_source),
                 |ids: &Vec<String>| !ids.is_empty(),
             )
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         let _mutation_guard = outcome.guard;
         let document_ids = outcome.value;
         let deleted = document_ids.len() as u64;
@@ -297,7 +305,8 @@ impl RagServer {
         let docs = run_blocking("list_sources", move || {
             store.documents().list_document_catalog(&filter)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         let summaries: Vec<SourceSummary> = docs
             .items
             .into_iter()
@@ -340,7 +349,7 @@ impl RagServer {
             .filter(|s| !s.is_empty());
 
         if doc_id.is_none() && uri.is_none() {
-            return Err(McpError::from(AppError::invalid(
+            return Err(mcp_error(AppError::invalid(
                 "get_source requires document_id or uri",
             )));
         }
@@ -372,7 +381,8 @@ impl RagServer {
             retrieval::document_with_chunks(&store, doc, include_chunks, chunk_limit)
                 .map(SourceDetail::from)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&body)
     }
 
@@ -408,7 +418,8 @@ impl RagServer {
         let page = run_blocking("list_documents", move || {
             store.documents().list_document_catalog(&filter)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&page.items)
     }
 
@@ -430,7 +441,8 @@ impl RagServer {
             retrieval::get_document(&store, &document_id, include_chunks, chunk_limit)
                 .map(DocumentDetail::from)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&body)
     }
 
@@ -447,9 +459,10 @@ impl RagServer {
             .blocking("delete_document", move |store| {
                 store.documents().delete_document(&document_id)
             })
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         if !deleted {
-            return Err(McpError::from(AppError::not_found(format!(
+            return Err(mcp_error(AppError::not_found(format!(
                 "document not found: {}",
                 params.document_id
             ))));
@@ -471,7 +484,10 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<UpdateDocumentMetaParams>,
     ) -> Result<CallToolResult, McpError> {
-        let result = self.update_document_via_service(params).await?;
+        let result = self
+            .update_document_via_service(params)
+            .await
+            .map_err(mcp_error)?;
         Self::json_result(&result)
     }
 
@@ -483,7 +499,7 @@ impl RagServer {
         &self,
         Parameters(_params): Parameters<ListWingsParams>,
     ) -> Result<CallToolResult, McpError> {
-        let wings = self.admin_use_case().wings().await?;
+        let wings = self.admin_use_case().wings().await.map_err(mcp_error)?;
         Self::json_result(&wings)
     }
 
@@ -495,7 +511,11 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ListRoomsParams>,
     ) -> Result<CallToolResult, McpError> {
-        let rooms = self.admin_use_case().rooms(params.wing).await?;
+        let rooms = self
+            .admin_use_case()
+            .rooms(params.wing)
+            .await
+            .map_err(mcp_error)?;
         Self::json_result(&rooms)
     }
 
@@ -507,7 +527,7 @@ impl RagServer {
         &self,
         Parameters(_params): Parameters<GetTaxonomyParams>,
     ) -> Result<CallToolResult, McpError> {
-        let tax = self.admin_use_case().taxonomy().await?;
+        let tax = self.admin_use_case().taxonomy().await.map_err(mcp_error)?;
         Self::json_result(&tax)
     }
 
@@ -518,7 +538,7 @@ impl RagServer {
     pub(super) async fn stats(&self) -> Result<CallToolResult, McpError> {
         self.blocking_tool("stats", move |store| {
             let (document_count, chunk_count, node_count, edge_count) =
-                store.maintenance().stats()?;
+                store.maintenance().stats().map_err(mcp_error)?;
             let body = Stats {
                 document_count,
                 chunk_count,
@@ -540,7 +560,9 @@ impl RagServer {
     pub(super) async fn status(&self) -> Result<CallToolResult, McpError> {
         let config = self.config.clone();
         self.blocking_tool("status", move |store| {
-            let body = DiagnosticsService::new(store, &config).status()?;
+            let body = DiagnosticsService::new(store, &config)
+                .status()
+                .map_err(mcp_error)?;
             Self::json_result(&body)
         })
         .await
@@ -553,7 +575,9 @@ impl RagServer {
     pub(super) async fn doctor(&self) -> Result<CallToolResult, McpError> {
         let config = self.config.clone();
         self.blocking_tool("doctor", move |store| {
-            let body = DiagnosticsService::new(store, &config).doctor()?;
+            let body = DiagnosticsService::new(store, &config)
+                .doctor()
+                .map_err(mcp_error)?;
             Self::json_result(&body)
         })
         .await
@@ -565,7 +589,7 @@ impl RagServer {
         (short probe), embed provider/model/dims. Does not hang long when Ollama is down."
     )]
     pub(super) async fn llm_status(&self) -> Result<CallToolResult, McpError> {
-        let body = self.llm_status_report().await?;
+        let body = self.llm_status_report().await.map_err(mcp_error)?;
         Self::json_result(&body)
     }
 }

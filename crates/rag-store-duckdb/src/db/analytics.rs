@@ -13,7 +13,7 @@ use crate::error::Result;
 use crate::util::parse_db_timestamp;
 
 /// Cap reported groups / lists to keep MCP payloads bounded.
-pub(crate) const REPORT_LIST_CAP: usize = 100;
+pub const REPORT_LIST_CAP: usize = 100;
 
 /// Document / graph / layer tallies.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -84,7 +84,7 @@ pub struct ArchiveCandidate {
     pub reason: String,
 }
 
-pub(crate) fn collect_counts(
+pub fn collect_counts(
     store: &Store,
     documents: u64,
     chunks: u64,
@@ -129,7 +129,7 @@ pub(crate) fn group_count_locked(conn: &duckdb::Connection, sql: &str) -> Result
     Ok(out)
 }
 
-pub(crate) fn collect_size_stats(store: &Store, db_size_bytes: Option<u64>) -> Result<SizeStats> {
+pub fn collect_size_stats(store: &Store, db_size_bytes: Option<u64>) -> Result<SizeStats> {
     let conn = store.lock()?;
     let (chunk_n, chunk_chars): (i64, i64) = conn.query_row(
         "SELECT COUNT(*)::BIGINT, COALESCE(SUM(LENGTH(content)), 0)::BIGINT FROM chunks",
@@ -164,10 +164,7 @@ pub(crate) fn collect_size_stats(store: &Store, db_size_bytes: Option<u64>) -> R
 ///
 /// `active_only` drops archived/tombstoned rows: compression merges only live
 /// copies, while corpus analysis reports every stored duplicate.
-pub(crate) fn find_exact_duplicates(
-    store: &Store,
-    active_only: bool,
-) -> Result<Vec<DuplicateGroup>> {
+pub fn find_exact_duplicates(store: &Store, active_only: bool) -> Result<Vec<DuplicateGroup>> {
     let status_filter = if active_only {
         format!("AND {}", super::sql::ACTIVE_DOCUMENT_SQL)
     } else {
@@ -221,7 +218,7 @@ pub(crate) fn find_exact_duplicates(
     Ok(groups)
 }
 
-pub(crate) fn find_orphans(store: &Store) -> Result<(Vec<OrphanNode>, Vec<OrphanNode>)> {
+pub fn find_orphans(store: &Store) -> Result<(Vec<OrphanNode>, Vec<OrphanNode>)> {
     let conn = store.lock()?;
 
     // Nodes with no incident edges.
@@ -295,7 +292,7 @@ pub(crate) fn find_orphans(store: &Store) -> Result<(Vec<OrphanNode>, Vec<Orphan
     Ok((orphan_nodes, orphan_wiki))
 }
 
-pub(crate) fn find_stubs(
+pub fn find_stubs(
     store: &Store,
     stub_age_days: u32,
     now: DateTime<Utc>,
@@ -339,7 +336,7 @@ pub(crate) fn find_stubs(
     Ok((unresolved, aging))
 }
 
-pub(crate) fn find_archive_candidates(
+pub fn find_archive_candidates(
     store: &Store,
     min_age_days: u32,
     now: DateTime<Utc>,
@@ -399,7 +396,7 @@ pub(crate) fn find_archive_candidates(
     Ok(out)
 }
 
-pub(crate) fn short_hash(h: &str) -> String {
+pub fn short_hash(h: &str) -> String {
     if h.chars().count() <= 12 {
         h.to_string()
     } else {
@@ -409,12 +406,12 @@ pub(crate) fn short_hash(h: &str) -> String {
     }
 }
 
-pub(crate) fn parse_ts(raw: &str) -> Option<DateTime<Utc>> {
+pub fn parse_ts(raw: &str) -> Option<DateTime<Utc>> {
     parse_db_timestamp(raw)
 }
 
 /// `(all chunks, chunks whose document still exists)` from one snapshot.
-pub(crate) fn chunk_attachment_counts(store: &Store) -> Result<(i64, i64)> {
+pub fn chunk_attachment_counts(store: &Store) -> Result<(i64, i64)> {
     let conn = store.lock()?;
     Ok(conn.query_row(
         r#"
@@ -430,7 +427,7 @@ pub(crate) fn chunk_attachment_counts(store: &Store) -> Result<(i64, i64)> {
 }
 
 /// Oldest tombstoned documents first: `(id, layer)`, at most `limit`.
-pub(crate) fn tombstone_candidates(store: &Store, limit: usize) -> Result<Vec<(String, String)>> {
+pub fn tombstone_candidates(store: &Store, limit: usize) -> Result<Vec<(String, String)>> {
     let conn = store.lock()?;
     let mut stmt = conn.prepare(
         r#"

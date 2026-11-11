@@ -2,6 +2,7 @@
 use super::facade::RagServer;
 use super::tools::*;
 use crate::ingest::IngestUrlCommand;
+use crate::mcp::error::mcp_error;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::{service::RequestContext, RoleServer};
@@ -20,7 +21,8 @@ impl RagServer {
         let result = crate::util::run_blocking("catalog", move || {
             crate::code_index::CodeIndex::new(&store).code_catalog_query(&params)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&result)
     }
     #[tool(
@@ -102,7 +104,8 @@ impl RagServer {
         let result = crate::util::run_blocking("index_status", move || {
             crate::code_index::CodeIndex::new(&store).code_index_status(&params, &config)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&result)
     }
 
@@ -478,7 +481,8 @@ impl RagServer {
         let result = crate::util::run_blocking("routes", move || {
             crate::code_index::CodeIndex::new(&store).code_routes(&params)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&result)
     }
     #[tool(
@@ -495,7 +499,8 @@ impl RagServer {
                 let result = crate::util::run_blocking("dead_code_files", move || {
                     crate::code_index::CodeIndex::new(&store).code_dead_files(&params)
                 })
-                .await?;
+                .await
+                .map_err(mcp_error)?;
                 return Self::json_result(&result);
             }
             "routines" => {
@@ -545,7 +550,8 @@ impl RagServer {
                 .code_snapshot_in_project(params.project.as_deref())?;
             Ok::<_, crate::error::AppError>(snapshot.trace_path(&params))
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&result)
     }
     #[tool(
@@ -560,7 +566,8 @@ impl RagServer {
         let result = crate::util::run_blocking("detect_changes", move || {
             crate::code_index::git_diff_impact(&params, &roots)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&result)
     }
     #[tool(
@@ -575,7 +582,8 @@ impl RagServer {
         let result = crate::util::run_blocking("infrastructure", move || {
             crate::code_index::CodeIndex::new(&store).code_infrastructure(&params)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&result)
     }
     #[tool(
@@ -591,7 +599,8 @@ impl RagServer {
         let result = crate::util::run_blocking("rename", move || {
             crate::code_index::CodeIndex::new(&store).code_rename_preview(&params, &roots)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&result)
     }
     #[tool(
@@ -607,7 +616,8 @@ impl RagServer {
         let result = crate::util::run_blocking("apply_rename", move || {
             crate::code_index::CodeIndex::new(&store).code_rename_apply(&params, &roots)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&result)
     }
     #[tool(
@@ -622,7 +632,8 @@ impl RagServer {
         let result = crate::util::run_blocking("affected_tests", move || {
             crate::code_index::CodeIndex::new(&store).code_affected_tests(&params)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&result)
     }
     #[tool(
@@ -666,7 +677,8 @@ impl RagServer {
                 .code_snapshot_in_project(params.project.as_deref())?;
             Ok::<_, crate::error::AppError>(snapshot.repo_map(&params))
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&result)
     }
     #[tool(
@@ -683,7 +695,8 @@ impl RagServer {
                 .code_snapshot_in_project(params.impact_project.as_deref())?;
             Ok::<_, crate::error::AppError>(snapshot.query("impact", &params))
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&result)
     }
     #[tool(
@@ -698,7 +711,8 @@ impl RagServer {
         let report = crate::util::run_blocking("index_code", move || {
             crate::code_index::CodeIndex::new(&store).index_code_with_options(&options)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&report)
     }
     #[tool(

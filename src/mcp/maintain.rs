@@ -1,5 +1,6 @@
 //! Corpus analysis and maintenance tools.
 
+use crate::mcp::error::mcp_error;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::{tool, tool_router, ErrorData as McpError};
@@ -40,7 +41,8 @@ impl RagServer {
             Some(
                 self.store
                     .corpus_lane()
-                    .try_corpus_mutation_guard("duplicate cleanup")?,
+                    .try_corpus_mutation_guard("duplicate cleanup")
+                    .map_err(mcp_error)?,
             )
         };
         let configured_cap = self.config.maint_max_docs.max(1);
@@ -57,7 +59,10 @@ impl RagServer {
                 .cleanup_source_duplicates(dry_run, confirm, max_candidates)
         };
         let Some(guard) = mutation_guard else {
-            let report = self.blocking("cleanup_source_duplicates", cleanup).await?;
+            let report = self
+                .blocking("cleanup_source_duplicates", cleanup)
+                .await
+                .map_err(mcp_error)?;
             return Self::json_result(&report);
         };
         // Cleanup and its FTS refresh run in one blocking task that owns the
@@ -67,7 +72,8 @@ impl RagServer {
             .guarded_mutation("cleanup_source_duplicates", guard, cleanup, |report| {
                 report.applied
             })
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         let _mutation_guard = outcome.guard;
         let mut report = outcome.value;
         if let Some(error) = outcome.fts_error {
@@ -96,7 +102,8 @@ impl RagServer {
                     params.max_docs,
                 )),
             )
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         Self::json_result(&report)
     }
 
@@ -129,7 +136,7 @@ impl RagServer {
             if let Some(v) = params.log_ops {
                 opts.log_ops = v;
             }
-            let report = maintain::analyze_corpus(store, &config, &opts)?;
+            let report = maintain::analyze_corpus(store, &config, &opts).map_err(mcp_error)?;
             Self::json_result(&report)
         })
         .await
@@ -149,7 +156,7 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let report = if let Some(value) = params.analysis {
             serde_json::from_value::<maintain::AnalysisReport>(value).map_err(|e| {
-                McpError::from(AppError::invalid(format!(
+                mcp_error(AppError::invalid(format!(
                     "plan_maintenance analysis must be an AnalysisReport JSON object: {e}"
                 )))
             })?
@@ -163,7 +170,8 @@ impl RagServer {
             self.blocking("plan_maintenance analysis", move |store| {
                 maintain::analyze_corpus(store, &config, &opts)
             })
-            .await?
+            .await
+            .map_err(mcp_error)?
         };
 
         let mut plan_opts = maintain::PlanOptions::from_config(&self.config);
@@ -178,12 +186,15 @@ impl RagServer {
         }
 
         let llm = self.completer();
-        let plan = maintain::plan_maintenance(&report, &self.config, llm, &plan_opts).await?;
+        let plan = maintain::plan_maintenance(&report, &self.config, llm, &plan_opts)
+            .await
+            .map_err(mcp_error)?;
 
         if plan_opts.log_ops {
             let logged = plan.clone();
             self.blocking("log plan", move |store| maintain::log_plan(store, &logged))
-                .await?;
+                .await
+                .map_err(mcp_error)?;
         }
 
         Self::json_result(&plan)
@@ -205,7 +216,7 @@ impl RagServer {
         let mut actions: Vec<MaintenancePlanItem> = Vec::with_capacity(params.actions.len());
         for a in params.actions {
             let kind = maintain::MaintenanceAction::parse(&a.action).ok_or_else(|| {
-                McpError::from(AppError::forbidden(format!(
+                mcp_error(AppError::forbidden(format!(
                     "maintenance action '{}' is not on the whitelist; allowed: {}",
                     a.action.trim(),
                     maintain::ALLOWED_ACTIONS.join(", ")
@@ -243,7 +254,8 @@ impl RagServer {
             let mutation_guard = self
                 .store
                 .corpus_lane()
-                .try_corpus_mutation_guard("maintenance plan")?;
+                .try_corpus_mutation_guard("maintenance plan")
+                .map_err(mcp_error)?;
             let server = self.clone();
             run_detached("apply_maintenance_plan", async move {
                 // This owned task intentionally survives a dropped MCP request:
@@ -265,7 +277,7 @@ impl RagServer {
             })
             .await
         };
-        let report = report?;
+        let report = report.map_err(mcp_error)?;
         Self::json_result(&report)
     }
 
@@ -283,7 +295,7 @@ impl RagServer {
         let mut opts = maintain::OrganizeOptions::from_config(&self.config);
         opts.dry_run = params.dry_run.unwrap_or(true);
         if let Some(ref mode) = params.mode {
-            opts.mode = maintain::OrganizeMode::parse(mode)?;
+            opts.mode = maintain::OrganizeMode::parse(mode).map_err(mcp_error)?;
         }
         if let Some(n) = params.max_docs {
             opts.max_docs =
@@ -311,7 +323,7 @@ impl RagServer {
             })
             .await
         };
-        let report = report?;
+        let report = report.map_err(mcp_error)?;
         Self::json_result(&report)
     }
 
@@ -345,7 +357,8 @@ impl RagServer {
             let mutation_guard = self
                 .store
                 .corpus_lane()
-                .try_corpus_mutation_guard("maintenance refresh")?;
+                .try_corpus_mutation_guard("maintenance refresh")
+                .map_err(mcp_error)?;
             let server = self.clone();
             run_detached("maintain_refresh", async move {
                 // See apply_maintenance_plan: cancellation detaches this owned
@@ -359,7 +372,7 @@ impl RagServer {
             })
             .await
         };
-        let report = report?;
+        let report = report.map_err(mcp_error)?;
         Self::json_result(&report)
     }
 
@@ -388,14 +401,15 @@ impl RagServer {
             opts.max_docs =
                 clamp_maintenance_max_docs(self.config.maint_max_docs, Some(n as usize));
         }
-        opts.validate()?;
+        opts.validate().map_err(mcp_error)?;
         let mutation_guard = if opts.dry_run {
             None
         } else {
             Some(
                 self.store
                     .corpus_lane()
-                    .try_corpus_mutation_guard("maintenance compression")?,
+                    .try_corpus_mutation_guard("maintenance compression")
+                    .map_err(mcp_error)?,
             )
         };
         let store = self.store.clone();
@@ -406,7 +420,8 @@ impl RagServer {
             let _mutation_guard = mutation_guard;
             maintain::maintain_compress(&store, &config, &opts)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&report)
     }
 
@@ -418,7 +433,8 @@ impl RagServer {
     )]
     pub(super) async fn vacuum_store(&self) -> Result<CallToolResult, McpError> {
         self.blocking_tool("vacuum_store", move |store| {
-            let report: VacuumStoreReport = store.maintenance().vacuum_store()?;
+            let report: VacuumStoreReport =
+                store.maintenance().vacuum_store().map_err(mcp_error)?;
             Self::json_result(&report)
         })
         .await

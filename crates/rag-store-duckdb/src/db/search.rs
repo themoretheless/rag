@@ -20,7 +20,7 @@ use crate::error::{AppError, Result};
 use crate::models::{SearchContextChunk, SearchExplanation, SearchHit, SearchMode};
 
 #[cfg(test)]
-use crate::embeddings::cosine_similarity;
+use crate::util::cosine_similarity;
 
 use super::fts::{self, LexFilters};
 use super::store::{ChunkBody, Store};
@@ -227,14 +227,11 @@ pub fn search(store: &Store, query: &SearchQuery) -> Result<Vec<SearchHit>> {
 /// exclusive corpus mutation from starting until the caller finishes. An
 /// active mutation produces a retryable [`AppError::Busy`] before embedding,
 /// FTS, or vector work.
-pub(crate) struct CorpusSearchGuard {
+pub struct CorpusSearchGuard {
     _guard: tokio::sync::OwnedRwLockReadGuard<()>,
 }
 
-pub(crate) fn acquire_corpus_search_guard(
-    store: &Store,
-    _mode: SearchMode,
-) -> Result<CorpusSearchGuard> {
+pub fn acquire_corpus_search_guard(store: &Store, _mode: SearchMode) -> Result<CorpusSearchGuard> {
     let guard = store.corpus_lane().try_corpus_idle_guard().ok_or_else(|| {
         AppError::busy("exclusive corpus mutation is active; retry search after it completes")
     })?;
@@ -245,7 +242,7 @@ pub(crate) fn acquire_corpus_search_guard(
 ///
 /// Transport orchestration uses this after acquiring the guard before an async
 /// embedding request. Direct synchronous callers should use [`search`].
-pub(crate) fn search_with_corpus_guard(
+pub fn search_with_corpus_guard(
     store: &Store,
     query: &SearchQuery,
     _corpus_guard: &CorpusSearchGuard,

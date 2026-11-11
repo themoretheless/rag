@@ -343,7 +343,7 @@ mod tests {
     #[test]
     fn sql_target_retains_owners_ownerless_uses_and_independent_counts() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("table.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&dir.path().join("table.duckdb")).unwrap();
         put(&store,"code","/p/api.py","p","def load():\n q='SELECT * FROM users'\ndef save():\n q='INSERT INTO users(id) VALUES(1)'\n");
         put(&store, "raw", "/p/raw.sql", "p", "SELECT * FROM users;");
         put(
@@ -404,7 +404,7 @@ mod tests {
     #[test]
     fn table_identity_disambiguation_precedes_access_and_source_filters() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("identity.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&dir.path().join("identity.duckdb")).unwrap();
         put(
             &store,
             "public",
@@ -461,7 +461,7 @@ mod tests {
     #[test]
     fn route_literals_keep_registrations_separate_from_client_mentions_and_projects() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("route.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&dir.path().join("route.duckdb")).unwrap();
         put(
             &store,
             "api",
@@ -528,7 +528,7 @@ mod tests {
     #[test]
     fn ambiguous_handlers_are_alternatives_at_one_registration_not_source_owners() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("handlers.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&dir.path().join("handlers.duckdb")).unwrap();
         put(
             &store,
             "js",
@@ -555,7 +555,7 @@ mod tests {
     #[test]
     fn symbol_compatibility_project_scope_and_stale_noncode_exclusion() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("stale.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&dir.path().join("stale.duckdb")).unwrap();
         put(
             &store,
             "code",

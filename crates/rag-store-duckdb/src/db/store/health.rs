@@ -25,7 +25,7 @@ impl Maintenance<'_> {
     }
 
     /// Count raw/wiki compilation health in SQL without materializing document bodies.
-    pub(crate) fn layer_health_counts(&self) -> Result<LayerHealthCounts> {
+    pub fn layer_health_counts(&self) -> Result<LayerHealthCounts> {
         let conn = self.store.lock()?;
         let uncompiled = format!("NOT {}", compiled_link_exists("raw"));
         let counts = conn.query_row(
@@ -124,7 +124,7 @@ impl Maintenance<'_> {
     /// This is the compile queue: a 25-row sample ordered by wing always describes the
     /// same first shelves, which on the live corpus is 25 of 82 925 docs in one of 503
     /// shelves. Counting in SQL ranks every shelf instead.
-    pub(crate) fn uncompiled_raw_shelves(&self, limit: usize) -> Result<UncompiledShelfQueue> {
+    pub fn uncompiled_raw_shelves(&self, limit: usize) -> Result<UncompiledShelfQueue> {
         let limit = limit.clamp(1, MAX_UNCOMPILED_ROWS) as i64;
         let conn = self.store.lock()?;
         let uncompiled = format!("NOT {}", compiled_link_exists("raw"));

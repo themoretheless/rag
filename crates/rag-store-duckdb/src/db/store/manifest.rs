@@ -23,7 +23,7 @@ pub fn embedding_manifest_from_config(config: &impl EmbeddingIdentity) -> Embedd
 /// their dimensions), while its authoritative fingerprint cannot match either
 /// the old or target config. The first successful vector mutation writes this
 /// marker in the same transaction; only a complete migration may replace it.
-pub(crate) fn embedding_migration_manifest(config: &impl EmbeddingIdentity) -> EmbeddingManifest {
+pub fn embedding_migration_manifest(config: &impl EmbeddingIdentity) -> EmbeddingManifest {
     let mut marker = embedding_manifest_from_config(config);
     let target_fingerprint = marker
         .content_fingerprint
@@ -79,7 +79,7 @@ pub(crate) fn embedding_identity_fingerprint(
 }
 
 /// Read the manifest inside an already-owned consistent database observation.
-pub(crate) fn get_embedding_manifest_locked(
+pub fn get_embedding_manifest_locked(
     conn: &Connection,
     id: &str,
 ) -> Result<Option<EmbeddingManifest>> {

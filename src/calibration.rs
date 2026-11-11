@@ -396,7 +396,7 @@ mod tests {
     fn assertions_are_not_labels_and_reports_survive_restart_with_stable_cursors() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("c.duckdb");
-        let store = Store::open(&path).unwrap();
+        let store = crate::testkit::open_test_store(&path).unwrap();
         let q = CalibrationQuery {
             samples: Some(Samples {
                 sample_size: Some(1000),
@@ -428,7 +428,7 @@ mod tests {
             .unwrap();
         let cursor = page["next_before_seq"].as_i64().unwrap();
         drop(store);
-        let store = Store::open(&path).unwrap();
+        let store = crate::testkit::open_test_store(&path).unwrap();
         let older = crate::calibration::Calibrations::new(&store)
             .calibration_reports(&ReportsQuery {
                 before_seq: Some(cursor),

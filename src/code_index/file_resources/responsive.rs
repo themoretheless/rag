@@ -570,7 +570,8 @@ mod integration_tests {
     #[test]
     fn responsive_choices_drive_impact_liveness_and_immutable_descriptor_diffs() {
         let temp = tempfile::tempdir().unwrap();
-        let store = Store::open(&temp.path().join("responsive.duckdb")).unwrap();
+        let store =
+            crate::testkit::open_test_store(&temp.path().join("responsive.duckdb")).unwrap();
         let doc = |id: &str, path: &str, source: &str| Document {
             id: id.into(),
             uri: format!("file://{id}"),

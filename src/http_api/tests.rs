@@ -41,7 +41,7 @@ fn app() -> Router {
         db_path: root.join("http.duckdb"),
         ..Config::default()
     };
-    let store = Arc::new(Store::open(&config.db_path).unwrap());
+    let store = Arc::new(crate::testkit::open_test_store(&config.db_path).unwrap());
     let embedder = build_provider(&config).unwrap();
     let allowed_hosts = configured_http_allowed_hosts(&config, None);
     gateway_layers(
@@ -283,7 +283,7 @@ async fn mounted_mcp_rejects_streamed_oversized_bodies() {
         db_path: root.join("mcp-http.duckdb"),
         ..Config::default()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let embedder = build_provider(&config).unwrap();
     let mcp = crate::mcp::mcp_http_service_for(
         crate::context::AppContext::new(store.clone(), embedder.clone(), config.clone()),
@@ -326,7 +326,7 @@ async fn mounted_mcp_enforces_dns_rebinding_host_allowlist() {
         http_bind: Some("192.168.50.205:7432".into()),
         ..Config::default()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let embedder = build_provider(&config).unwrap();
     let service = |store: Store| {
         Router::new().nest_service(
@@ -374,7 +374,7 @@ async fn revision_timeline_is_lean_paginated_and_snapshot_is_lazy() {
         db_path: root.join("revisions-http.duckdb"),
         ..Config::default()
     };
-    let store = Arc::new(Store::open(&config.db_path).unwrap());
+    let store = Arc::new(crate::testkit::open_test_store(&config.db_path).unwrap());
     let now = chrono::Utc::now();
     let mut document = crate::models::Document {
         id: "revision-doc".into(),

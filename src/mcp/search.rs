@@ -1,5 +1,6 @@
 //! Retrieval, embedding lifecycle, and context-packing tools.
 
+use crate::mcp::error::mcp_error;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::{tool, tool_router, ErrorData as McpError};
@@ -54,7 +55,8 @@ impl RagServer {
             &self.config,
             command,
         )
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&hits)
     }
 
@@ -95,7 +97,8 @@ impl RagServer {
                 timeout_ms: params.timeout_ms,
             },
         )
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         let hits = match reranker {
             Some(reranker) => {
                 retrieval::rerank_hits_or_fallback(
@@ -118,7 +121,10 @@ impl RagServer {
     )]
     pub(super) async fn get_embedding_manifest(&self) -> Result<CallToolResult, McpError> {
         self.blocking_tool("get_embedding_manifest", move |store| {
-            let manifest = store.embedding_manifest().get_embedding_manifest()?;
+            let manifest = store
+                .embedding_manifest()
+                .get_embedding_manifest()
+                .map_err(mcp_error)?;
             match manifest {
                 Some(m) => Self::json_result(&m),
                 None => Self::json_result(&serde_json::json!({
@@ -145,7 +151,8 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let result = self
             .reembed_document_pipeline(params.document_id.trim())
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         Self::json_result(&result)
     }
 
@@ -166,7 +173,8 @@ impl RagServer {
                 include_chunks: params.include_chunks.unwrap_or(false),
                 chunk_limit: params.chunk_limit.map(|value| value as usize),
             })
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         // MCP envelope keeps its `documents` key; the item shape is shared.
         Self::json_result(&serde_json::json!({
             "documents": result.items,
@@ -188,7 +196,8 @@ impl RagServer {
                 &params.document_id,
                 params.chunk_index,
                 params.radius.unwrap_or(1),
-            )?
+            )
+            .map_err(mcp_error)?
             .into_iter()
             .map(ChunkView::from)
             .collect::<Vec<_>>();
@@ -218,7 +227,8 @@ impl RagServer {
                     room: params.room,
                     fts_stemmer: config.fts_stemmer.clone(),
                 },
-            )?;
+            )
+            .map_err(mcp_error)?;
             Self::json_result(&hits)
         })
         .await
@@ -239,7 +249,8 @@ impl RagServer {
             .prior_trace
             .map(serde_json::from_value)
             .transpose()
-            .map_err(|error| crate::error::AppError::invalid(format!("prior_trace: {error}")))?;
+            .map_err(|error| crate::error::AppError::invalid(format!("prior_trace: {error}")))
+            .map_err(mcp_error)?;
         let packed = self
             .search_use_case()
             .pack_context(crate::app::PackContextRequest {
@@ -253,7 +264,8 @@ impl RagServer {
                     prior,
                 },
             })
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         Self::json_result(&packed)
     }
 }

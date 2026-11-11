@@ -888,7 +888,7 @@ mod persistence_tests {
             embedding_dims: 16,
             ..crate::Config::for_tests()
         };
-        let store = Store::open(&config.db_path).unwrap();
+        let store = crate::testkit::open_test_store(&config.db_path).unwrap();
         let embedder: std::sync::Arc<dyn crate::embeddings::EmbeddingProvider> =
             std::sync::Arc::new(crate::embeddings::MockEmbedder::new(16));
         let service = SourceSyncService::new(&store, &embedder, &config);
@@ -943,7 +943,7 @@ mod persistence_tests {
         );
         assert_eq!(snap.policy_trace(&p).unwrap()["default_behavior"], "allow");
         drop(store);
-        let store = Store::open(&config.db_path).unwrap();
+        let store = crate::testkit::open_test_store(&config.db_path).unwrap();
         assert_eq!(
             crate::code_index::CodeIndex::new(&store)
                 .code_snapshot()

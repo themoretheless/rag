@@ -438,7 +438,7 @@ mod tests {
     async fn diary_write_read_roundtrip() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("diary.duckdb");
-        let store = Store::open(&path).expect("open");
+        let store = crate::testkit::open_test_store(&path).expect("open");
         let dims = 32usize;
         let config = test_config(path, dims);
         let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -512,7 +512,7 @@ mod tests {
     async fn checkpoint_ops_log_and_optional_diary() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("ckpt.duckdb");
-        let store = Store::open(&path).expect("open");
+        let store = crate::testkit::open_test_store(&path).expect("open");
         let dims = 32usize;
         let config = test_config(path, dims);
         let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -560,7 +560,7 @@ mod tests {
     async fn checkpoint_rejects_empty_summary() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("empty.duckdb");
-        let store = Store::open(&path).expect("open");
+        let store = crate::testkit::open_test_store(&path).expect("open");
         let dims = 8usize;
         let config = test_config(path, dims);
         let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -574,7 +574,7 @@ mod tests {
     async fn wake_up_status_diary_pinned_optional_schema() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("wake.duckdb");
-        let store = Store::open(&path).expect("open");
+        let store = crate::testkit::open_test_store(&path).expect("open");
         let dims = 32usize;
         let config = test_config(path, dims);
         let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));

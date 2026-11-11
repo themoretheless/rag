@@ -1104,7 +1104,8 @@ mod tests {
     #[tokio::test]
     async fn active_source_sync_rejects_hybrid_before_embedding_provider_call() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let store = Store::open(&dir.path().join("pre-embed-busy.duckdb")).expect("open");
+        let store = crate::testkit::open_test_store(&dir.path().join("pre-embed-busy.duckdb"))
+            .expect("open");
         let sync_guard = store
             .corpus_lane()
             .corpus_mutation_lane()
@@ -1131,7 +1132,8 @@ mod tests {
     #[tokio::test]
     async fn multi_query_search_embeds_all_rewrites_in_one_provider_call() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let store = Store::open(&dir.path().join("multi-query.duckdb")).expect("open");
+        let store =
+            crate::testkit::open_test_store(&dir.path().join("multi-query.duckdb")).expect("open");
         let embedder = CountingEmbedder {
             calls: AtomicUsize::new(0),
         };
@@ -1188,7 +1190,7 @@ mod tests {
             }
         }
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("deadline.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&dir.path().join("deadline.duckdb")).unwrap();
         let config = Config {
             embedding_dims: 8,
             ..Config::for_tests()

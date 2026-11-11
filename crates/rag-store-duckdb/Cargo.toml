@@ -1,0 +1,40 @@
+[package]
+name = "rag-store-duckdb"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+description = "DuckDB store of rag-mcp: schema, repositories, vector/FTS search, and the domain types they persist"
+license = "MIT"
+publish = false
+
+[dependencies]
+anyhow = { workspace = true }
+blake3 = { workspace = true }
+chrono = { workspace = true }
+duckdb = { workspace = true }
+rag-mcp-core = { workspace = true }
+rag-mcp-markup = { workspace = true }
+ring = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+# Fixture scratch directories for `testkit` (feature) and unit tests.
+tempfile = { workspace = true, optional = true }
+# Optional HF tokenizers backend for `search_pack::estimate_tokens`; see the
+# root crate's `tokenizers` feature.
+tokenizers = { workspace = true, optional = true }
+
+[features]
+default = []
+tokenizers = ["dep:tokenizers"]
+# Shared fixtures (`testkit`) and the test hooks of the store for tests in the
+# crates above it. Never enabled by production builds.
+testkit = ["dep:tempfile"]
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }

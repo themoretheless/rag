@@ -186,3 +186,6 @@ mod open_store_tests {
         assert!(metadata.get("code_source_hash").is_some(), "{metadata}");
     }
 }
+
+#[cfg(test)]
+mod wal_replay_tests;

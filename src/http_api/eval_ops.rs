@@ -421,7 +421,7 @@ mod tests {
             ..Config::for_tests()
         };
         HttpState {
-            store: Arc::new(Store::open(&config.db_path).unwrap()),
+            store: Arc::new(crate::testkit::open_test_store(&config.db_path).unwrap()),
             mcp_http: false,
             embedder: Arc::new(MockEmbedder::new(16)),
             config: config.into(),

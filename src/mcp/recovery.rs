@@ -1,5 +1,6 @@
 //! Backup and portable recovery bundle MCP tools.
 
+use crate::mcp::error::mcp_error;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -36,15 +37,18 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<BackupDbParams>,
     ) -> Result<CallToolResult, McpError> {
-        let path = resolve_allowlisted_output_file(&params.path, &self.config.ingest_roots)?;
-        validate_backup_output_paths(&path, &self.config.ingest_roots, self.store.path())?;
+        let path = resolve_allowlisted_output_file(&params.path, &self.config.ingest_roots)
+            .map_err(mcp_error)?;
+        validate_backup_output_paths(&path, &self.config.ingest_roots, self.store.path())
+            .map_err(mcp_error)?;
         let store = self.store.clone();
         let dry_run = params.dry_run.unwrap_or(false);
         let overwrite = params.overwrite.unwrap_or(false);
         let report = run_blocking("backup", move || {
             store.recovery().backup_database(&path, dry_run, overwrite)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&report)
     }
 
@@ -59,9 +63,10 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ExportBundleParams>,
     ) -> Result<CallToolResult, McpError> {
-        let path = resolve_allowlisted_output_file(&params.path, &self.config.ingest_roots)?;
-        refuse_live_database_target(&path, self.store.path())?;
-        let format = recovery_format(params.format.as_deref(), &path)?;
+        let path = resolve_allowlisted_output_file(&params.path, &self.config.ingest_roots)
+            .map_err(mcp_error)?;
+        refuse_live_database_target(&path, self.store.path()).map_err(mcp_error)?;
+        let format = recovery_format(params.format.as_deref(), &path).map_err(mcp_error)?;
         let overwrite = params.overwrite.unwrap_or(false);
         let dry_run = params.dry_run.unwrap_or(false);
         let store = self.store.clone();
@@ -95,7 +100,8 @@ impl RagServer {
                 errors: Vec::new(),
             })
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&report)
     }
 
@@ -110,15 +116,17 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ExportVaultParams>,
     ) -> Result<CallToolResult, McpError> {
-        let path = resolve_allowlisted_output_file(&params.path, &self.config.ingest_roots)?;
-        refuse_live_database_target(&path, self.store.path())?;
+        let path = resolve_allowlisted_output_file(&params.path, &self.config.ingest_roots)
+            .map_err(mcp_error)?;
+        refuse_live_database_target(&path, self.store.path()).map_err(mcp_error)?;
         let store = self.store.clone();
         let dry_run = params.dry_run.unwrap_or(true);
         let overwrite = params.overwrite.unwrap_or(false);
         let report = run_blocking("export_vault", move || {
             store.recovery().export_vault(&path, dry_run, overwrite)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&report)
     }
 
@@ -134,21 +142,23 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ImportBundleParams>,
     ) -> Result<CallToolResult, McpError> {
-        let path = resolve_allowlisted_output_file(&params.path, &self.config.ingest_roots)?;
+        let path = resolve_allowlisted_output_file(&params.path, &self.config.ingest_roots)
+            .map_err(mcp_error)?;
         if !path.is_file() {
-            return Err(McpError::from(AppError::not_found(format!(
+            return Err(mcp_error(AppError::not_found(format!(
                 "bundle file '{}'",
                 path.display()
             ))));
         }
-        let format = recovery_format(params.format.as_deref(), &path)?;
-        let policy = ConflictPolicy::parse(params.conflict_policy.as_deref())?;
+        let format = recovery_format(params.format.as_deref(), &path).map_err(mcp_error)?;
+        let policy = ConflictPolicy::parse(params.conflict_policy.as_deref()).map_err(mcp_error)?;
         let read_path = path.clone();
         let bundle = run_blocking("read recovery bundle", move || {
             let input = read_recovery_bundle_file(&read_path)?;
             decode_recovery_bundle(&input, format)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         let dry_run = params.dry_run.unwrap_or(true);
         let mutation_guard = if dry_run {
             None
@@ -156,7 +166,8 @@ impl RagServer {
             Some(
                 self.store
                     .corpus_lane()
-                    .try_corpus_mutation_guard("bundle import")?,
+                    .try_corpus_mutation_guard("bundle import")
+                    .map_err(mcp_error)?,
             )
         };
         let prepared = prepare_recovery_bundle_for_import(
@@ -166,7 +177,8 @@ impl RagServer {
             &self.embedder,
             &self.config,
         )
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         let PreparedRecoveryBundle {
             bundle,
             legacy_bundle_version,
@@ -187,10 +199,17 @@ impl RagServer {
                         && !report.dry_run
                         && (report.documents_overwritten > 0 || report.chunks_inserted > 0)
                 })
-                .await?;
+                .await
+                .map_err(mcp_error)?;
             (outcome.value, Some(outcome.guard), outcome.fts_error)
         } else {
-            (self.blocking("import_bundle", import).await?, None, None)
+            (
+                self.blocking("import_bundle", import)
+                    .await
+                    .map_err(mcp_error)?,
+                None,
+                None,
+            )
         };
         report.legacy_bundle_version = legacy_bundle_version;
         report.legacy_reembed_requested = params.reembed_legacy.unwrap_or(false);

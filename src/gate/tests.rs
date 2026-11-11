@@ -14,7 +14,7 @@ impl Fixture {
         let path = root.join("main.rs");
         std::fs::write(&path, "fn main() {}\n").unwrap();
         let db = tempfile::tempdir().unwrap();
-        let store = Store::open(&db.path().join("gate.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&db.path().join("gate.duckdb")).unwrap();
         store
             .documents()
             .upsert_document(&Document {

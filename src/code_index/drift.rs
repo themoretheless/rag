@@ -447,7 +447,7 @@ mod path_safety_tests {
         std::fs::write(&target, "outside bytes").unwrap();
         let link = root.path().join("a.rs");
         std::os::unix::fs::symlink(&target, &link).unwrap();
-        let store = Store::open(&db.path().join("source.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&db.path().join("source.duckdb")).unwrap();
         store
             .documents()
             .upsert_document(&crate::models::Document {

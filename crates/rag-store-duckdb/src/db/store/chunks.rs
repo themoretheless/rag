@@ -107,7 +107,7 @@ impl Chunks<'_> {
     /// Stored vector for each distinct chunk text of `document_ids`, keyed by
     /// the text: a re-ingest reuses them for chunks whose text is unchanged
     /// (the embedding input is the chunk text alone under one manifest).
-    pub(crate) fn chunk_vectors_by_content(
+    pub fn chunk_vectors_by_content(
         &self,
         document_ids: &[&str],
     ) -> Result<std::collections::HashMap<String, Vec<f32>>> {
@@ -162,7 +162,7 @@ impl Chunks<'_> {
 
     /// Load one representative vector for at most `limit` deterministic
     /// documents without materializing full document bodies or the corpus.
-    pub(crate) fn representative_document_embeddings(
+    pub fn representative_document_embeddings(
         &self,
         limit: usize,
         active_only: bool,
@@ -244,7 +244,7 @@ impl Chunks<'_> {
     }
 
     /// First-chunk embedding of each of `document_ids` that has chunks, in one query.
-    pub(crate) fn first_chunk_embeddings(
+    pub fn first_chunk_embeddings(
         &self,
         document_ids: &[&str],
     ) -> Result<std::collections::BTreeMap<String, Vec<f32>>> {
@@ -286,7 +286,8 @@ impl Chunks<'_> {
     }
 
     /// Load every chunk with its embedding. Test fixture inspector only.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testkit"))]
+    #[doc(hidden)]
     pub fn all_chunks_with_embeddings(&self) -> Result<Vec<Chunk>> {
         let conn = self.store.lock()?;
         let mut stmt = conn.prepare(
@@ -320,7 +321,7 @@ impl Chunks<'_> {
     /// vectors. The chunk generation advances to invalidate vector snapshots;
     /// a clean FTS generation advances with it because indexed text did not
     /// change, while an already-dirty FTS stays dirty.
-    pub(crate) fn update_chunk_embeddings_atomic(
+    pub fn update_chunk_embeddings_atomic(
         &self,
         document_id: &str,
         if_match_revision: i64,
@@ -489,7 +490,7 @@ impl Chunks<'_> {
     }
 
     /// Count chunks without loading their text or vectors.
-    pub(crate) fn count_chunks_for_document(&self, document_id: &str) -> Result<u64> {
+    pub fn count_chunks_for_document(&self, document_id: &str) -> Result<u64> {
         let conn = self.store.lock()?;
         let count: i64 = conn.query_row(
             "SELECT COUNT(*)::BIGINT FROM chunks WHERE document_id = ?",

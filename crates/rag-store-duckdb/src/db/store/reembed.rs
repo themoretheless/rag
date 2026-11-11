@@ -11,7 +11,7 @@ pub struct ReembedProgress<'a> {
 }
 
 impl ReembedProgress<'_> {
-    pub(crate) fn list_reembed_pending_document_ids(
+    pub fn list_reembed_pending_document_ids(
         &self,
         target_fingerprint: &str,
         after: Option<&str>,
@@ -37,7 +37,7 @@ impl ReembedProgress<'_> {
         Ok(ids)
     }
 
-    pub(crate) fn count_reembed_pending(&self, target_fingerprint: &str) -> Result<usize> {
+    pub fn count_reembed_pending(&self, target_fingerprint: &str) -> Result<usize> {
         let conn = self.store.lock()?;
         let count: i64 = conn.query_row(
             "SELECT COUNT(*)::BIGINT FROM documents d \
@@ -51,7 +51,7 @@ impl ReembedProgress<'_> {
         usize::try_from(count).map_err(|_| AppError::db(format!("invalid pending count: {count}")))
     }
 
-    pub(crate) fn count_reembed_done(&self, target_fingerprint: &str) -> Result<usize> {
+    pub fn count_reembed_done(&self, target_fingerprint: &str) -> Result<usize> {
         let conn = self.store.lock()?;
         let count: i64 = conn.query_row(
             "SELECT COUNT(*)::BIGINT FROM reembed_progress WHERE target_fingerprint = ?",
@@ -61,7 +61,7 @@ impl ReembedProgress<'_> {
         usize::try_from(count).map_err(|_| AppError::db(format!("invalid done count: {count}")))
     }
 
-    pub(crate) fn mark_reembed_done(
+    pub fn mark_reembed_done(
         &self,
         target_fingerprint: &str,
         document_id: &str,
@@ -77,7 +77,7 @@ impl ReembedProgress<'_> {
         Ok(())
     }
 
-    pub(crate) fn clear_reembed_progress(&self, target_fingerprint: &str) -> Result<usize> {
+    pub fn clear_reembed_progress(&self, target_fingerprint: &str) -> Result<usize> {
         let conn = self.store.lock()?;
         let removed = conn.execute(
             "DELETE FROM reembed_progress WHERE target_fingerprint = ?",

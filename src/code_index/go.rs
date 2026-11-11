@@ -951,7 +951,7 @@ mod tests {
     fn unindexed_and_stale_nested_manifests_block_parent_module_fallback() {
         use crate::models::Document;
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("boundaries.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&dir.path().join("boundaries.duckdb")).unwrap();
         let doc = |id: &str, path: &str, content: &str| Document {
             id: id.into(),
             uri: format!("file://{path}"),

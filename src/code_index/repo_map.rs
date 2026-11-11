@@ -295,7 +295,7 @@ mod tests {
     #[test]
     fn file_graph_ranks_central_api_and_rounds_do_not_starve_other_files() {
         let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("map.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&root.path().join("map.duckdb")).unwrap();
         put(
             &store,
             "a",
@@ -344,7 +344,7 @@ mod tests {
     #[test]
     fn oversized_early_entries_do_not_hide_later_fitting_symbols() {
         let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("budget.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&root.path().join("budget.duckdb")).unwrap();
         put(
             &store,
             "a",
@@ -391,7 +391,7 @@ mod tests {
     #[test]
     fn projects_with_identical_paths_keep_separate_graphs_and_coverage() {
         let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("scopes.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&root.path().join("scopes.duckdb")).unwrap();
         for (project, name) in [("a", "local"), ("b", "foreign")] {
             scoped_put(
                 &store,
@@ -464,7 +464,7 @@ mod tests {
     #[test]
     fn directory_scope_uses_path_components_and_token_budget_can_return_empty() {
         let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("prefix.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&root.path().join("prefix.duckdb")).unwrap();
         scoped_put(&store, "one", "a", "/src/lib/a.py", "def привет(): pass\n");
         scoped_put(
             &store,
@@ -509,7 +509,8 @@ mod tests {
     #[test]
     fn scoped_snapshot_does_not_decode_foreign_corrupt_payloads() {
         let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("corrupt-foreign.duckdb")).unwrap();
+        let store =
+            crate::testkit::open_test_store(&root.path().join("corrupt-foreign.duckdb")).unwrap();
         scoped_put(&store, "a", "a", "/p/a.py", "def local(): pass\n");
         scoped_put(&store, "b", "b", "/p/b.py", "def foreign(): pass\n");
         crate::code_index::CodeIndex::new(&store)

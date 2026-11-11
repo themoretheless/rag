@@ -24,8 +24,9 @@ use crate::util::{
 
 const EMBEDDING_MIGRATION_FINGERPRINT_PREFIX: &str = "migration-incomplete:";
 
-#[cfg(test)]
-pub(crate) const TEST_FAIL_WIKI_WRITE_AFTER_INDEX_OP: &str = "__test_fail_wiki_write_after_index__";
+#[cfg(any(test, feature = "testkit"))]
+#[doc(hidden)]
+pub const TEST_FAIL_WIKI_WRITE_AFTER_INDEX_OP: &str = "__test_fail_wiki_write_after_index__";
 
 /// Shared SELECT list for document rows (order matches [`rows::document`]).
 pub(super) const DOCUMENT_SELECT: &str = r#"
@@ -73,16 +74,16 @@ pub struct Store {
     vector_cache: Arc<Mutex<super::search::VectorCache>>,
 }
 
-pub(crate) type CorpusMutationGuard = tokio::sync::OwnedRwLockWriteGuard<()>;
+pub type CorpusMutationGuard = tokio::sync::OwnedRwLockWriteGuard<()>;
 
 /// Keeps the embedding identity stable from preflight through document commit.
-pub(crate) struct EmbeddingWriteGuard {
+pub struct EmbeddingWriteGuard {
     _shared: Option<tokio::sync::OwnedRwLockReadGuard<()>>,
     _exclusive: Option<Arc<CorpusMutationGuard>>,
 }
 
 /// Persisted safety outcome for a failed derived-index finalization.
-pub(crate) struct FtsFinalizationFailure {
+pub struct FtsFinalizationFailure {
     pub message: String,
     pub dirty_marker_written: bool,
     pub dirty_marker_error: Option<String>,
@@ -90,7 +91,7 @@ pub(crate) struct FtsFinalizationFailure {
 }
 
 /// Derived state that must stay consistent with a document write.
-pub(crate) enum DocumentDerivedWrite<'a> {
+pub enum DocumentDerivedWrite<'a> {
     /// Keep chunks and graph unchanged (metadata-only update).
     Preserve,
     /// Keep chunks/edges, but refresh the existing document-node label.
@@ -101,7 +102,7 @@ pub(crate) enum DocumentDerivedWrite<'a> {
 
 /// Outcome of an atomic document + derived-state write.
 #[derive(Debug)]
-pub(crate) struct AtomicDocumentWriteResult {
+pub struct AtomicDocumentWriteResult {
     pub revision: i64,
     pub node_id: Option<String>,
     pub edge_count: usize,
@@ -112,14 +113,14 @@ pub(crate) struct AtomicDocumentWriteResult {
 /// `merged` contains every source that was archived or deleted. Raw sources
 /// protected from a requested hard delete are also listed in `raw_protected`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ExactDuplicateMergeResult {
+pub struct ExactDuplicateMergeResult {
     pub merged: Vec<String>,
     pub raw_protected: Vec<String>,
 }
 
 /// Aggregate layer/index health used by diagnostics without loading document bodies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct LayerHealthCounts {
+pub struct LayerHealthCounts {
     pub raw_count: u64,
     pub wiki_count: u64,
     pub index_entry_count: u64,
@@ -146,7 +147,7 @@ pub struct UncompiledRawShelf {
 
 /// The ranked compile debt: the requested top shelves plus how many shelves exist.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct UncompiledShelfQueue {
+pub struct UncompiledShelfQueue {
     pub shelves: Vec<UncompiledRawShelf>,
     pub total_shelves: u64,
 }
@@ -185,7 +186,7 @@ pub(crate) fn compiled_link_exists(alias: &str) -> String {
 /// complete document bodies and every persisted chunk merely to compare a
 /// deterministic, capped set of representative vectors.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DocumentEmbeddingSample {
+pub struct DocumentEmbeddingSample {
     pub document_id: String,
     pub title: String,
     pub wing: Option<String>,
@@ -195,14 +196,14 @@ pub(crate) struct DocumentEmbeddingSample {
 
 /// Inputs for [`Store::write_wiki_document_atomic`].
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct WikiDocumentWrite<'a> {
-    pub(crate) doc: &'a Document,
-    pub(crate) if_match_revision: Option<i64>,
-    pub(crate) chunks: &'a [Chunk],
-    pub(crate) index_entry: &'a WikiIndexEntry,
-    pub(crate) audit_entry: &'a OpsLogEntry,
-    pub(crate) sync: &'a super::sync::WikiSyncWrite<'a>,
-    pub(crate) create_only: bool,
+pub struct WikiDocumentWrite<'a> {
+    pub doc: &'a Document,
+    pub if_match_revision: Option<i64>,
+    pub chunks: &'a [Chunk],
+    pub index_entry: &'a WikiIndexEntry,
+    pub audit_entry: &'a OpsLogEntry,
+    pub sync: &'a super::sync::WikiSyncWrite<'a>,
+    pub create_only: bool,
 }
 
 impl Store {
@@ -216,10 +217,6 @@ impl Store {
 
         let conn = Connection::open(path)?;
         apply_performance_pragmas(&conn)?;
-        // Unit tests open stores without the composition root; give them the
-        // tables a composed process has.
-        #[cfg(test)]
-        crate::storage::register_schema_extensions();
         let extensions = schema::registered_schema_extensions();
         schema::migrate_with(&conn, &extensions)?;
 
@@ -314,15 +311,17 @@ impl Store {
     /// The raw DuckDB connection, for persistence code only.
     ///
     /// Private to `db`: code outside goes through Store methods or takes a
-    /// connection from [`Self::with_conn`] / [`Self::with_tx`]. Test builds keep
-    /// crate visibility so tests can seed and inspect fixtures directly.
-    #[cfg(not(test))]
+    /// connection from [`Self::with_conn`] / [`Self::with_tx`]. Test builds
+    /// (`cfg(test)` or the `testkit` feature the crates above enable for their
+    /// tests) make it public so tests can seed and inspect fixtures directly.
+    #[cfg(not(any(test, feature = "testkit")))]
     pub(in crate::db) fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
         self.lock_connection()
     }
 
-    #[cfg(test)]
-    pub(crate) fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
+    #[cfg(any(test, feature = "testkit"))]
+    #[doc(hidden)]
+    pub fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
         self.lock_connection()
     }
 
@@ -330,10 +329,7 @@ impl Store {
     ///
     /// The connection handle for repository types outside `db` (code
     /// intelligence, analysis tasks, gate, calibration, external DB checks).
-    pub(crate) fn with_conn<T>(
-        &self,
-        work: impl FnOnce(&mut Connection) -> Result<T>,
-    ) -> Result<T> {
+    pub fn with_conn<T>(&self, work: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T> {
         let mut conn = self.lock_connection()?;
         work(&mut conn)
     }
@@ -353,10 +349,7 @@ impl Store {
 
     /// Register `extensions` process-wide and apply any this database has
     /// not had yet. A no-op on a read-only store, which never runs DDL.
-    pub(crate) fn ensure_schema_extensions(
-        &self,
-        extensions: &[schema::SchemaExtension],
-    ) -> Result<()> {
+    pub fn ensure_schema_extensions(&self, extensions: &[schema::SchemaExtension]) -> Result<()> {
         for extension in extensions {
             schema::register_schema_extension(*extension);
         }
@@ -1199,13 +1192,12 @@ pub(crate) use self::chunks::ChunkBody;
 pub use self::chunks::Chunks;
 pub use self::corpus_lane::CorpusLane;
 pub use self::documents::Documents;
-pub(crate) use self::documents::{wiki_backlink_rows, DocumentRef};
+pub use self::documents::{wiki_backlink_rows, DocumentRef};
 pub use self::health::Maintenance;
+pub(crate) use self::manifest::embedding_identity_fingerprint;
 pub use self::manifest::EmbeddingManifestRepo;
-pub(crate) use self::manifest::{
-    embedding_identity_fingerprint, embedding_migration_manifest, get_embedding_manifest_locked,
-};
 pub use self::manifest::{embedding_manifest_from_config, embedding_manifest_matches_config};
+pub use self::manifest::{embedding_migration_manifest, get_embedding_manifest_locked};
 pub use self::ops_log::OpsLog;
 pub use self::reembed::ReembedProgress;
 pub use self::wiki_index::WikiIndexRepo;

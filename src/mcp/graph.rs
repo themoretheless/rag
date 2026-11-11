@@ -1,5 +1,6 @@
 //! Object-graph navigation, tunnels, and graph-expanded retrieval tools.
 
+use crate::mcp::error::mcp_error;
 use std::path::Path;
 
 use rmcp::handler::server::wrapper::Parameters;
@@ -56,7 +57,8 @@ impl RagServer {
             .blocking("get_graph", move |store| {
                 store.graph().get_graph_view(filter)
             })
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         Self::json_result(&view)
     }
 
@@ -155,7 +157,8 @@ impl RagServer {
                 ),
             })
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&report)
     }
 
@@ -182,7 +185,8 @@ impl RagServer {
                 include_tags: params.include_tags,
                 project: params.project,
             })
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         Self::json_result(&view)
     }
 
@@ -199,7 +203,7 @@ impl RagServer {
                 .iter()
                 .all(|key| key.as_deref().is_none_or(|value| value.trim().is_empty()))
             {
-                return Err(McpError::from(AppError::invalid(
+                return Err(mcp_error(AppError::invalid(
                     "get_backlinks requires node_id, document_id, or label",
                 )));
             }
@@ -209,13 +213,14 @@ impl RagServer {
                     params.node_id.as_deref(),
                     params.document_id.as_deref(),
                     params.label.as_deref(),
-                )?
+                )
+                .map_err(mcp_error)?
                 .ok_or_else(|| {
-                    McpError::from(AppError::not_found(
+                    mcp_error(AppError::not_found(
                         "graph node not found (provide node_id, document_id, or label)",
                     ))
                 })?;
-            let view = store.graph().backlinks(&target.id)?;
+            let view = store.graph().backlinks(&target.id).map_err(mcp_error)?;
             Self::json_result(&view)
         })
         .await
@@ -236,10 +241,10 @@ impl RagServer {
         self.blocking_tool("link_nodes", move |store| {
             let rel = params.rel_type.as_deref().unwrap_or("related");
             let weight = params.weight.unwrap_or(1.0);
-            let edge =
-                store
-                    .graph()
-                    .link_nodes(&params.source_id, &params.target_id, rel, weight)?;
+            let edge = store
+                .graph()
+                .link_nodes(&params.source_id, &params.target_id, rel, weight)
+                .map_err(mcp_error)?;
             Self::json_result(&edge)
         })
         .await
@@ -261,12 +266,10 @@ impl RagServer {
                 .or(params.label.as_deref())
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
-            let edge = store.graph().create_tunnel(
-                &params.source_id,
-                &params.target_id,
-                weight,
-                context,
-            )?;
+            let edge = store
+                .graph()
+                .create_tunnel(&params.source_id, &params.target_id, weight, context)
+                .map_err(mcp_error)?;
             Self::json_result(&edge)
         })
         .await
@@ -281,7 +284,10 @@ impl RagServer {
         Parameters(params): Parameters<ListTunnelsParams>,
     ) -> Result<CallToolResult, McpError> {
         self.blocking_tool("list_tunnels", move |store| {
-            let edges = store.graph().list_tunnels(params.node_id.as_deref())?;
+            let edges = store
+                .graph()
+                .list_tunnels(params.node_id.as_deref())
+                .map_err(mcp_error)?;
             Self::json_result(&ListTunnelsResult {
                 count: edges.len() as u64,
                 tunnels: edges,
@@ -299,9 +305,12 @@ impl RagServer {
         Parameters(params): Parameters<DeleteTunnelParams>,
     ) -> Result<CallToolResult, McpError> {
         self.blocking_tool("delete_tunnel", move |store| {
-            let deleted = store.graph().delete_tunnel(&params.tunnel_id)?;
+            let deleted = store
+                .graph()
+                .delete_tunnel(&params.tunnel_id)
+                .map_err(mcp_error)?;
             if !deleted {
-                return Err(McpError::from(AppError::not_found(format!(
+                return Err(mcp_error(AppError::not_found(format!(
                     "tunnel not found: {}",
                     params.tunnel_id
                 ))));
@@ -327,7 +336,8 @@ impl RagServer {
             let max_nodes = params.max_nodes.unwrap_or(DEFAULT_TRAVERSAL_MAX_NODES);
             let view = store
                 .graph()
-                .follow_tunnels(&params.node_id, depth, max_nodes)?;
+                .follow_tunnels(&params.node_id, depth, max_nodes)
+                .map_err(mcp_error)?;
             Self::json_result(&view)
         })
         .await
@@ -342,12 +352,15 @@ impl RagServer {
         Parameters(params): Parameters<FindTunnelsParams>,
     ) -> Result<CallToolResult, McpError> {
         self.blocking_tool("find_tunnels", move |store| {
-            let edges = store.graph().find_tunnels(
-                params.node_id.as_deref(),
-                params.other_node_id.as_deref(),
-                params.wing.as_deref(),
-                params.limit,
-            )?;
+            let edges = store
+                .graph()
+                .find_tunnels(
+                    params.node_id.as_deref(),
+                    params.other_node_id.as_deref(),
+                    params.wing.as_deref(),
+                    params.limit,
+                )
+                .map_err(mcp_error)?;
             Self::json_result(&ListTunnelsResult {
                 count: edges.len() as u64,
                 tunnels: edges,
@@ -365,7 +378,8 @@ impl RagServer {
     pub(super) async fn graph_stats(&self) -> Result<CallToolResult, McpError> {
         let body = self
             .blocking("graph_stats", |store| store.graph().graph_stats())
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         Self::json_result(&body)
     }
 
@@ -394,7 +408,7 @@ impl RagServer {
                     .map(|s| s.trim().is_empty())
                     .unwrap_or(true)
             {
-                return Err(McpError::from(AppError::invalid(
+                return Err(mcp_error(AppError::invalid(
                     "find_node requires node_id, document_id, or label",
                 )));
             }
@@ -418,18 +432,24 @@ impl RagServer {
 
             if only_label {
                 let label = params.label.as_deref().unwrap_or("").trim();
-                let nodes = store.graph().find_nodes_by_label(label)?;
+                let nodes = store
+                    .graph()
+                    .find_nodes_by_label(label)
+                    .map_err(mcp_error)?;
                 return Self::json_result(&FindNodeResult {
                     node: nodes.first().cloned(),
                     matches: nodes,
                 });
             }
 
-            let node = store.graph().resolve_node(
-                params.node_id.as_deref(),
-                params.document_id.as_deref(),
-                params.label.as_deref(),
-            )?;
+            let node = store
+                .graph()
+                .resolve_node(
+                    params.node_id.as_deref(),
+                    params.document_id.as_deref(),
+                    params.label.as_deref(),
+                )
+                .map_err(mcp_error)?;
             let matches = match &node {
                 Some(n) => vec![n.clone()],
                 None => Vec::new(),
@@ -447,8 +467,9 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<GraphExpandSearchParams>,
     ) -> Result<CallToolResult, McpError> {
-        let corpus_guard = acquire_corpus_search_guard(&self.store, SearchMode::Vec)?;
-        self.require_vec_compatible()?;
+        let corpus_guard =
+            acquire_corpus_search_guard(&self.store, SearchMode::Vec).map_err(mcp_error)?;
+        self.require_vec_compatible().map_err(mcp_error)?;
 
         let top_k = params
             .top_k
@@ -457,7 +478,11 @@ impl RagServer {
         let depth = params.depth.unwrap_or(1);
         let max_nodes = params.max_nodes.unwrap_or(DEFAULT_TRAVERSAL_MAX_NODES);
 
-        let query_vecs = self.embedder.embed(&[params.query]).await?;
+        let query_vecs = self
+            .embedder
+            .embed(&[params.query])
+            .await
+            .map_err(mcp_error)?;
         let query_emb = query_vecs.into_iter().next().ok_or_else(|| {
             McpError::internal_error("embedder returned no vector for query", None)
         })?;
@@ -474,7 +499,8 @@ impl RagServer {
                 },
                 &corpus_guard,
             )
-        })?;
+        })
+        .map_err(mcp_error)?;
 
         let mut merged_nodes: std::collections::HashMap<String, GraphNode> =
             std::collections::HashMap::new();
@@ -493,7 +519,8 @@ impl RagServer {
                 .blocking("find document node", move |store| {
                     store.graph().find_node_by_document_id(&document_id)
                 })
-                .await?
+                .await
+                .map_err(mcp_error)?
             else {
                 continue;
             };
@@ -505,7 +532,8 @@ impl RagServer {
                 .blocking("graph neighbors", move |store| {
                     store.graph().neighbors(&node_id, depth, max_nodes)
                 })
-                .await?;
+                .await
+                .map_err(mcp_error)?;
             for n in local.nodes {
                 merged_nodes.entry(n.id.clone()).or_insert(n);
             }

@@ -4,7 +4,7 @@ use super::*;
 
 /// Identity of a document without its body or metadata.
 #[derive(Debug, Clone)]
-pub(crate) struct DocumentRef {
+pub struct DocumentRef {
     pub id: String,
     pub uri: String,
     pub layer: String,
@@ -212,7 +212,7 @@ impl Documents<'_> {
     }
 
     /// Current `revision` of one document, without loading its body.
-    pub(crate) fn document_revision(&self, id: &str) -> Result<Option<i64>> {
+    pub fn document_revision(&self, id: &str) -> Result<Option<i64>> {
         let conn = self.store.lock()?;
         let mut stmt = conn.prepare_cached("SELECT revision FROM documents WHERE id = ?")?;
         let mut rows = stmt.query(params![id])?;
@@ -223,7 +223,7 @@ impl Documents<'_> {
     }
 
     /// `(id, uri)` of one document, without loading its body.
-    pub(crate) fn document_id_and_uri(&self, id: &str) -> Result<Option<(String, String)>> {
+    pub fn document_id_and_uri(&self, id: &str) -> Result<Option<(String, String)>> {
         let conn = self.store.lock()?;
         let mut stmt = conn.prepare_cached("SELECT id, uri FROM documents WHERE id = ?")?;
         let mut rows = stmt.query(params![id])?;
@@ -234,7 +234,7 @@ impl Documents<'_> {
     }
 
     /// `(id, uri, layer)` of every document ordered by `created_at`, without bodies.
-    pub(crate) fn list_document_refs(&self) -> Result<Vec<DocumentRef>> {
+    pub fn list_document_refs(&self) -> Result<Vec<DocumentRef>> {
         let conn = self.store.lock()?;
         let mut stmt =
             conn.prepare("SELECT id, uri, layer FROM documents ORDER BY created_at ASC")?;
@@ -248,7 +248,7 @@ impl Documents<'_> {
     }
 
     /// Count documents without loading document bodies.
-    pub(crate) fn count_documents(&self) -> Result<usize> {
+    pub fn count_documents(&self) -> Result<usize> {
         let conn = self.store.lock()?;
         let count: i64 = conn.query_row("SELECT COUNT(*)::BIGINT FROM documents", [], |row| {
             row.get(0)
@@ -257,7 +257,7 @@ impl Documents<'_> {
     }
 
     /// Count documents in one layer without loading their bodies.
-    pub(crate) fn count_documents_by_layer(&self, layer: &str) -> Result<usize> {
+    pub fn count_documents_by_layer(&self, layer: &str) -> Result<usize> {
         let conn = self.store.lock()?;
         let count: i64 = conn.query_row(
             "SELECT COUNT(*)::BIGINT FROM documents WHERE layer = ?",
@@ -268,7 +268,7 @@ impl Documents<'_> {
     }
 
     /// Count documents eligible for a graph rebuild.
-    pub(crate) fn count_graph_rebuild_candidates(&self, dirty_only: bool) -> Result<usize> {
+    pub fn count_graph_rebuild_candidates(&self, dirty_only: bool) -> Result<usize> {
         let conn = self.store.lock()?;
         let count: i64 = conn.query_row(
             r#"
@@ -286,7 +286,7 @@ impl Documents<'_> {
     }
 
     /// Load one deterministic bounded page of graph rebuild candidates.
-    pub(crate) fn list_graph_rebuild_candidates_after(
+    pub fn list_graph_rebuild_candidates_after(
         &self,
         dirty_only: bool,
         after_id: Option<&str>,
@@ -312,7 +312,7 @@ impl Documents<'_> {
     }
 
     /// Load one deterministic bounded page of document ids for full-corpus work.
-    pub(crate) fn list_document_ids_after(
+    pub fn list_document_ids_after(
         &self,
         after_id: Option<&str>,
         limit: usize,
@@ -333,7 +333,7 @@ impl Documents<'_> {
     }
 
     /// Count chunks attached to the first `limit` documents in keyset order.
-    pub(crate) fn count_chunks_for_document_limit(&self, limit: usize) -> Result<usize> {
+    pub fn count_chunks_for_document_limit(&self, limit: usize) -> Result<usize> {
         if limit == 0 {
             return Ok(0);
         }
@@ -357,7 +357,7 @@ impl Documents<'_> {
     /// Count and return a bounded deterministic prefix of persisted-hash matches.
     ///
     /// Callers must still validate actual body hashes before mutation.
-    pub(crate) fn exact_duplicate_source_ids(
+    pub fn exact_duplicate_source_ids(
         &self,
         hash: &str,
         keep_id: &str,
@@ -389,10 +389,7 @@ impl Documents<'_> {
     /// Count and load only the bounded active, user-organizable unscoped set.
     /// Full document bodies are selected because the optional LLM workflow may
     /// inspect them later, but the SQL limit is applied before rows reach Rust.
-    pub(crate) fn list_active_unscoped_documents(
-        &self,
-        limit: usize,
-    ) -> Result<(usize, Vec<Document>)> {
+    pub fn list_active_unscoped_documents(&self, limit: usize) -> Result<(usize, Vec<Document>)> {
         let conn = self.store.lock()?;
         let predicate = format!(
             r#"
@@ -423,10 +420,7 @@ impl Documents<'_> {
     ///
     /// The anti-join and limit both run in DuckDB so doctor repair never
     /// materializes the whole corpus or performs one chunk query per document.
-    pub(crate) fn list_documents_missing_chunks(
-        &self,
-        limit: usize,
-    ) -> Result<(usize, Vec<Document>)> {
+    pub fn list_documents_missing_chunks(&self, limit: usize) -> Result<(usize, Vec<Document>)> {
         let conn = self.store.lock()?;
         let predicate = r#"
             LOWER(COALESCE(NULLIF(TRIM(layer), ''), 'raw')) <> 'schema'
@@ -464,10 +458,7 @@ impl Documents<'_> {
 
     /// Like [`Self::list_documents_by_layer`], with an empty `content`: for
     /// corpus-wide scans that only need ids, uris, titles and timestamps.
-    pub(crate) fn list_documents_by_layer_without_body(
-        &self,
-        layer: &str,
-    ) -> Result<Vec<Document>> {
+    pub fn list_documents_by_layer_without_body(&self, layer: &str) -> Result<Vec<Document>> {
         let conn = self.store.lock()?;
         let sql = format!(
             "SELECT {} FROM documents WHERE layer = ? ORDER BY created_at ASC",
@@ -478,7 +469,7 @@ impl Documents<'_> {
     }
 
     /// `content` of each of `ids` that exists, in one query.
-    pub(crate) fn document_contents(
+    pub fn document_contents(
         &self,
         ids: &[&str],
     ) -> Result<std::collections::HashMap<String, String>> {
@@ -815,8 +806,9 @@ impl Documents<'_> {
         self.update_document_meta_with_identity(id, update, None)
     }
 
-    #[cfg(test)]
-    pub(crate) fn update_document_meta_for_sync_test(
+    #[cfg(any(test, feature = "testkit"))]
+    #[doc(hidden)]
+    pub fn update_document_meta_for_sync_test(
         &self,
         id: &str,
         update: &DocumentMetaUpdate,
@@ -851,7 +843,7 @@ impl Documents<'_> {
     ///
     /// Ingestion uses this seam to finish any required chunking/embedding before
     /// passing the prepared document to [`Self::write_document_atomic`].
-    pub(crate) fn prepare_document_meta_update(
+    pub fn prepare_document_meta_update(
         &self,
         id: &str,
         update: &DocumentMetaUpdate,
@@ -899,7 +891,7 @@ impl Documents<'_> {
     /// Callers must finish chunking and embedding before entering this method.
     /// Embedding JSON is also prepared before the database lock/transaction so
     /// serialization failures cannot leave a partially-updated document.
-    pub(crate) fn write_document_atomic(
+    pub fn write_document_atomic(
         &self,
         doc: &Document,
         if_match_revision: Option<i64>,
@@ -913,7 +905,7 @@ impl Documents<'_> {
     ///
     /// Either all three land or none do: a graph or ops-log failure leaves the
     /// previous document, graph and log untouched.
-    pub(crate) fn write_unchunked_document_with_audit(
+    pub fn write_unchunked_document_with_audit(
         &self,
         doc: &Document,
         audit: &OpsLogEntry,
@@ -933,7 +925,7 @@ impl Documents<'_> {
 
     /// Persist a synchronized source document and its manifest ownership in the
     /// same transaction as chunks and graph state.
-    pub(crate) fn write_source_document_atomic(
+    pub fn write_source_document_atomic(
         &self,
         doc: &Document,
         if_match_revision: Option<i64>,
@@ -1000,7 +992,7 @@ impl Documents<'_> {
 
     /// Persist a wiki document and its chunks, graph, catalog row, and audit
     /// event, replication journal and applied cursor under one transaction.
-    pub(crate) fn write_wiki_document_atomic(
+    pub fn write_wiki_document_atomic(
         &self,
         write: WikiDocumentWrite<'_>,
     ) -> Result<(Option<AtomicDocumentWriteResult>, i64)> {
@@ -1091,7 +1083,7 @@ impl Documents<'_> {
             None,
         )?;
         upsert_wiki_index_entry_locked(&tx, index_entry)?;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "testkit"))]
         if audit_entry.op == TEST_FAIL_WIKI_WRITE_AFTER_INDEX_OP {
             return Err(AppError::db(
                 "injected wiki write failure after catalog update",
@@ -1099,7 +1091,7 @@ impl Documents<'_> {
         }
         append_ops_log_locked(&tx, audit_entry)?;
         let sequence = crate::db::sync::commit_sync_write_locked(&tx, sync, &local_event)?;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "testkit"))]
         if audit_entry.op == "__test_fail_wiki_after_sync_journal__" {
             return Err(AppError::db("injected wiki failure after sync journal"));
         }
@@ -1122,7 +1114,7 @@ impl Documents<'_> {
     /// Every target must exist and an id may occur only once across the two
     /// lists. Any validation or storage failure rolls back the entire group, so
     /// a compression caller never loses a partial prefix without a report.
-    pub(crate) fn apply_document_dispositions_atomic(
+    pub fn apply_document_dispositions_atomic(
         &self,
         delete_ids: &[String],
         tombstone_ids: &[String],
@@ -1184,7 +1176,7 @@ impl Documents<'_> {
     /// `content_hash` values and caller-provided ids are never trusted as proof
     /// of equality. All sources are validated before the first mutation and any
     /// later storage failure rolls the whole group back.
-    pub(crate) fn merge_exact_duplicates_atomic(
+    pub fn merge_exact_duplicates_atomic(
         &self,
         keep_id: &str,
         source_ids: &[String],
@@ -1311,7 +1303,7 @@ impl Documents<'_> {
 
     /// Atomically remove every document/derived row and manifest ownership for
     /// one filesystem source. Returns `(documents_deleted, manifest_deleted)`.
-    pub(crate) fn delete_source_state(&self, source: &str) -> Result<(u64, bool)> {
+    pub fn delete_source_state(&self, source: &str) -> Result<(u64, bool)> {
         self.delete_source_state_with(source, |_| Ok(()))
     }
 

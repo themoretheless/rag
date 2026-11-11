@@ -15,7 +15,7 @@ fn test_state(name: &str) -> HttpState {
         embedding_dims: 16,
         ..Config::for_tests()
     };
-    let store = Arc::new(crate::db::Store::open(&config.db_path).unwrap());
+    let store = Arc::new(crate::testkit::open_test_store(&config.db_path).unwrap());
     HttpState::from_context(
         crate::context::AppContext::with_store(store, Arc::new(MockEmbedder::new(16)), config),
         false,

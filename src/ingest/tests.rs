@@ -113,7 +113,7 @@ impl EmbeddingProvider for RecordingEmbedder {
 async fn reingest_reuses_vectors_of_unchanged_chunks() {
     let temp = tempfile::tempdir().expect("tempdir");
     let config = test_config(temp.path().join("reuse.duckdb"));
-    let store = Store::open(&config.db_path).expect("open");
+    let store = crate::testkit::open_test_store(&config.db_path).expect("open");
     let recording = Arc::new(RecordingEmbedder {
         inner: MockEmbedder::new(8),
         texts: std::sync::Mutex::new(Vec::new()),
@@ -198,7 +198,7 @@ async fn ingest_file_delegates_to_atomic_pipeline_with_canonical_source() {
     std::fs::write(&source, "# Source\n\nBody links to [[Target]].").expect("write source");
     let mut config = test_config(temp.path().join("ingest-file.duckdb"));
     config.ingest_roots = vec![temp.path().to_path_buf()];
-    let store = Store::open(&config.db_path).expect("store");
+    let store = crate::testkit::open_test_store(&config.db_path).expect("store");
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
 
     let result = IngestService::new(&store, &embedder, &config)
@@ -268,7 +268,7 @@ async fn ingest_file_delegates_to_atomic_pipeline_with_canonical_source() {
 async fn source_manifest_failure_rolls_back_document_and_derived_state() {
     let temp = tempfile::tempdir().expect("tempdir");
     let config = test_config(temp.path().join("source-manifest-atomic.duckdb"));
-    let store = Store::open(&config.db_path).expect("store");
+    let store = crate::testkit::open_test_store(&config.db_path).expect("store");
     store
         .lock()
         .unwrap()
@@ -309,7 +309,7 @@ async fn source_manifest_failure_rolls_back_document_and_derived_state() {
 async fn reingest_preserves_organization_and_omitted_metadata() {
     let temp = tempfile::tempdir().unwrap();
     let config = test_config(temp.path().join("preserve.duckdb"));
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
     let service = IngestService::new(&store, &embedder, &config);
     let inserted = service.ingest(command("Original source")).await.unwrap();
@@ -348,7 +348,7 @@ async fn reingest_preserves_organization_and_omitted_metadata() {
 async fn embedding_failure_leaves_document_chunks_and_graph_unchanged() {
     let temp = tempfile::tempdir().expect("tempdir");
     let config = test_config(temp.path().join("ingest-atomic.duckdb"));
-    let store = Store::open(&config.db_path).expect("store");
+    let store = crate::testkit::open_test_store(&config.db_path).expect("store");
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
     let service = IngestService::new(&store, &embedder, &config);
     let inserted = service
@@ -443,7 +443,7 @@ async fn embedding_failure_leaves_document_chunks_and_graph_unchanged() {
 async fn concurrent_initial_ingest_never_creates_duplicate_uri_owners() {
     let temp = tempfile::tempdir().expect("tempdir");
     let config = Arc::new(test_config(temp.path().join("initial-race.duckdb")));
-    let store = Arc::new(Store::open(&config.db_path).expect("store"));
+    let store = Arc::new(crate::testkit::open_test_store(&config.db_path).expect("store"));
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(BarrierEmbedder {
         barrier: Arc::new(tokio::sync::Barrier::new(2)),
         inner: MockEmbedder::new(8),
@@ -481,7 +481,7 @@ async fn concurrent_initial_ingest_never_creates_duplicate_uri_owners() {
 async fn concurrent_updates_use_the_revision_observed_before_embedding() {
     let temp = tempfile::tempdir().expect("tempdir");
     let config = Arc::new(test_config(temp.path().join("update-race.duckdb")));
-    let store = Arc::new(Store::open(&config.db_path).expect("store"));
+    let store = Arc::new(crate::testkit::open_test_store(&config.db_path).expect("store"));
     let initial_embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
     IngestService::new(store.as_ref(), &initial_embedder, config.as_ref())
         .ingest(command("initial"))
@@ -527,7 +527,7 @@ async fn concurrent_updates_use_the_revision_observed_before_embedding() {
 async fn ingest_url_disabled_without_allowlist() {
     let temp = tempfile::tempdir().unwrap();
     let config = test_config(temp.path().join("url-disabled.duckdb"));
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
     let fetcher = MockFetcher {
         page: html_page("https://docs.rs/x", "<p>body</p>"),
@@ -550,7 +550,7 @@ async fn ingest_url_disabled_without_allowlist() {
 async fn ingest_url_enforces_allowlist_on_request_and_redirect() {
     let temp = tempfile::tempdir().unwrap();
     let config = url_test_config(temp.path().join("url-allow.duckdb"), &["docs.rs"]);
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
     let service = IngestService::new(&store, &embedder, &config);
 
@@ -589,7 +589,7 @@ async fn ingest_url_enforces_allowlist_on_request_and_redirect() {
 async fn ingest_url_extracts_html_and_is_searchable_and_deduped() {
     let temp = tempfile::tempdir().unwrap();
     let config = url_test_config(temp.path().join("url-ingest.duckdb"), &["docs.rs"]);
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
     let service = IngestService::new(&store, &embedder, &config);
     let html = r#"<!DOCTYPE html><html><body>

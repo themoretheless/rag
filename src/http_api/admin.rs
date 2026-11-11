@@ -410,7 +410,7 @@ mod tests {
             embedding_dims: 8,
             ..Config::for_tests()
         };
-        let store = Arc::new(Store::open(&config.db_path).unwrap());
+        let store = Arc::new(crate::testkit::open_test_store(&config.db_path).unwrap());
         for (op, prefix, agent) in [
             ("ingest", "INGEST", Some("alice")),
             ("wiki_write", "WIKI", Some("alice")),
@@ -464,7 +464,7 @@ mod tests {
             embedding_dims: 16,
             ..Config::for_tests()
         };
-        let store = Store::open(&config.db_path).unwrap();
+        let store = crate::testkit::open_test_store(&config.db_path).unwrap();
         store
             .embedding_manifest()
             .ensure_embedding_manifest(&config)

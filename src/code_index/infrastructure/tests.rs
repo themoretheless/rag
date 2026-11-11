@@ -7,7 +7,7 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("infra.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&dir.path().join("infra.duckdb")).unwrap();
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/code-intelligence/infrastructure");
         let mut sources = BTreeMap::new();

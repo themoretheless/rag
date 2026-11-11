@@ -59,7 +59,7 @@ fn assert_finalization_failure_audit(
 fn level_out_of_range_rejected() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("bad.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let cfg = test_config(path, 8);
     let mut opts = CompressOptions::from_config(&cfg);
     opts.level = 9;
@@ -70,7 +70,7 @@ fn level_out_of_range_rejected() {
 fn l0_dry_run_and_apply() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("l0.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let cfg = test_config(path, 8);
     seed_doc(&store, "d1", "A", "hello world body", "wiki", vec![0.1; 8]);
 
@@ -99,7 +99,7 @@ fn l0_dry_run_and_apply() {
 fn l1_merges_exact_hash_wiki_keeps_one() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("l1.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let cfg = test_config(path, 8);
     let body = "identical wiki body for compress";
     seed_doc(&store, "w1", "Keep", body, "wiki", vec![0.2; 8]);
@@ -150,7 +150,7 @@ fn l1_merges_exact_hash_wiki_keeps_one() {
 fn l1_raw_dups_tombstone_without_allow_raw_delete() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("raw.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let cfg = test_config(path, 8);
     let body = "raw twin content";
     seed_doc(&store, "r1", "RawA", body, "raw", vec![0.3; 8]);
@@ -184,7 +184,7 @@ fn l1_raw_dups_tombstone_without_allow_raw_delete() {
 fn l1_raw_hard_delete_with_flag() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("rawdel.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let cfg = test_config(path, 8);
     let body = "raw twin hard delete";
     seed_doc(&store, "r1", "RawA", body, "raw", vec![0.3; 8]);
@@ -203,7 +203,7 @@ fn l1_raw_hard_delete_with_flag() {
 fn l2_lists_near_dups_without_confirm() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("l2list.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let cfg = test_config(path, 8);
     // Same embedding → cosine 1.0
     let emb = vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
@@ -238,7 +238,7 @@ fn l2_lists_near_dups_without_confirm() {
 fn l2_merges_near_dups_with_confirm() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("l2merge.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let cfg = test_config(path, 8);
     let emb = vec![0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
     seed_doc(
@@ -270,7 +270,7 @@ fn l2_merges_near_dups_with_confirm() {
 fn l2_apply_fails_before_any_mutation_during_embedding_migration() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("l2-migration-incomplete.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let cfg = test_config(path, 8);
     let emb = vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
     seed_doc(
@@ -332,7 +332,7 @@ fn l2_apply_fails_before_any_mutation_during_embedding_migration() {
 fn l1_dry_run_does_not_delete() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("l1dry.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let cfg = test_config(path, 8);
     let body = "dup dry run body";
     seed_doc(&store, "w1", "A", body, "wiki", vec![0.1; 8]);
@@ -358,7 +358,7 @@ fn l1_dry_run_does_not_delete() {
 fn final_fts_failure_returns_durable_merge_report_and_terminal_ops_log() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("final-fts-failure.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let mut cfg = test_config(path, 8);
     let body = "same durable compression body";
     seed_doc(&store, "keep", "Keep", body, "wiki", vec![0.2; 8]);
@@ -396,7 +396,7 @@ fn final_fts_failure_returns_durable_merge_report_and_terminal_ops_log() {
 fn final_fts_panic_returns_durable_merge_report_and_terminal_ops_log() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("final-fts-panic.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let mut cfg = test_config(path, 8);
     let body = "same durable compression panic body";
     seed_doc(&store, "keep", "Keep", body, "wiki", vec![0.2; 8]);
@@ -429,7 +429,7 @@ fn final_fts_panic_returns_durable_merge_report_and_terminal_ops_log() {
 fn final_fts_panic_without_merge_preserves_noop_report_and_audit() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("final-fts-panic-noop.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let mut cfg = test_config(path, 8);
     seed_doc(
         &store,

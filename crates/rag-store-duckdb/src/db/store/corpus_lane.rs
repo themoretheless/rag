@@ -16,7 +16,7 @@ impl CorpusLane<'_> {
     /// Source synchronization and guarded bulk mutations own the write side
     /// through their derived-index refresh. Searches briefly
     /// own the read side, so a mutation cannot race past their idle check.
-    pub(crate) fn corpus_mutation_lane(&self) -> Arc<tokio::sync::RwLock<()>> {
+    pub fn corpus_mutation_lane(&self) -> Arc<tokio::sync::RwLock<()>> {
         self.store.corpus_mutation_lane.clone()
     }
 
@@ -25,7 +25,7 @@ impl CorpusLane<'_> {
     /// A writer can be blocked by another corpus mutation or by an admitted
     /// guarded search. Keeping this diagnostic in the store prevents
     /// each transport workflow from inventing a stale source-sync-only reason.
-    pub(crate) fn try_corpus_mutation_guard(&self, operation: &str) -> Result<CorpusMutationGuard> {
+    pub fn try_corpus_mutation_guard(&self, operation: &str) -> Result<CorpusMutationGuard> {
         self.store.corpus_mutation_lane
             .clone()
             .try_write_owned()
@@ -52,7 +52,7 @@ impl CorpusLane<'_> {
     /// Only clones of this returned store may reuse the lease; ordinary clones of
     /// the original store still see a busy corpus. A guard for another store is
     /// never accepted, even when the databases happen to use the same path.
-    pub(crate) fn with_corpus_mutation_guard(&self, guard: CorpusMutationGuard) -> Result<Store> {
+    pub fn with_corpus_mutation_guard(&self, guard: CorpusMutationGuard) -> Result<Store> {
         if !Arc::ptr_eq(
             CorpusMutationGuard::rwlock(&guard),
             &self.store.corpus_mutation_lane,
@@ -67,7 +67,7 @@ impl CorpusLane<'_> {
     }
 
     /// Enter a bulk mutation, or reuse the explicitly inherited exclusive lease.
-    pub(crate) fn try_corpus_mutation_scope(&self, operation: &str) -> Result<Store> {
+    pub fn try_corpus_mutation_scope(&self, operation: &str) -> Result<Store> {
         if self.store.corpus_mutation_guard.is_some() {
             return Ok(self.store.clone());
         }
@@ -77,7 +77,7 @@ impl CorpusLane<'_> {
     /// Validate an embedding write while holding the corpus identity stable.
     /// New/empty stores may initialize their manifest; existing vectors without
     /// a manifest and incomplete/mismatched migrations remain fail-closed.
-    pub(crate) fn try_embedding_write_guard(
+    pub fn try_embedding_write_guard(
         &self,
         config: &impl EmbeddingIdentity,
         operation: &str,
@@ -129,7 +129,7 @@ impl CorpusLane<'_> {
     /// This method is intentionally safe to call from detached blocking work:
     /// even if the transport waiter disappears, operators can still distinguish
     /// committed corpus work, a no-op failure, and a clean terminal success.
-    pub(crate) fn record_fts_finalization_failure(
+    pub fn record_fts_finalization_failure(
         &self,
         operation: &str,
         durable_mutation_committed: bool,

@@ -2,7 +2,7 @@ use super::*;
 use crate::models::{Chunk, Document};
 fn store(source: &str) -> (tempfile::TempDir, Store) {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&dir.path().join("code.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&dir.path().join("code.duckdb")).unwrap();
     store
         .documents()
         .upsert_document(&Document {

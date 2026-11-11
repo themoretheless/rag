@@ -4,7 +4,7 @@ use crate::models::{Chunk, Document};
 fn setup() -> (tempfile::TempDir, Store, Config) {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("status.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let config = Config {
         db_path: path,
         embedding_dims: 2,

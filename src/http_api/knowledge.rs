@@ -237,7 +237,7 @@ mod tests {
     use crate::models::Document;
     fn fixture() -> (Store, Document) {
         let root = crate::testkit::scratch_dir();
-        let store = Store::open(&root.join("knowledge.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&root.join("knowledge.duckdb")).unwrap();
         let doc = Document {
             id: "wiki-a".into(),
             uri: "wiki://alpha".into(),

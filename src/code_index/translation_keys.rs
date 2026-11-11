@@ -484,7 +484,7 @@ mod query_tests {
     #[test]
     fn key_query_links_template_and_php_candidates_with_project_freshness_and_count_guards() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("keys.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&dir.path().join("keys.duckdb")).unwrap();
         put(
             &store,
             "php",
@@ -575,7 +575,7 @@ mod cache_tests {
     #[test]
     fn missing_per_document_capability_is_stale_even_with_current_global_format() {
         let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("cache.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&root.path().join("cache.duckdb")).unwrap();
         store
             .documents()
             .upsert_document(&Document {

@@ -307,7 +307,7 @@ mod tests {
     #[test]
     fn key_impact_seeds_all_php_owners_and_ownerless_template_files_before_limits() {
         let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("key.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&root.path().join("key.duckdb")).unwrap();
         put(&store,"php","/p/api.php","p","<?php function render(){Translate('key');} function serve(){render();} function main(){serve();}");
         put(&store, "view", "/p/view.html", "p", "%{key}");
         put(
@@ -360,7 +360,7 @@ mod tests {
     #[test]
     fn route_impact_seeds_source_owners_not_registered_handler_candidates() {
         let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("url.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&root.path().join("url.duckdb")).unwrap();
         put(
             &store,
             "api",
@@ -425,7 +425,7 @@ mod tests {
     #[test]
     fn literal_identity_disambiguation_precedes_path_kind_and_stale_bridges_are_excluded() {
         let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("scope.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&root.path().join("scope.duckdb")).unwrap();
         put(
             &store,
             "a",
@@ -490,7 +490,7 @@ mod tests {
     #[test]
     fn sql_impact_identity_includes_schema_only_candidates_before_source_and_access_filters() {
         let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("sql.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&root.path().join("sql.duckdb")).unwrap();
         put(
             &store,
             "read",
@@ -587,7 +587,7 @@ mod extra_tests {
     #[test]
     fn every_owner_remains_a_seed_when_direct_output_is_truncated() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("roots.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&dir.path().join("roots.duckdb")).unwrap();
         put(&store,"a","/p/a.php","<?php function one(){Translate('key');} function two(){Translate('key');} function use_one(){one();} function use_two(){two();}");
         crate::code_index::CodeIndex::new(&store)
             .index_code()
@@ -612,7 +612,7 @@ mod extra_tests {
     #[test]
     fn parse_error_callers_cannot_bridge_literal_impact_to_otherwise_valid_files() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("errors.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&dir.path().join("errors.duckdb")).unwrap();
         put(
             &store,
             "client",
@@ -661,7 +661,7 @@ mod selector_tests {
     #[test]
     fn long_captured_endpoint_target_roundtrips_references_symbol_and_impact() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("long-url.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&dir.path().join("long-url.duckdb")).unwrap();
         let url = format!("/{}", "x".repeat(3000));
         store
             .documents()

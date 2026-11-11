@@ -24,7 +24,7 @@ pub mod kg;
 pub mod knowledge;
 #[cfg(test)]
 mod n_plus_one_timing_tests;
-pub(crate) mod payload_kv;
+pub mod payload_kv;
 pub mod recovery;
 pub mod review;
 mod rows;
@@ -32,7 +32,7 @@ pub mod schema;
 pub mod search;
 mod source_dedupe;
 mod source_manifest;
-pub(crate) mod sql;
+pub mod sql;
 mod sql_types;
 pub mod store;
 pub mod sync;

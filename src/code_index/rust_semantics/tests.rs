@@ -466,7 +466,7 @@ fn rust_exhausted_impl_search_never_publishes_a_partial_unique_target() {
 #[test]
 fn rust_format_31_payload_is_stale_and_refreshable_not_a_decode_failure() {
     let directory = tempfile::tempdir().unwrap();
-    let store = Store::open(&directory.path().join("legacy.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&directory.path().join("legacy.duckdb")).unwrap();
     let document = crate::models::Document {
         id: "legacy".into(),
         uri: "file:///p/src/lib.rs".into(),

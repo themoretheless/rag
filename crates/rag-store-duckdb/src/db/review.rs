@@ -94,7 +94,7 @@ pub fn update(
 }
 
 /// Called with the document transaction open. Any later error rolls acceptance back.
-pub(crate) fn accept_locked(
+pub fn accept_locked(
     conn: &Connection,
     doc: &Document,
     audit: &crate::models::OpsLogEntry,

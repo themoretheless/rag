@@ -1261,7 +1261,7 @@ mod tests {
     #[test]
     fn cargo_manifest_only_updates_rebind_and_stale_boundary_blocks_links() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("cargo.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&dir.path().join("cargo.duckdb")).unwrap();
         let document =
             |id: &str, path: &str, source: &str, revision: i64| crate::models::Document {
                 id: id.into(),

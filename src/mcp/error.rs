@@ -7,33 +7,34 @@ use rmcp::ErrorData as McpError;
 
 use crate::error::AppError;
 
-impl From<AppError> for McpError {
-    /// Every error carries `data.code` from [`AppError::code`], so agents can
-    /// tell a CAS `CONFLICT` from `INVALID_REQUEST` even though both use the
-    /// JSON-RPC `invalid_params` class. `Busy` additionally carries retry hints.
-    fn from(err: AppError) -> Self {
-        let code = err.code();
-        let data = Some(serde_json::json!({ "code": code }));
-        match err {
-            AppError::NotFound(msg) => McpError::resource_not_found(msg, data),
-            AppError::Config(msg)
-            | AppError::Invalid(msg)
-            | AppError::Timeout(msg)
-            | AppError::Chunking(msg)
-            | AppError::Embeddings(msg)
-            | AppError::Conflict(msg)
-            | AppError::Forbidden(msg) => McpError::invalid_params(msg, data),
-            AppError::Busy(msg) => McpError::internal_error(
-                msg,
-                Some(serde_json::json!({
-                    "code": code,
-                    "retryable": true,
-                    "retry_after_ms": 1_000,
-                })),
-            ),
-            AppError::Llm(msg) => McpError::internal_error(msg, data),
-            other => McpError::internal_error(other.to_string(), data),
-        }
+/// Map an [`AppError`] to MCP error data. A function rather than a `From`
+/// impl: both types are foreign to this crate since the store split.
+///
+/// Every error carries `data.code` from [`AppError::code`], so agents can
+/// tell a CAS `CONFLICT` from `INVALID_REQUEST` even though both use the
+/// JSON-RPC `invalid_params` class. `Busy` additionally carries retry hints.
+pub(crate) fn mcp_error(err: AppError) -> McpError {
+    let code = err.code();
+    let data = Some(serde_json::json!({ "code": code }));
+    match err {
+        AppError::NotFound(msg) => McpError::resource_not_found(msg, data),
+        AppError::Config(msg)
+        | AppError::Invalid(msg)
+        | AppError::Timeout(msg)
+        | AppError::Chunking(msg)
+        | AppError::Embeddings(msg)
+        | AppError::Conflict(msg)
+        | AppError::Forbidden(msg) => McpError::invalid_params(msg, data),
+        AppError::Busy(msg) => McpError::internal_error(
+            msg,
+            Some(serde_json::json!({
+                "code": code,
+                "retryable": true,
+                "retry_after_ms": 1_000,
+            })),
+        ),
+        AppError::Llm(msg) => McpError::internal_error(msg, data),
+        other => McpError::internal_error(other.to_string(), data),
     }
 }
 
@@ -44,17 +45,17 @@ mod tests {
 
     #[test]
     fn config_maps_to_invalid_params_and_busy_carries_retry_data() {
-        let invalid = McpError::from(AppError::config("bad"));
+        let invalid = mcp_error(AppError::config("bad"));
         assert_eq!(invalid.code, ErrorCode::INVALID_PARAMS);
-        let timeout = McpError::from(AppError::timeout("budget"));
+        let timeout = mcp_error(AppError::timeout("budget"));
         assert_eq!(timeout.code, ErrorCode::INVALID_PARAMS);
         assert_eq!(
             timeout.data.expect("timeout data")["code"],
             "INVALID_REQUEST"
         );
-        let missing = McpError::from(AppError::not_found("gone"));
+        let missing = mcp_error(AppError::not_found("gone"));
         assert_eq!(missing.code, ErrorCode::RESOURCE_NOT_FOUND);
-        let busy = McpError::from(AppError::busy("lane"));
+        let busy = mcp_error(AppError::busy("lane"));
         assert_eq!(busy.code, ErrorCode::INTERNAL_ERROR);
         let data = busy.data.expect("busy carries retry data");
         assert_eq!(data["code"], "STORE_BUSY");
@@ -63,8 +64,8 @@ mod tests {
 
     #[test]
     fn conflict_and_invalid_input_are_distinguishable_by_data_code() {
-        let conflict = McpError::from(AppError::conflict("stale revision"));
-        let invalid = McpError::from(AppError::config("slug required"));
+        let conflict = mcp_error(AppError::conflict("stale revision"));
+        let invalid = mcp_error(AppError::config("slug required"));
         assert_eq!(conflict.code, ErrorCode::INVALID_PARAMS);
         assert_eq!(invalid.code, ErrorCode::INVALID_PARAMS);
         assert_eq!(conflict.data.unwrap()["code"], "CONFLICT");

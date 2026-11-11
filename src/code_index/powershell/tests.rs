@@ -213,7 +213,7 @@ fn powershell_body_comments_are_excluded_from_metadata() {
 fn powershell_store_body_cache_stale_sync_and_legacy_history() {
     use crate::models::Document;
     let temp = tempfile::tempdir().unwrap();
-    let store = Store::open(&temp.path().join("powershell.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&temp.path().join("powershell.duckdb")).unwrap();
     let doc = |id: &str, path: &str, source: &str| Document {
         id: id.into(),
         uri: format!("file://{id}"),

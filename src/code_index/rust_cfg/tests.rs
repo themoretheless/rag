@@ -486,7 +486,7 @@ fn conditional_attributes_preserve_inactive_items_and_gate_active_unknown_expans
 #[test]
 fn configured_history_and_manifest_only_switch_reuse_raw_extraction() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&dir.path().join("configured.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&dir.path().join("configured.duckdb")).unwrap();
     let document = |id: &str, path: &str, content: &str, revision: i64| crate::models::Document {
         id: id.into(),
         uri: format!("file://{path}"),

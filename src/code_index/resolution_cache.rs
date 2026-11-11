@@ -492,7 +492,7 @@ mod tests {
     #[test]
     fn committed_cache_roundtrip_forced_equivalence_and_completion_are_explicit() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("cache.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&dir.path().join("cache.duckdb")).unwrap();
         let mut source = sources();
         for (id, (path, text)) in &source {
             store

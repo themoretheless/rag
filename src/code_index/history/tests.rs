@@ -13,7 +13,7 @@ fn doc(id: &str, path: &str, source: &str) -> Document {
 #[test]
 fn frozen_method_relations_diff_and_legacy_missing_coverage_are_explicit() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&dir.path().join("overrides.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&dir.path().join("overrides.duckdb")).unwrap();
     let mut d = doc(
         "a",
         "/p/models.py",
@@ -73,7 +73,7 @@ fn frozen_method_relations_diff_and_legacy_missing_coverage_are_explicit() {
 #[test]
 fn translation_key_history_ignores_offsets_but_keeps_counts_and_legacy_gaps() {
     let root = tempfile::tempdir().unwrap();
-    let store = Store::open(&root.path().join("key-history.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&root.path().join("key-history.duckdb")).unwrap();
     let mut view = doc("view", "/p/view.html", "%{key} %{key}");
     view.wing = Some("p".into());
     let mut code = doc(
@@ -193,7 +193,7 @@ fn limited_translation_captures_are_not_compared_as_complete_negative_facts() {
 #[test]
 fn frozen_schema_and_relations_diff_ignore_line_moves_and_project_diagnostics() {
     let root = tempfile::tempdir().unwrap();
-    let store = Store::open(&root.path().join("semantic.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&root.path().join("semantic.duckdb")).unwrap();
     let mut migration = doc(
         "ddl",
         "/p/migrations/001.sql",
@@ -268,7 +268,7 @@ fn frozen_schema_and_relations_diff_ignore_line_moves_and_project_diagnostics() 
 #[test]
 fn schema_diff_captures_expression_only_changes_and_marks_legacy_coverage() {
     let root = tempfile::tempdir().unwrap();
-    let store = Store::open(&root.path().join("expressions.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&root.path().join("expressions.duckdb")).unwrap();
     let mut migration = doc(
         "ddl",
         "/p/migrations/001.sql",
@@ -310,7 +310,7 @@ fn schema_diff_captures_expression_only_changes_and_marks_legacy_coverage() {
 #[test]
 fn frozen_constraints_diff_and_legacy_coverage_are_explicit() {
     let root = tempfile::tempdir().unwrap();
-    let store = Store::open(&root.path().join("constraints.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&root.path().join("constraints.duckdb")).unwrap();
     let mut d = doc(
         "ddl",
         "/p/migrations/001.sql",
@@ -366,7 +366,7 @@ fn missing_historical_schema_does_not_invent_a_replayed_snapshot() {
 fn immutable_history_reuses_noop_and_content_blobs_and_diffs_semantic_links() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("history.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     store
         .documents()
         .upsert_document(&doc(
@@ -477,7 +477,7 @@ fn immutable_history_reuses_noop_and_content_blobs_and_diffs_semantic_links() {
         1
     );
     drop(store);
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     assert_eq!(
         crate::code_index::CodeIndex::new(&store)
             .code_index_diff(&DiffQuery {
@@ -493,7 +493,7 @@ fn immutable_history_reuses_noop_and_content_blobs_and_diffs_semantic_links() {
 #[test]
 fn deleting_every_document_makes_a_new_chronological_empty_revision() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&dir.path().join("history.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&dir.path().join("history.duckdb")).unwrap();
     assert_eq!(
         crate::code_index::CodeIndex::new(&store)
             .index_code()
@@ -548,7 +548,7 @@ fn deleting_every_document_makes_a_new_chronological_empty_revision() {
 #[test]
 fn late_publication_failure_rolls_back_current_cache_and_revision_together() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&dir.path().join("history.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&dir.path().join("history.duckdb")).unwrap();
     store
         .documents()
         .upsert_document(&doc("a", "/p/a.rs", "fn old() {}"))
@@ -599,7 +599,7 @@ fn late_publication_failure_rolls_back_current_cache_and_revision_together() {
 #[test]
 fn client_endpoints_history_is_frozen_and_guards_legacy_capture() {
     let root = tempfile::tempdir().unwrap();
-    let store = Store::open(&root.path().join("clients.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&root.path().join("clients.duckdb")).unwrap();
     store
         .documents()
         .upsert_document(&doc(

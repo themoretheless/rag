@@ -129,7 +129,7 @@ fn encoded_live_sources_compare_decoded_text_and_expose_raw_evidence() {
         let db = tempfile::tempdir().unwrap();
         let path = root.path().join("a.rs");
         std::fs::write(&path, &bytes).unwrap();
-        let store = Store::open(&db.path().join("live.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&db.path().join("live.duckdb")).unwrap();
         seed(&store, &path.display().to_string(), text);
         let roots = vec![root.path().to_path_buf()];
         let q = SourceQuery {
@@ -174,7 +174,7 @@ fn live_files_are_bounded_and_drift_ack_is_atomic_persistent_and_idempotent() {
     let path = root.path().join("a.rs");
     std::fs::write(&path, "first\nold\nlast\n").unwrap();
     let dbpath = db.path().join("drift.duckdb");
-    let store = Store::open(&dbpath).unwrap();
+    let store = crate::testkit::open_test_store(&dbpath).unwrap();
     seed(&store, &path.display().to_string(), "first\nold\nlast\n");
     let q = SourceQuery {
         document_id: Some("a".into()),
@@ -263,7 +263,7 @@ fn live_files_are_bounded_and_drift_ack_is_atomic_persistent_and_idempotent() {
         .unwrap()
         .is_empty());
     drop(store);
-    let store = Store::open(&dbpath).unwrap();
+    let store = crate::testkit::open_test_store(&dbpath).unwrap();
     let report = crate::code_index::CodeIndex::new(&store)
         .code_drift_report(&DriftQuery {
             include_acknowledged: true,
@@ -287,7 +287,7 @@ fn missing_disallowed_and_malformed_sources_never_report_fresh() {
     let db = tempfile::tempdir().unwrap();
     let path = root.path().join("a.rs");
     std::fs::write(&path, "old").unwrap();
-    let store = Store::open(&db.path().join("drift.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&db.path().join("drift.duckdb")).unwrap();
     seed(&store, &path.display().to_string(), "old");
     let q = SourceQuery {
         document_id: Some("a".into()),
@@ -339,7 +339,7 @@ fn missing_disallowed_and_malformed_sources_never_report_fresh() {
 #[test]
 fn publication_drift_has_stable_cursors_and_ack_requires_write_role() {
     let root = tempfile::tempdir().unwrap();
-    let store = Store::open(&root.path().join("drift.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&root.path().join("drift.duckdb")).unwrap();
     seed(&store, "/p/a.rs", "fn a() {}");
     let mut doc = store.documents().get_document("a").unwrap().unwrap();
     doc.content = "fn changed() {}".into();

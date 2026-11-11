@@ -333,7 +333,7 @@ mod tests {
     use super::*;
     fn fixture() -> CodeSnapshot {
         let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("paths.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&root.path().join("paths.duckdb")).unwrap();
         for (id, project, path, source) in [
             ("a", "one", "/one/src/lib.rs", "pub fn start(){left();right();} fn left(){leaf();} fn right(){leaf();} pub fn leaf(){} fn value(){let cb=leaf;} mod a{fn duplicate(){}} mod b{fn duplicate(){}}"),
             ("b", "two", "/two/src/lib.rs", "pub fn foreign(){}"),

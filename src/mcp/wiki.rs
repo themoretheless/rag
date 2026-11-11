@@ -1,5 +1,6 @@
 //! Wiki compilation, index, diary, and durable operations-log tools.
 
+use crate::mcp::error::mcp_error;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::{tool, tool_router, ErrorData as McpError};
@@ -64,11 +65,15 @@ impl RagServer {
         self.blocking_tool("get_schema", move |store| {
             let no_default = params.no_default.unwrap_or(false);
             if no_default {
-                let doc = store.documents().get_schema_document()?.ok_or_else(|| {
-                    McpError::from(AppError::not_found(
-                        "schema document not found at schema://agents",
-                    ))
-                })?;
+                let doc = store
+                    .documents()
+                    .get_schema_document()
+                    .map_err(mcp_error)?
+                    .ok_or_else(|| {
+                        mcp_error(AppError::not_found(
+                            "schema document not found at schema://agents",
+                        ))
+                    })?;
                 let body = crate::wiki::SchemaDocumentView {
                     document_id: doc.id,
                     uri: doc.uri,
@@ -83,7 +88,7 @@ impl RagServer {
                 };
                 return Self::json_result(&body);
             }
-            let body = crate::wiki::get_schema(store)?;
+            let body = crate::wiki::get_schema(store).map_err(mcp_error)?;
             Self::json_result(&body)
         })
         .await
@@ -103,7 +108,8 @@ impl RagServer {
                 &params.content,
                 params.title.as_deref(),
                 params.agent.as_deref(),
-            )?;
+            )
+            .map_err(mcp_error)?;
             Self::json_result(&body)
         })
         .await
@@ -131,7 +137,8 @@ impl RagServer {
                 log_ops: true,
             },
         )
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&res)
     }
 
@@ -146,7 +153,8 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         self.blocking_tool("diary_read", move |store| {
             let last_n = params.last_n.unwrap_or(DEFAULT_DIARY_LAST_N) as usize;
-            let entries = diary::diary_read(store, &params.agent_name, last_n)?;
+            let entries =
+                diary::diary_read(store, &params.agent_name, last_n).map_err(mcp_error)?;
             Self::json_result(&entries)
         })
         .await
@@ -163,7 +171,9 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let config = self.config.clone();
         self.blocking_tool("wake_up", move |store| {
-            let status = DiagnosticsService::new(store, &config).status()?;
+            let status = DiagnosticsService::new(store, &config)
+                .status()
+                .map_err(mcp_error)?;
             let diary_limit = clamp_limit(params.diary_limit, 5, MAX_WAKE_UP_LIMIT);
             let pinned_limit = clamp_limit(params.pinned_limit, 20, MAX_WAKE_UP_LIMIT);
             let body = diary::wake_up(
@@ -172,7 +182,8 @@ impl RagServer {
                 params.agent_name.as_deref(),
                 diary_limit,
                 pinned_limit,
-            )?;
+            )
+            .map_err(mcp_error)?;
             Self::json_result(&body)
         })
         .await
@@ -196,7 +207,8 @@ impl RagServer {
             params.diary.as_deref(),
             params.agent_name.as_deref(),
         )
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&res)
     }
 
@@ -212,7 +224,7 @@ impl RagServer {
             let payload_json = match params.payload_json {
                 Some(s) if !s.trim().is_empty() => {
                     if let Err(e) = serde_json::from_str::<serde_json::Value>(&s) {
-                        return Err(McpError::from(AppError::invalid(format!(
+                        return Err(mcp_error(AppError::invalid(format!(
                             "payload_json is not valid JSON: {e}"
                         ))));
                     }
@@ -231,7 +243,7 @@ impl RagServer {
                 agent_name: params.agent_name,
                 ..OpsLogEntry::default()
             };
-            let written = store.ops_log().append(&entry)?;
+            let written = store.ops_log().append(&entry).map_err(mcp_error)?;
             Self::json_result(&written)
         })
         .await
@@ -252,13 +264,13 @@ impl RagServer {
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
             let has_key = id.is_some() || params.seq.is_some();
-            let rows =
-                store
-                    .ops_log()
-                    .read_ops_log(id, params.seq, params.limit.map(|n| n as usize))?;
+            let rows = store
+                .ops_log()
+                .read_ops_log(id, params.seq, params.limit.map(|n| n as usize))
+                .map_err(mcp_error)?;
             if has_key {
                 let entry = rows.into_iter().next().ok_or_else(|| {
-                    McpError::from(AppError::not_found(format!(
+                    mcp_error(AppError::not_found(format!(
                         "ops_log entry not found (id={:?}, seq={:?})",
                         params.id, params.seq
                     )))
@@ -280,7 +292,7 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         self.blocking_tool("list_recent_ops", move |store| {
             let limit = clamp_limit(params.limit, 20, MAX_OPS_LOG_PAGE);
-            let ops = store.ops_log().list_recent_ops(limit)?;
+            let ops = store.ops_log().list_recent_ops(limit).map_err(mcp_error)?;
             Self::json_result(&ops)
         })
         .await
@@ -298,9 +310,12 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         self.blocking_tool("memories_filed_away", move |store| {
             let limit = clamp_limit(params.limit, 20, MAX_OPS_LOG_PAGE);
-            let ops_log_available = store.ops_log().ops_log_exists()?;
+            let ops_log_available = store.ops_log().ops_log_exists().map_err(mcp_error)?;
             let ops = if ops_log_available {
-                store.ops_log().memories_filed_away(limit)?
+                store
+                    .ops_log()
+                    .memories_filed_away(limit)
+                    .map_err(mcp_error)?
             } else {
                 Vec::new()
             };
@@ -375,7 +390,8 @@ impl RagServer {
 
             let matches = store
                 .wiki_index()
-                .query_wiki_index(params.query.trim(), top_k)?;
+                .query_wiki_index(params.query.trim(), top_k)
+                .map_err(mcp_error)?;
 
             let mut pages = Vec::new();
             if include_content {
@@ -387,7 +403,7 @@ impl RagServer {
                     if !seen.insert(pid.to_string()) {
                         continue;
                     }
-                    if let Some(doc) = store.documents().get_document(pid)? {
+                    if let Some(doc) = store.documents().get_document(pid).map_err(mcp_error)? {
                         pages.push(IndexQueryPage {
                             document_id: doc.id,
                             uri: doc.uri,
@@ -440,7 +456,7 @@ impl RagServer {
         let corpus_guard = acquire_corpus_search_guard(&self.store, mode).map_err(Self::map_err)?;
 
         if matches!(mode, SearchMode::Vec | SearchMode::Hybrid) {
-            self.require_vec_compatible()?;
+            self.require_vec_compatible().map_err(mcp_error)?;
         }
 
         let diversity = match params
@@ -449,7 +465,7 @@ impl RagServer {
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
-            Some(raw) => Some(DiversityMode::parse(raw)?),
+            Some(raw) => Some(DiversityMode::parse(raw).map_err(mcp_error)?),
             None => None,
         };
 
@@ -467,7 +483,8 @@ impl RagServer {
             let query_vecs = self
                 .embedder
                 .embed(std::slice::from_ref(&params.query))
-                .await?;
+                .await
+                .map_err(mcp_error)?;
             let emb = query_vecs.into_iter().next().ok_or_else(|| {
                 McpError::internal_error("embedder returned no vector for query", None)
             })?;
@@ -495,7 +512,8 @@ impl RagServer {
 
         let hits = crate::util::blocking_section(|| {
             search_with_corpus_guard(&self.store, &opts, &corpus_guard)
-        })?;
+        })
+        .map_err(mcp_error)?;
         let hits = match reranker {
             Some(reranker) => {
                 retrieval::rerank_hits_or_fallback(
@@ -521,7 +539,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<FileAnswerParams>,
     ) -> Result<CallToolResult, McpError> {
-        self.require_vec_compatible()?;
+        self.require_vec_compatible().map_err(mcp_error)?;
 
         let citations = params.citations.map(|cs| {
             cs.into_iter()
@@ -548,7 +566,8 @@ impl RagServer {
                 agent: params.agent.as_deref(),
             },
         )
-        .await?;
+        .await
+        .map_err(mcp_error)?;
 
         Self::json_result(&result)
     }
@@ -581,7 +600,8 @@ impl RagServer {
                 };
                 Ok((entries, markdown))
             })
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         let count = entries.len();
         Self::json_result(&ReadIndexResult {
             entries,
@@ -599,31 +619,37 @@ impl RagServer {
         Parameters(params): Parameters<UpdateIndexEntryParams>,
     ) -> Result<CallToolResult, McpError> {
         self.blocking_tool("update_index_entry", move |store| {
-            let entry = store.wiki_index().update_wiki_index_entry_fields(
-                &params.slug,
-                params.title,
-                params.summary,
-                params.kind,
-                params.category,
-                params.page_id,
-            )?;
-
-            let _ = store.ops_log().append(
-                &OpsLogEntry::new(
-                    "index_update",
-                    "INDEX",
-                    format!("updated index entry {}", entry.slug),
+            let entry = store
+                .wiki_index()
+                .update_wiki_index_entry_fields(
+                    &params.slug,
+                    params.title,
+                    params.summary,
+                    params.kind,
+                    params.category,
+                    params.page_id,
                 )
-                .entity(Some(entry.id.clone()), "wiki_index")
-                .payload(
-                    serde_json::json!({
-                        "slug": entry.slug,
-                        "title": entry.title,
-                        "kind": entry.kind,
-                    })
-                    .to_string(),
-                ),
-            )?;
+                .map_err(mcp_error)?;
+
+            let _ = store
+                .ops_log()
+                .append(
+                    &OpsLogEntry::new(
+                        "index_update",
+                        "INDEX",
+                        format!("updated index entry {}", entry.slug),
+                    )
+                    .entity(Some(entry.id.clone()), "wiki_index")
+                    .payload(
+                        serde_json::json!({
+                            "slug": entry.slug,
+                            "title": entry.title,
+                            "kind": entry.kind,
+                        })
+                        .to_string(),
+                    ),
+                )
+                .map_err(mcp_error)?;
 
             Self::json_result(&entry)
         })
@@ -654,7 +680,8 @@ impl RagServer {
                 )?;
                 Ok(count)
             })
-            .await?;
+            .await
+            .map_err(mcp_error)?;
 
         Self::json_result(&RebuildIndexResult { count })
     }
@@ -691,10 +718,9 @@ impl RagServer {
         Parameters(params): Parameters<WriteWikiPageParams>,
     ) -> Result<CallToolResult, McpError> {
         if params.create_only == Some(true) {
-            return Err(AppError::invalid(
+            return Err(mcp_error(AppError::invalid(
                 "update_wiki_page does not accept create_only; use write_wiki_page with create_only=true",
-            )
-            .into());
+            )));
         }
         self.write_wiki(crate::app::WikiWriteMode::Cas, params)
             .await
@@ -722,7 +748,8 @@ impl RagServer {
                 .find_by_uri(&format!("wiki://{key}"))?
                 .ok_or_else(|| AppError::not_found(format!("wiki page not found: {key}")))
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&document_with_etag(&doc))
     }
 
@@ -754,7 +781,8 @@ impl RagServer {
         let (rows, _) = run_blocking("list_wiki_pages", move || {
             store.documents().list_wiki_page_metas_filtered(&filter)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&rows)
     }
 
@@ -766,15 +794,15 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<CompileSourceParams>,
     ) -> Result<CallToolResult, McpError> {
-        self.require_vec_compatible()?;
+        self.require_vec_compatible().map_err(mcp_error)?;
         if !self.config.llm_enabled {
-            return Err(McpError::from(AppError::config(
+            return Err(mcp_error(AppError::config(
                 "LLM disabled (RAG_LLM_ENABLED=false)",
             )));
         }
         // The configured client: provider dialect, timeout and max_tokens all
         // come from `Config`, exactly as for every other LLM tool.
-        let llm = self.require_llm()?;
+        let llm = self.require_llm().map_err(mcp_error)?;
         let res = wiki::compile_source(
             &self.store,
             &self.embedder,
@@ -784,7 +812,8 @@ impl RagServer {
             params.dry_run.unwrap_or(false),
             params.agent.as_deref(),
         )
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&res)
     }
 
@@ -801,9 +830,9 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let apply = params.apply.unwrap_or(false);
         if apply {
-            self.require_vec_compatible()?;
+            self.require_vec_compatible().map_err(mcp_error)?;
         }
-        let llm = self.require_llm()?;
+        let llm = self.require_llm().map_err(mcp_error)?;
         let opts = wiki::ConsolidateOpts {
             slug: params.slug,
             title: params.title,
@@ -826,7 +855,8 @@ impl RagServer {
                 agent: params.agent.as_deref(),
             },
         )
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&res)
     }
 
@@ -847,7 +877,8 @@ impl RagServer {
                 params.layer.as_deref(),
                 params.kind.as_deref(),
                 clamp_limit(params.limit, 100, MAX_LIFECYCLE_CANDIDATES),
-            )?;
+            )
+            .map_err(mcp_error)?;
             Self::json_result(&rows)
         })
         .await
@@ -869,7 +900,8 @@ impl RagServer {
                 &params.document_ids,
                 &params.output_document_id,
                 params.agent.as_deref(),
-            )?;
+            )
+            .map_err(mcp_error)?;
             Self::json_result(&result)
         })
         .await
@@ -889,7 +921,8 @@ impl RagServer {
                 store,
                 &params.document_ids,
                 params.agent.as_deref(),
-            )?;
+            )
+            .map_err(mcp_error)?;
             Self::json_result(&result)
         })
         .await
@@ -902,7 +935,7 @@ impl RagServer {
         raw, and aggregate health counts."
     )]
     pub(super) async fn lint_wiki(&self) -> Result<CallToolResult, McpError> {
-        let report = self.admin_use_case().lint_wiki().await?;
+        let report = self.admin_use_case().lint_wiki().await.map_err(mcp_error)?;
         Self::json_result(&report)
     }
 
@@ -924,7 +957,7 @@ impl RagServer {
         ));
 
         if !dry_run {
-            self.require_vec_compatible()?;
+            self.require_vec_compatible().map_err(mcp_error)?;
         }
 
         let llm_ref = if !dry_run && self.config.llm_enabled {
@@ -942,7 +975,8 @@ impl RagServer {
             max_docs,
             params.agent.as_deref(),
         )
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&res)
     }
 }
@@ -976,7 +1010,7 @@ impl RagServer {
         mode: crate::app::WikiWriteMode,
         params: WriteWikiPageParams,
     ) -> Result<CallToolResult, McpError> {
-        self.require_vec_compatible()?;
+        self.require_vec_compatible().map_err(mcp_error)?;
         let res = self
             .wiki_use_case()
             .write(crate::app::WikiWriteCommand {
@@ -997,7 +1031,8 @@ impl RagServer {
                 blank_title_is_slug: mode == crate::app::WikiWriteMode::Upsert,
                 ..Default::default()
             })
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         Self::json_result(&res)
     }
 }

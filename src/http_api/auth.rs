@@ -518,7 +518,7 @@ mod tests {
 
     #[tokio::test]
     async fn real_mcp_dispatch_checks_roles_before_schema_seed_or_wiki_write() {
-        use crate::{Config, Store};
+        use crate::Config;
         use std::sync::Arc;
         let root = tempfile::tempdir().unwrap();
         let config = Config {
@@ -526,7 +526,7 @@ mod tests {
             embedding_dims: 32,
             ..Config::for_tests()
         };
-        let store = Store::open(&config.db_path).unwrap();
+        let store = crate::testkit::open_test_store(&config.db_path).unwrap();
         let embedder = crate::embeddings::build_provider(&config).unwrap();
         let mcp = crate::mcp::mcp_http_service_for(
             crate::context::AppContext::new(store.clone(), embedder.clone(), config.clone()),

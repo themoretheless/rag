@@ -82,7 +82,7 @@ mod tests {
     use crate::models::Document;
     fn setup() -> (tempfile::TempDir, Store) {
         let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("timings.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&root.path().join("timings.duckdb")).unwrap();
         (root, store)
     }
     fn put(store: &Store, text: &str) {
@@ -139,7 +139,8 @@ mod tests {
         assert_ne!(third.index_revision, first.index_revision);
         assert_eq!(status(&store.lock().unwrap(), first.index_revision), report);
         drop(store);
-        let reopened = Store::open(&root.path().join("timings.duckdb")).unwrap();
+        let reopened =
+            crate::testkit::open_test_store(&root.path().join("timings.duckdb")).unwrap();
         let persisted = status(&reopened.lock().unwrap(), first.index_revision);
         assert_eq!(persisted, report);
     }
@@ -249,7 +250,8 @@ mod tests {
                 .unwrap();
         }
         drop(store);
-        let upgraded = Store::open(&root.path().join("timings.duckdb")).unwrap();
+        let upgraded =
+            crate::testkit::open_test_store(&root.path().join("timings.duckdb")).unwrap();
         assert_eq!(
             status(&upgraded.lock().unwrap(), original.index_revision)["reason"],
             "no_measured_run_for_revision"

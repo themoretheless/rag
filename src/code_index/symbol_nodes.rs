@@ -313,7 +313,7 @@ mod tests {
     #[test]
     fn shared_keys_have_stable_scoped_identity_no_fake_definition_and_bounded_proofs() {
         let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("keys.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&root.path().join("keys.duckdb")).unwrap();
         put(&store, "a", "/p/a.html", "p", "%{key} %{key} @{key}");
         put(
             &store,
@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn tables_keep_schema_only_and_usage_only_identities_with_exact_scoped_filters() {
         let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("table.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&root.path().join("table.duckdb")).unwrap();
         put(
             &store,
             "ddl",
@@ -438,7 +438,7 @@ mod tests {
     #[test]
     fn route_handler_alternatives_are_one_occurrence_and_reference_targets_roundtrip() {
         let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("route.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&root.path().join("route.duckdb")).unwrap();
         put(
             &store,
             "route",
@@ -468,7 +468,7 @@ mod tests {
     #[test]
     fn code_defaults_alias_contains_all_and_stale_source_coverage_preserve_legacy() {
         let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("code.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&root.path().join("code.duckdb")).unwrap();
         put(&store, "code", "/p/api.py", "p", "def Worker():\n pass\n");
         put(
             &store,
@@ -525,7 +525,7 @@ mod budget_tests {
     #[test]
     fn proof_retention_is_independent_bounded_and_uses_numeric_source_order() {
         let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("proofs.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&root.path().join("proofs.duckdb")).unwrap();
         store
             .documents()
             .upsert_document(&Document {

@@ -13,7 +13,7 @@ fn doc(id: &str, path: &str, project: &str, source: &str) -> Document {
 }
 fn corpus() -> (tempfile::TempDir, Store) {
     let temp = tempfile::tempdir().unwrap();
-    let store = Store::open(&temp.path().join("resources.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&temp.path().join("resources.duckdb")).unwrap();
     for d in [
         doc(
             "svg",
@@ -148,7 +148,7 @@ fn changed_resource_is_unavailable_until_publication_and_blocks_negative_livenes
 #[test]
 fn source_attachment_identity_is_required_and_part_of_revision_fingerprint() {
     let temp = tempfile::tempdir().unwrap();
-    let store = Store::open(&temp.path().join("attachment.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&temp.path().join("attachment.duckdb")).unwrap();
     let mut data = doc("data", "/p/data.json", "p", "{}");
     data.uri = "/p/data.json".into();
     data.source_file = None;

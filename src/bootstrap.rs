@@ -17,11 +17,16 @@ use crate::embeddings::{build_provider, EmbeddingProvider};
 // Process-wide knobs live in the subsystems that read them (link ceiling in
 // `db::graph::resolve`, call-log size in `telemetry`, sync identity in
 // `db::sync`). Pushing them is composition work, so it sits here rather than in
-// the value-only `config` module; the method path is unchanged.
-impl Config {
+// the value-only `config` module. `Config` lives in the store crate, so the
+// method is an extension trait (import it to call `config.apply_process_limits()`).
+pub trait ApplyProcessLimits {
     /// Push process-global settings (graph link ceiling, call-log size, sync identity) into the
     /// subsystems that hold them. Call once at start-up, before first use.
-    pub fn apply_process_limits(&self) {
+    fn apply_process_limits(&self);
+}
+
+impl ApplyProcessLimits for Config {
+    fn apply_process_limits(&self) {
         crate::db::graph::resolve::configure_max_links(self.max_links_per_doc);
         crate::telemetry::configure_capacity(self.call_log_capacity);
         crate::db::sync::configure_identity(

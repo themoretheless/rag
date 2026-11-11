@@ -774,7 +774,7 @@ mod tests {
     use super::*;
     fn store() -> (tempfile::TempDir, Store) {
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("check.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&dir.path().join("check.duckdb")).unwrap();
         let payload = json!({"capture_format":2,"id":"frozen","connection":"offline","project":"p","dialect":"postgresql","schemas":["public"],"captured_ms":1,"code_index_revision":null,"target_fingerprint":"h","complete_within_visible_scope":true,"diagnostics":[],"tables":[{"schema":"public","name":"t","kind":"BASE TABLE","complete":true,"sample":null,"foreign_keys":[],"columns":[
             {"name":"id","data_type":"integer","nullable":"NO","default_sql":null},
             {"name":"computed","data_type":"integer","nullable":"YES","generation_metadata":"ALWAYS"},

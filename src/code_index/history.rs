@@ -914,7 +914,7 @@ mod integrity_tests {
     #[test]
     fn missing_or_corrupt_history_blobs_are_errors_not_silent_file_deletions() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("history.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&dir.path().join("history.duckdb")).unwrap();
         store
             .documents()
             .upsert_document(&crate::models::Document {

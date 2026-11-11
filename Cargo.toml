@@ -1,19 +1,37 @@
 [workspace]
-members = [".", "crates/rag-mcp-core", "crates/rag-mcp-markup", "crates/rag-mcp-ui"]
+members = [".", "crates/rag-mcp-core", "crates/rag-mcp-markup", "crates/rag-mcp-ui", "crates/rag-store-duckdb"]
 default-members = ["."]
 resolver = "2"
 
 # Versions of dependencies used by two or more workspace crates, declared once.
 # Members add their own features; features are additive, so no member loses
 # any it had. crates/rag-mcp-ui is maintained in another worktree and still
-# pins its own versions (same requirements as here). chrono stays per crate:
-# the core crate deliberately builds it without default features.
+# pins its own versions (same requirements as here). rag-mcp-core keeps its own
+# chrono line: it deliberately builds it without default features.
 [workspace.dependencies]
 clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
 unicode-normalization = "0.1.25"
+anyhow = "1"
+blake3 = "1"
+chrono = { version = "0.4", features = ["serde"] }
+duckdb = { version = "1", features = ["bundled"] }
+ring = "0.17"
+# Same major as rmcp's re-export so Cargo.lock holds one schemars version.
+schemars = "1"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+# Optional HF tokenizers backend for token counting: loaded from a local
+# tokenizer.json via RAG_TOKENIZER_JSON; falls back to the calibrated
+# heuristic when unset.
+tokenizers = { version = "0.23.2", default-features = false, features = ["onig"] }
+rag-mcp-core = { path = "crates/rag-mcp-core", version = "0.1.0" }
+rag-mcp-markup = { path = "crates/rag-mcp-markup", version = "0.1.0" }
+rag-store-duckdb = { path = "crates/rag-store-duckdb", version = "0.1.0" }
 
 [package]
 name = "rag-mcp"
@@ -44,37 +62,37 @@ name = "rag_gate"
 path = "src/bin/rag_gate.rs"
 
 [dependencies]
-tempfile = "3"
+tempfile = { workspace = true }
 clap = { workspace = true }
-rag-mcp-core = { path = "crates/rag-mcp-core", version = "0.1.0" }
-rag-mcp-markup = { path = "crates/rag-mcp-markup", version = "0.1.0" }
-anyhow = "1"
+rag-mcp-core = { workspace = true }
+rag-mcp-markup = { workspace = true }
+rag-store-duckdb = { workspace = true }
+anyhow = { workspace = true }
 async-trait = "0.1"
 futures-util = "0.3"
 axum = "0.8"
-blake3 = "1"
-chrono = { version = "0.4", features = ["serde"] }
-duckdb = { version = "1", features = ["bundled"] }
+blake3 = { workspace = true }
+chrono = { workspace = true }
+duckdb = { workspace = true }
 notify = "8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-ring = "0.17"
+ring = { workspace = true }
 rmcp = { version = "=1.4.0", features = ["server", "transport-io", "transport-streamable-http-server"] }
 # rmcp 1.x did not keep macro/runtime compatibility across every minor; pin the
 # proc-macro crate to the matching security-fixed release as well.
 rmcp-macros = "=1.4.0"
 tokio-util = { version = "0.7", features = ["rt"] }
-# Same major as rmcp's re-export so Cargo.lock holds one schemars version.
-schemars = "1"
+schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 # Process/system resource telemetry for the /v1/resources endpoint.
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
-thiserror = "2"
-tokio = { version = "1", features = ["full"] }
+thiserror = { workspace = true }
+tokio = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = { workspace = true }
 unicode-normalization = { workspace = true }
 # Pure-Rust (miniz_oxide) zip reading for OOXML (.docx/.xlsx) extraction.
 zip = { version = "9", default-features = false, features = ["deflate"] }
@@ -82,10 +100,6 @@ zip = { version = "9", default-features = false, features = ["deflate"] }
 quick-xml = "0.42"
 # html5ever-based DOM queries for HTML main-content extraction (pure Rust).
 dom_query = "0.27"
-# Optional HF tokenizers backend for token counting: loaded from a local
-# tokenizer.json via RAG_TOKENIZER_JSON; falls back to the calibrated
-# heuristic when unset. crates.io is unreachable, so this stays optional.
-tokenizers = { version = "0.23.2", default-features = false, features = ["onig"], optional = true }
 tree-sitter = "0.27.1"
 tree-sitter-rust = "0.24.2"
 tree-sitter-yaml = "0.7.2"
@@ -121,9 +135,10 @@ libc = "0.2"
 # Exact HF token counting when RAG_TOKENIZER_JSON points at a tokenizer.json;
 # without the env var the calibrated heuristic is used either way.
 default = ["tokenizers"]
+tokenizers = ["rag-store-duckdb/tokenizers"]
 # Exposes `rag_mcp::testkit` (shared fixtures) to the integration tests. Unit
 # tests get the module through `cfg(test)`; production builds never enable it.
-testkit = []
+testkit = ["rag-store-duckdb/testkit"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

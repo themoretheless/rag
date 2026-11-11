@@ -463,7 +463,7 @@ mod tests {
         };
         HttpState::from_context(
             crate::context::AppContext::with_store(
-                Arc::new(crate::db::Store::open(&config.db_path).unwrap()),
+                Arc::new(crate::testkit::open_test_store(&config.db_path).unwrap()),
                 Arc::new(MockEmbedder::new(16)),
                 config,
             ),

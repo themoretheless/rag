@@ -711,7 +711,7 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let root = dir.path().canonicalize().unwrap().join("sources");
             std::fs::create_dir_all(root.join("src")).unwrap();
-            let store = Store::open(&dir.path().join("rename.duckdb")).unwrap();
+            let store = crate::testkit::open_test_store(&dir.path().join("rename.duckdb")).unwrap();
             let f = Self { store, dir, root };
             for (id,source) in [("Cargo.toml","[package]\nname='rename-fixture'\nversion='0.1.0'\nedition='2021'\n"),("src/lib.rs","pub mod api; pub mod client;\n// value stays in comments\npub const MESSAGE: &str = \"value\";\n"),("src/api.rs","pub fn value()->i32{1}\n"),("src/client.rs","pub fn use_value()->i32{crate::api::value()}\n")] {f.put(id,source,1);}
             crate::code_index::CodeIndex::new(&f.store)

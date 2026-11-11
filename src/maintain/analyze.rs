@@ -533,7 +533,7 @@ mod tests {
     fn analyze_empty_corpus() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("empty.duckdb");
-        let store = Store::open(&path).unwrap();
+        let store = crate::testkit::open_test_store(&path).unwrap();
         let cfg = test_config(path, 8);
         let mut opts = AnalyzeOptions::from_config(&cfg);
         opts.log_ops = true;
@@ -551,7 +551,7 @@ mod tests {
     fn analyze_finds_exact_dups_and_stubs() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("dups.duckdb");
-        let store = Store::open(&path).unwrap();
+        let store = crate::testkit::open_test_store(&path).unwrap();
         let cfg = test_config(path, 8);
 
         let body = "identical body for dedupe";
@@ -592,7 +592,7 @@ mod tests {
     fn near_duplicate_analysis_fails_closed_during_embedding_migration() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("near-dups-migration-incomplete.duckdb");
-        let store = Store::open(&path).unwrap();
+        let store = crate::testkit::open_test_store(&path).unwrap();
         let cfg = test_config(path, 8);
         for id in ["a", "b"] {
             let document = doc(
@@ -635,7 +635,7 @@ mod tests {
     fn analyze_stale_wiki_via_related_edge() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("stale.duckdb");
-        let store = Store::open(&path).unwrap();
+        let store = crate::testkit::open_test_store(&path).unwrap();
         let cfg = test_config(path, 8);
 
         let older = Utc::now() - Duration::days(5);
@@ -698,7 +698,7 @@ mod tests {
     fn missing_source_diagnostics_keep_null_timestamp_and_require_restoration() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("missing-source.duckdb");
-        let store = Store::open(&path).unwrap();
+        let store = crate::testkit::open_test_store(&path).unwrap();
         let config = test_config(path, 8);
         let mut wiki = doc(
             "wiki1",

@@ -8,7 +8,7 @@ fn status_and_doctor_use_canonical_embedding_identity() {
     let path = directory
         .path()
         .join("diagnostics-embedding-identity.duckdb");
-    let store = Store::open(&path).expect("open store");
+    let store = crate::testkit::open_test_store(&path).expect("open store");
     let config = Config {
         db_path: path,
         embedding_dims: 8,
@@ -80,7 +80,7 @@ fn status_reports_the_configured_snapshot_footprint() {
     let path = directory
         .path()
         .join("diagnostics-snapshot-footprint.duckdb");
-    let store = Store::open(&path).expect("open store");
+    let store = crate::testkit::open_test_store(&path).expect("open store");
     let config = Config {
         db_path: path,
         embedding_dims: 8,
@@ -114,7 +114,7 @@ fn status_reports_the_configured_snapshot_footprint() {
 fn status_layer_health_counts_match_legacy_semantics() {
     let directory = tempfile::tempdir().expect("tempdir");
     let path = directory.path().join("status-layer-health.duckdb");
-    let store = Store::open(&path).expect("open store");
+    let store = crate::testkit::open_test_store(&path).expect("open store");
 
     for (id, layer) in [
         ("raw-no-node", "raw"),
@@ -270,7 +270,7 @@ fn graph_edge(id: &str, source_id: &str, target_id: &str) -> GraphEdge {
 async fn repair_ignores_intentionally_empty_documents() {
     let directory = tempfile::tempdir().expect("tempdir");
     let path = directory.path().join("empty-document.duckdb");
-    let store = Store::open(&path).expect("open store");
+    let store = crate::testkit::open_test_store(&path).expect("open store");
     store
         .documents()
         .upsert_document(&Document {
@@ -302,7 +302,7 @@ async fn repair_ignores_intentionally_empty_documents() {
 async fn repair_selects_only_a_bounded_missing_chunk_batch() {
     let directory = tempfile::tempdir().expect("tempdir");
     let path = directory.path().join("bounded-doctor-repair.duckdb");
-    let store = Store::open(&path).expect("open store");
+    let store = crate::testkit::open_test_store(&path).expect("open store");
     for index in 0..5 {
         store
             .documents()
@@ -369,7 +369,7 @@ async fn repair_embeds_missing_documents_in_one_provider_call() {
 
     let directory = tempfile::tempdir().expect("tempdir");
     let path = directory.path().join("grouped-doctor-repair.duckdb");
-    let store = Store::open(&path).expect("open store");
+    let store = crate::testkit::open_test_store(&path).expect("open store");
     for index in 0..3 {
         store
             .documents()
@@ -413,7 +413,7 @@ async fn repair_embeds_missing_documents_in_one_provider_call() {
 async fn repair_final_fts_failure_returns_committed_report() {
     let directory = tempfile::tempdir().expect("tempdir");
     let path = directory.path().join("doctor-finalize-failure.duckdb");
-    let store = Store::open(&path).expect("open store");
+    let store = crate::testkit::open_test_store(&path).expect("open store");
     store
         .documents()
         .upsert_document(&Document {

@@ -1206,6 +1206,8 @@ impl Default for KgFact {
 ///
 /// Serialized as the plain code string, so the wire format is unchanged and
 /// unknown codes (for example from a client-supplied report) still round-trip.
+#[macro_export]
+#[doc(hidden)]
 macro_rules! finding_codes {
     ($(#[$meta:meta])* $name:ident { $($(#[$vmeta:meta])* $variant:ident => $wire:literal,)+ }) => {
         $(#[$meta])*
@@ -1292,7 +1294,9 @@ macro_rules! finding_codes {
         }
     };
 }
-pub(crate) use finding_codes;
+/// Path for the code enums defined above the store (`maintain`, `wiki`).
+#[doc(hidden)]
+pub use crate::finding_codes;
 
 #[cfg(test)]
 mod tests {

@@ -260,7 +260,7 @@ mod tests {
             embedding_dims: 8,
             ..crate::config::Config::for_tests()
         };
-        let store = Arc::new(Store::open(&config.db_path).unwrap());
+        let store = Arc::new(crate::testkit::open_test_store(&config.db_path).unwrap());
         HttpState::from_context(
             crate::context::AppContext::with_store(
                 store,

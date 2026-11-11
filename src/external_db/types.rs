@@ -247,7 +247,7 @@ mod tests {
     #[test]
     fn type_capture_upgrade_preserves_legacy_payload_and_does_not_report_new_metadata_as_ddl() {
         let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("types.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&root.path().join("types.duckdb")).unwrap();
         let base = json!({"capture_format":3,"id":"legacy","connection":"alias","project":"p","dialect":"postgresql","schemas":["public"],"captured_ms":0,"code_index_revision":null,"target_fingerprint":"h","complete_within_visible_scope":true,"diagnostics":[],"inferred_relations":{"algorithm_version":1,"relations":[],"diagnostics":[],"counts":{},"truncated":false,"diagnostic_truncated":false},"tables":[{"schema":"public","name":"t","kind":"BASE TABLE","columns":[],"foreign_keys":[],"complete":true,"sample":null,"metadata":{"indexes":[],"constraints":[],"view":null,"complete":true,"diagnostics":[]}}]});
         let payload = base.to_string();
         store.lock().unwrap().execute("INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",duckdb::params!["legacy","alias",0,payload]).unwrap();

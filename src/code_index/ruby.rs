@@ -1373,7 +1373,7 @@ mod integration_tests {
     #[test]
     fn ruby_index_cache_refresh_body_and_immutable_import_history_are_qualified() {
         let temp = tempfile::tempdir().unwrap();
-        let store = Store::open(&temp.path().join("ruby.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&temp.path().join("ruby.duckdb")).unwrap();
         let doc = |id: &str, path: &str, source: &str| Document {
             id: id.into(),
             uri: format!("file://{id}"),

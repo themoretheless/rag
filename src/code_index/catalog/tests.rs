@@ -3,7 +3,7 @@ use crate::models::Document;
 fn setup() -> (tempfile::TempDir, Store) {
     crate::code_index::source::install_document_write_hook();
     let root = tempfile::tempdir().unwrap();
-    let store = Store::open(&root.path().join("catalog.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&root.path().join("catalog.duckdb")).unwrap();
     (root, store)
 }
 fn put(store: &Store, id: &str, project: Option<&str>, path: &str, content: &str) {
@@ -186,7 +186,7 @@ fn run_history_empty_and_persisted_views_are_read_only() {
         before
     );
     drop(store);
-    let reopened = Store::open(&root.path().join("catalog.duckdb")).unwrap();
+    let reopened = crate::testkit::open_test_store(&root.path().join("catalog.duckdb")).unwrap();
     assert_eq!(
         crate::code_index::CodeIndex::new(&reopened)
             .code_catalog_query(&run_query(10))

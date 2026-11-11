@@ -358,7 +358,7 @@ mod tests {
     fn setup() -> (tempfile::TempDir, Store) {
         crate::code_index::source::install_document_write_hook();
         let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("files.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&root.path().join("files.duckdb")).unwrap();
         (root, store)
     }
     fn put(store: &Store, id: &str, path: &str, project: &str, body: &str) {

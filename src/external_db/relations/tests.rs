@@ -241,7 +241,7 @@ fn persisted_hypotheses_and_legacy_formats_are_not_recomputed_on_read() {
     s.validate_format().unwrap();
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("frozen.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let save = |s: &Snapshot| {
         store.lock().unwrap().execute("INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",duckdb::params![s.id,s.connection,s.captured_ms,serde_json::to_string(s).unwrap()]).unwrap();
     };
@@ -304,7 +304,7 @@ fn persisted_hypotheses_and_legacy_formats_are_not_recomputed_on_read() {
         .unwrap();
     assert_eq!(drift["total"], 0, "hypotheses are never DDL facts");
     drop(store);
-    let reopened = Store::open(&path).unwrap();
+    let reopened = crate::testkit::open_test_store(&path).unwrap();
     let historic = crate::external_db::ExternalDb::new(&reopened)
         .external_db_query(
             "db_relations",

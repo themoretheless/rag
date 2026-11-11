@@ -677,7 +677,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let db = root.path().join("live.duckdb");
         let backups = root.path().join("backups");
-        let store = Store::open(&db).unwrap();
+        let store = crate::testkit::open_test_store(&db).unwrap();
 
         let first = run_auto_backup_if_due(&store, &backups, Duration::from_secs(60), 2, 0)
             .unwrap()
@@ -700,7 +700,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let db = root.path().join("live.duckdb");
         let backups = root.path().join("backups");
-        let store = Store::open(&db).unwrap();
+        let store = crate::testkit::open_test_store(&db).unwrap();
 
         // Larger than any real volume: the simulated almost-full-disk case.
         let error =

@@ -4265,6 +4265,7 @@ dependencies = [
  "rag-mcp",
  "rag-mcp-core",
  "rag-mcp-markup",
+ "rag-store-duckdb",
  "regex",
  "reqwest",
  "ring",
@@ -4278,7 +4279,6 @@ dependencies = [
  "sysinfo",
  "tempfile",
  "thiserror 2.0.19",
- "tokenizers",
  "tokio",
  "tokio-util",
  "toml_edit",
@@ -4340,6 +4340,28 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "rag-store-duckdb"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "chrono",
+ "duckdb",
+ "rag-mcp-core",
+ "rag-mcp-markup",
+ "ring",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokenizers",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

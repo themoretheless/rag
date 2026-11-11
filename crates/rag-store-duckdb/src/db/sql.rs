@@ -1,7 +1,7 @@
 //! Shared SQL fragments for repository code.
 
 /// `?, ?, ?` for an `IN (...)` list of `n` bound values (empty for `n == 0`).
-pub(crate) fn in_placeholders(n: usize) -> String {
+pub fn in_placeholders(n: usize) -> String {
     vec!["?"; n].join(", ")
 }
 

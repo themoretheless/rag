@@ -421,7 +421,7 @@ mod tests {
     use super::*;
     fn store() -> (tempfile::TempDir, Store) {
         let dir = tempfile::tempdir().unwrap();
-        let s = Store::open(&dir.path().join("tasks.duckdb")).unwrap();
+        let s = crate::testkit::open_test_store(&dir.path().join("tasks.duckdb")).unwrap();
         (dir, s)
     }
     fn label(s: &Store, session: &str, name: &str) -> Value {
@@ -574,7 +574,7 @@ mod tests {
             .is_empty());
         let path = s.path().to_owned();
         drop(s);
-        let s = Store::open(&path).unwrap();
+        let s = crate::testkit::open_test_store(&path).unwrap();
         assert_eq!(
             AnalysisTasks::new(&s)
                 .analysis_notes("one", &Default::default())

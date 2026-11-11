@@ -6,6 +6,7 @@ pub mod path;
 pub mod slug;
 pub mod text;
 pub mod time;
+pub mod vector;
 
 pub use blocking::{blocking_section, run_blocking, run_detached};
 pub use hash::{check_path_allowlist, content_hash, parse_ingest_roots};
@@ -20,6 +21,7 @@ pub use text::{
 pub use time::{
     format_db_timestamp, parse_db_timestamp, parse_flexible_timestamp, parse_optional_timestamp,
 };
+pub use vector::cosine_similarity;
 
 /// Extract the slug segment from a `wiki://` URI.
 ///

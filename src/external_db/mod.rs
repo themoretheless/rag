@@ -1136,7 +1136,7 @@ mod fixture_tests {
                 .contains("PRIVATE_ROW_MARKER"));
             let root = tempfile::tempdir().unwrap();
             let path = root.path().join("capture.duckdb");
-            let store = Store::open(&path).unwrap();
+            let store = crate::testkit::open_test_store(&path).unwrap();
             store
                 .lock()
                 .unwrap()
@@ -1347,7 +1347,7 @@ mod fixture_tests {
                 "different_database_target_or_visible_scope"
             );
             drop(store);
-            let store = Store::open(&path).unwrap();
+            let store = crate::testkit::open_test_store(&path).unwrap();
             assert_eq!(
                 crate::external_db::ExternalDb::new(&store)
                     .external_db_query("db_relations", &q)

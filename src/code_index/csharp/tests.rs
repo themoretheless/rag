@@ -221,7 +221,7 @@ fn csharp_global_using_and_explicit_constructor_links_are_captured() {
 fn csharp_store_freshness_history_body_and_full_resolution_equivalence() {
     use crate::models::Document;
     let temp = tempfile::tempdir().unwrap();
-    let store = Store::open(&temp.path().join("csharp.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&temp.path().join("csharp.duckdb")).unwrap();
     let doc = |id: &str, path: &str, source: &str| Document {
         id: id.into(),
         uri: format!("file://{id}"),

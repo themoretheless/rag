@@ -20,7 +20,7 @@ async fn restore_creates_new_head_and_rejects_stale_cas() {
         embedding_dims: 16,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     store
         .embedding_manifest()
         .ensure_embedding_manifest(&config)
@@ -194,7 +194,7 @@ async fn raw_revision_restore_preserves_source_immutability() {
         embedding_dims: 16,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
     let indexer = DocumentIndexer::new(embedder.as_ref(), &config);
     let mut document = Document {
@@ -328,7 +328,7 @@ async fn restore_rejects_current_or_historical_source_controlled_snapshots() {
         embedding_dims: 16,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
     let indexer = DocumentIndexer::new(embedder.as_ref(), &config);
 

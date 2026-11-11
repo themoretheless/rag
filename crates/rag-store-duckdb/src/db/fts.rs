@@ -604,7 +604,7 @@ fn rebuild_fts(conn: &Connection, stemmer: String, chunks_generation: u64) -> Re
     };
 
     publish_refreshed_state(conn, &state, chunks_generation)?;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testkit"))]
     test_fts_crashpoint(conn, "published");
     Ok(state)
 }
@@ -763,11 +763,18 @@ pub fn search_bm25_with_stemmer(
 // DuckDB FTS path
 // ---------------------------------------------------------------------------
 
-#[cfg(test)]
-static FTS_CRASH_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-#[cfg(test)]
+/// Crash points of the FTS overwrite, armed by the WAL replay test of the
+/// root crate (`storage::wal_replay_tests`). Test-only.
+#[cfg(any(test, feature = "testkit"))]
+#[doc(hidden)]
+pub mod test_hooks {
+    /// Set by the crash child once its fixture is committed.
+    pub static FTS_CRASH_ARMED: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+}
+#[cfg(any(test, feature = "testkit"))]
 fn test_fts_crashpoint(conn: &Connection, phase: &str) {
-    if !FTS_CRASH_ARMED.load(std::sync::atomic::Ordering::SeqCst)
+    if !test_hooks::FTS_CRASH_ARMED.load(std::sync::atomic::Ordering::SeqCst)
         || std::env::var("RAG_TEST_FTS_CRASH_PHASE").ok().as_deref() != Some(phase)
     {
         return;
@@ -832,7 +839,7 @@ fn drop_derived_fts_catalog(conn: &Connection) -> Result<()> {
         "DELETE FROM meta WHERE key=?",
         params![META_INDEX_GENERATION],
     )?;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testkit"))]
     test_fts_crashpoint(conn, "dirty");
     while !drops.is_empty() {
         let before = drops.len();
@@ -843,7 +850,7 @@ fn drop_derived_fts_catalog(conn: &Connection) -> Result<()> {
                 last_error = Some(error);
                 remaining.push(ddl);
             } else {
-                #[cfg(test)]
+                #[cfg(any(test, feature = "testkit"))]
                 test_fts_crashpoint(conn, "leaf");
             }
         }
@@ -856,7 +863,7 @@ fn drop_derived_fts_catalog(conn: &Connection) -> Result<()> {
         drops = remaining;
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testkit"))]
     test_fts_crashpoint(conn, "leaves");
     // No CASCADE: replay must see an already empty schema, and unexpected
     // dependencies must produce an explicit fallback instead of being discarded.
@@ -864,7 +871,7 @@ fn drop_derived_fts_catalog(conn: &Connection) -> Result<()> {
         "DROP SCHEMA IF EXISTS {}",
         quoted_identifier(FTS_SCHEMA)
     ))?;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testkit"))]
     test_fts_crashpoint(conn, "schema");
     Ok(())
 }
@@ -895,7 +902,7 @@ fn try_duckdb_fts_index(conn: &Connection, stemmer: &str) -> Result<()> {
     );
     conn.execute_batch(&pragma)
         .map_err(|e| AppError::fts(format!("create_fts_index on chunks failed: {e}")))?;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testkit"))]
     test_fts_crashpoint(conn, "built");
     Ok(())
 }
@@ -1206,25 +1213,26 @@ fn make_snippet(content: &str, max_chars: usize) -> String {
 /// A workflow names its finalization site; a test selects that one site by
 /// putting [`test_fault::fail`] or [`test_fault::panic`] into the configured
 /// stemmer. Other sites in the same flow keep the real refresh path.
-#[cfg(test)]
-pub(crate) mod test_fault {
+#[cfg(any(test, feature = "testkit"))]
+#[doc(hidden)]
+pub mod test_fault {
     use crate::error::{AppError, Result};
 
     const FAIL_PREFIX: &str = "__test_fail_finalize_fts__:";
     const PANIC_PREFIX: &str = "__test_panic_finalize_fts__:";
 
     /// Stemmer value that makes `site`'s finalization return an FTS error.
-    pub(crate) fn fail(site: &str) -> String {
+    pub fn fail(site: &str) -> String {
         format!("{FAIL_PREFIX}{site}")
     }
 
     /// Stemmer value that makes `site`'s finalization panic.
-    pub(crate) fn panic(site: &str) -> String {
+    pub fn panic(site: &str) -> String {
         format!("{PANIC_PREFIX}{site}")
     }
 
     /// Called at the top of each finalization site.
-    pub(crate) fn check(site: &str, stemmer: &str) -> Result<()> {
+    pub fn check(site: &str, stemmer: &str) -> Result<()> {
         if stemmer.strip_prefix(PANIC_PREFIX) == Some(site) {
             panic!("injected {site} FTS finalization panic");
         }

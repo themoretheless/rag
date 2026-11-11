@@ -69,7 +69,7 @@ fn item(
 async fn dry_run_default_does_not_mutate() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("apply.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let config = test_config(path, 50);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
     seed_doc(&store, "d1", "Alpha", "hello body", "raw");
@@ -99,7 +99,7 @@ async fn plan_dry_run_cannot_be_disabled_by_refresh_stale_action() {
     let path = dir
         .path()
         .join("refresh-stale-authoritative-dry-run.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let mut config = test_config(path, 50);
     config.llm_enabled = true;
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
@@ -148,7 +148,7 @@ async fn plan_dry_run_cannot_be_disabled_by_refresh_stale_action() {
 async fn apply_refile_pin_archive() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("apply2.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let config = test_config(path, 50);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
     seed_doc(&store, "d1", "Alpha", "hello body", "wiki");
@@ -190,7 +190,7 @@ async fn apply_refile_pin_archive() {
 async fn respects_max_docs_cap() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cap.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let config = test_config(path, 2);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
     for i in 0..4 {
@@ -240,7 +240,7 @@ async fn respects_max_docs_cap() {
 async fn merge_exact_dup_archives_sources() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("dup.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let config = test_config(path, 50);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
     let body = "same content hash body";
@@ -295,7 +295,7 @@ async fn merge_exact_dup_archives_sources() {
 async fn merge_exact_dup_rejects_one_unrelated_source_without_partial_mutation() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("dup-unrelated.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let config = test_config(path, 50);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
     seed_doc(&store, "keep", "Keep", "same body", "wiki");
@@ -345,7 +345,7 @@ async fn merge_exact_dup_rejects_one_unrelated_source_without_partial_mutation()
 async fn merge_exact_dup_fallback_hashes_canonical_body_instead_of_trusting_column() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("dup-canonical-hash.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let config = test_config(path, 50);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
     seed_doc(&store, "keep", "Keep", "same body", "wiki");
@@ -388,7 +388,7 @@ async fn merge_exact_dup_fallback_hashes_canonical_body_instead_of_trusting_colu
 async fn merge_exact_dup_uses_unique_sources_and_remaining_global_cap() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("dup-cap.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let config = test_config(path, 1);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
     for id in ["keep", "dup1", "dup2"] {
@@ -441,7 +441,7 @@ async fn merge_exact_dup_uses_unique_sources_and_remaining_global_cap() {
 async fn merge_exact_dup_raw_guard_is_case_insensitive() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("dup-raw-case.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let config = test_config(path, 50);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
     seed_doc(&store, "keep", "Keep", "same body", "wiki");
@@ -481,7 +481,7 @@ async fn merge_exact_dup_raw_guard_is_case_insensitive() {
 fn drop_tombstones_clamps_cap_and_guards_raw_case_insensitively() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("drop-tombstones-cap.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let config = test_config(path, 1);
     for (id, layer) in [("wiki-a", "wiki"), ("wiki-b", "wiki"), ("raw", "RaW")] {
         seed_doc(&store, id, id, "body", layer);
@@ -507,7 +507,7 @@ fn drop_tombstones_clamps_cap_and_guards_raw_case_insensitively() {
     assert_eq!(remaining_after_cap, 2);
 
     let raw_only_path = dir.path().join("drop-tombstones-raw.duckdb");
-    let raw_store = Store::open(&raw_only_path).unwrap();
+    let raw_store = crate::testkit::open_test_store(&raw_only_path).unwrap();
     let raw_config = test_config(raw_only_path, 50);
     seed_doc(&raw_store, "raw", "Raw", "body", "rAw");
     let mut raw = raw_store.documents().get_document("raw").unwrap().unwrap();
@@ -530,7 +530,7 @@ fn drop_tombstones_clamps_cap_and_guards_raw_case_insensitively() {
 async fn set_tags_links_graph() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("tags.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let config = test_config(path, 50);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
     seed_doc(&store, "d1", "Tagged", "body #old", "raw");
@@ -569,7 +569,7 @@ async fn set_tags_links_graph() {
 async fn set_tags_reuses_the_canonical_tag_hub_for_hash_and_case_variants() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("tag-hub.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let config = test_config(path, 50);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
     seed_doc(&store, "d1", "One", "body", "raw");
@@ -609,7 +609,7 @@ async fn set_tags_reuses_the_canonical_tag_hub_for_hash_and_case_variants() {
 async fn rebuild_index_and_noop() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("idx.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let config = test_config(path, 50);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
     seed_doc(&store, "w1", "Wiki", "compiled", "wiki");
@@ -633,7 +633,7 @@ async fn rebuild_index_and_noop() {
 async fn reembed_plan_finishes_with_generation_clean_fts() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("reembed-plan.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let config = test_config(path, 50);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
     store
@@ -688,7 +688,7 @@ async fn reembed_plan_finishes_with_generation_clean_fts() {
 async fn partial_reembed_failure_is_structured_error_and_keeps_migration_marker() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("partial-reembed-plan.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let mut config = test_config(path, 50);
     let mut old_config = config.clone();
     old_config.embedding_model = "old-model".into();
@@ -756,7 +756,7 @@ async fn partial_reembed_failure_is_structured_error_and_keeps_migration_marker(
 async fn capped_reembed_is_structured_plan_error() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("capped-reembed-plan.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let config = test_config(path, 50);
     store
         .embedding_manifest()
@@ -796,7 +796,7 @@ async fn capped_reembed_is_structured_plan_error() {
 async fn final_fts_failure_returns_mutation_report_and_terminal_ops_log() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("final-fts-failure.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let mut config = test_config(path, 50);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
     let body = "same durable body before failed finalization";

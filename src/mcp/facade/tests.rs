@@ -1,5 +1,6 @@
 //! Behavior tests for the composed MCP server: tool calls, guards, and policy.
 
+use crate::mcp::error::mcp_error;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -146,7 +147,7 @@ async fn pack_context_mcp_enforces_complete_context_budget() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("pack-mcp.duckdb");
     let config = test_config(path.clone(), Vec::new(), 2);
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let server = RagServer::from_context(crate::context::AppContext::new(
         store,
         Arc::new(MockEmbedder::new(2)),
@@ -178,7 +179,7 @@ async fn pack_context_mcp_enforces_complete_context_budget() {
 fn status_and_doctor_empty_corpus() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("status.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 32usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -209,7 +210,7 @@ fn status_and_doctor_empty_corpus() {
 async fn doctor_repair_rebuilds_missing_chunks() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("doctor-repair.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 16usize;
     let config = test_config(path, Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -313,7 +314,7 @@ async fn import_bundle_finishes_with_generation_clean_fts() {
     let bundle_path = dir.path().join("bundle.json");
     let dims = 8usize;
     let config = test_config(path.clone(), vec![dir.path().to_path_buf()], dims);
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
     let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
     server
@@ -422,7 +423,7 @@ async fn legacy_bundle_requires_opt_in_and_reembeds_before_import() {
     let bundle_path = dir.path().join("legacy-v1.json");
     let dims = 8usize;
     let config = test_config(path.clone(), vec![dir.path().to_path_buf()], dims);
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
     let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
     let body = "legacy vector must be replaced";
@@ -561,7 +562,7 @@ async fn bulk_maintenance_apply_paths_refuse_active_guarded_search() {
     let path = dir.path().join("maintenance-lane.duckdb");
     let dims = 8usize;
     let config = test_config(path.clone(), Vec::new(), dims);
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
     let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
     let search_guard = server
@@ -674,7 +675,7 @@ async fn dropped_apply_request_leaves_owned_mutation_workflow_running() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("owned-maintenance.duckdb");
     let dims = 8usize;
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let config = test_config(path, Vec::new(), dims);
     store
         .embedding_manifest()
@@ -768,7 +769,7 @@ async fn dropped_apply_request_leaves_owned_mutation_workflow_running() {
 async fn retrieval_helpers_multi_get_expand_and_find_similar() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("retrieval-helpers.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 16usize;
     let config = test_config(path, Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -839,7 +840,7 @@ async fn retrieval_helpers_multi_get_expand_and_find_similar() {
 async fn llm_status_reports_config_and_unreachable_when_no_server() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("llm_status.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 32usize;
     // Closed local port so the probe fails fast without a live Ollama.
     let mut config = test_config(path.clone(), Vec::new(), dims);
@@ -869,7 +870,7 @@ async fn llm_status_reports_config_and_unreachable_when_no_server() {
 fn doctor_detects_manifest_dim_mismatch_and_roots() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("doctor.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     store
         .embedding_manifest()
         .set_embedding_manifest(&crate::models::EmbeddingManifest {
@@ -903,7 +904,7 @@ fn doctor_detects_manifest_dim_mismatch_and_roots() {
 async fn status_ready_for_search_after_ingest() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("ready.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 32usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -941,7 +942,7 @@ async fn status_ready_for_search_after_ingest() {
 async fn list_wings_rooms_taxonomy_and_status_wings() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("taxonomy.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 32usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -1010,7 +1011,7 @@ async fn list_wings_rooms_taxonomy_and_status_wings() {
 async fn update_document_meta_skips_reembed_unless_content_changes() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("meta.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 32usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -1127,7 +1128,7 @@ async fn update_document_meta_skips_reembed_unless_content_changes() {
 async fn check_duplicate_and_delete_by_source_tools() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("dedupe.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 32usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -1212,7 +1213,7 @@ async fn check_duplicate_and_delete_by_source_tools() {
 async fn delete_by_source_preview_matches_archived_and_tombstone_apply_scope() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("delete-source-preview.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 8usize;
     let config = test_config(path, Vec::new(), dims);
     let server = RagServer::from_context(crate::context::AppContext::new(
@@ -1295,7 +1296,7 @@ async fn delete_by_source_finalization_failure_returns_committed_report() {
     let dims = 8usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let mut server = RagServer::from_context(crate::context::AppContext::new(
-        Store::open(&path).expect("open"),
+        crate::testkit::open_test_store(&path).expect("open"),
         Arc::new(MockEmbedder::new(dims)),
         config,
     ));
@@ -1363,7 +1364,7 @@ async fn delete_by_source_finalization_failure_returns_committed_report() {
 async fn cleanup_source_duplicates_defaults_safe_requires_confirm_and_respects_lane() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("source-dedupe-tool.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 16usize;
     let config = test_config(path, Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -1505,7 +1506,7 @@ async fn cleanup_source_duplicates_defaults_safe_requires_confirm_and_respects_l
 async fn ingest_raw_list_sources_get_source_immutable() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("raw.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 32usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -1603,7 +1604,7 @@ async fn ingest_file_respects_allowlist() {
     std::fs::write(&outside, "should not ingest").expect("write outside");
 
     let db_path = dir.path().join("allow.duckdb");
-    let store = Store::open(&db_path).expect("open");
+    let store = crate::testkit::open_test_store(&db_path).expect("open");
     let dims = 32usize;
     let config = test_config(db_path.clone(), vec![allowed.clone()], dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -1647,7 +1648,7 @@ async fn ingest_file_respects_allowlist() {
 async fn add_drawer_check_duplicate_delete_by_source() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("drawer.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 32usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -1787,7 +1788,7 @@ async fn add_drawer_check_duplicate_delete_by_source() {
 async fn single_reembed_refuses_identity_migration_until_full_reembed() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("reembed.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 16usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let calls = Arc::new(AtomicUsize::new(0));
@@ -1942,7 +1943,7 @@ fn recovery_jsonl_requires_one_typed_manifest_before_documents() {
 async fn recovery_tools_refuse_oversized_io_without_publishing_an_artifact() {
     let root = tempfile::tempdir().unwrap();
     let db_path = root.path().join("bounded.duckdb");
-    let store = Store::open(&db_path).unwrap();
+    let store = crate::testkit::open_test_store(&db_path).unwrap();
     let config = test_config(db_path, vec![root.path().to_path_buf()], 32);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(32));
     let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
@@ -1997,7 +1998,7 @@ async fn recovery_tools_refuse_oversized_io_without_publishing_an_artifact() {
 
 #[test]
 fn busy_error_is_structured_retryable_and_resource_safe() {
-    let mcp = McpError::from(AppError::busy(
+    let mcp = mcp_error(AppError::busy(
         "exclusive corpus mutation is active; retry search after it completes",
     ));
     assert_eq!(mcp.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
@@ -2017,7 +2018,7 @@ fn busy_error_is_structured_retryable_and_resource_safe() {
 async fn multi_query_search_fails_busy_before_embedding_any_rewrite() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("multi-query-busy.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 2;
     let calls = Arc::new(AtomicUsize::new(0));
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(CountingEmbedder {
@@ -2058,7 +2059,7 @@ async fn multi_query_search_fails_busy_before_embedding_any_rewrite() {
 async fn vector_search_holds_corpus_guard_across_async_embedding() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("vector-search-guard.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 2;
     let started = Arc::new(tokio::sync::Semaphore::new(0));
     let release = Arc::new(tokio::sync::Semaphore::new(0));
@@ -2129,7 +2130,7 @@ async fn vector_search_holds_corpus_guard_across_async_embedding() {
 fn kg_store_roundtrip_via_server() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("kg_mcp.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 16usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -2186,7 +2187,7 @@ fn kg_store_roundtrip_via_server() {
 async fn dropped_guarded_mutation_keeps_the_lane_until_work_and_fts_finish() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("guarded-mutation.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 8usize;
     let config = test_config(path, Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));

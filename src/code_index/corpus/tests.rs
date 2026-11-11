@@ -28,7 +28,7 @@ fn search(queries: &[&str]) -> MultiSearch {
 #[test]
 fn captured_byte_copy_groups_omit_legacy_and_invalidate_changed_text_metadata() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&dir.path().join("bytes.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&dir.path().join("bytes.duckdb")).unwrap();
     for (id, raw) in [
         ("a", b"hello".as_slice()),
         ("b", b"hello".as_slice()),
@@ -85,7 +85,7 @@ fn captured_byte_copy_groups_omit_legacy_and_invalidate_changed_text_metadata() 
 #[test]
 fn duplicate_family_inventory_keeps_independent_exact_and_dissimilar_groups() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&dir.path().join("families.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&dir.path().join("families.duckdb")).unwrap();
     for (id, path, body) in [
         ("a", "/p/Files.txt", "PRIVATE_ALPHA"),
         ("b", "/p/Files2.txt", "PRIVATE_ALPHA"),
@@ -148,7 +148,7 @@ fn duplicate_family_inventory_keeps_independent_exact_and_dissimilar_groups() {
 #[test]
 fn duplicate_family_limits_do_not_manufacture_same_name_classification() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&dir.path().join("limits.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&dir.path().join("limits.duckdb")).unwrap();
     put(&store, "a", "/p/Files.txt", "alpha", "p");
     put(&store, "b", "/p/Files2.txt", "beta", "p");
     let mut q = DuplicateQuery {
@@ -197,7 +197,7 @@ fn duplicate_family_limits_do_not_manufacture_same_name_classification() {
 #[test]
 fn duplicate_primary_comparison_uses_returned_window_and_current_text() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&dir.path().join("comparison.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&dir.path().join("comparison.duckdb")).unwrap();
     let shared = (0..10)
         .map(|i| format!("shared private content line {i}\n"))
         .collect::<String>();
@@ -253,7 +253,7 @@ fn duplicate_primary_comparison_uses_returned_window_and_current_text() {
 #[test]
 fn multi_search_exact_conjunction_regex_scope_utf8_and_no_chunks_needed() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&dir.path().join("search.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&dir.path().join("search.duckdb")).unwrap();
     put(
         &store,
         "a",
@@ -318,7 +318,7 @@ fn multi_search_exact_conjunction_regex_scope_utf8_and_no_chunks_needed() {
 #[test]
 fn independent_query_windows_and_families_preserve_scope_and_limits() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&dir.path().join("multi.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&dir.path().join("multi.duckdb")).unwrap();
     put(&store, "z", "/p/Files.php", "alpha alpha alpha alpha", "p");
     put(&store, "y", "/p/Files2.php", "beta", "p");
     put(&store, "x", "/q/Files3.php", "alpha", "q");
@@ -377,7 +377,7 @@ fn independent_query_windows_and_families_preserve_scope_and_limits() {
 #[test]
 fn source_encoding_labels_require_matching_decoded_source_fingerprint() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&dir.path().join("encoding.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&dir.path().join("encoding.duckdb")).unwrap();
     put(&store, "doc", "/p/code.py", "needle", "p");
     let mut doc = store.documents().get_document("doc").unwrap().unwrap();
     doc.metadata_json = serde_json::json!({"source_decoding_version":1,"source_encoding":"windows-1251","source_encoding_basis":"heuristic_cyrillic_share","source_text_hash":content_hash("needle"),"source_bytes_hash":"raw"}).to_string();
@@ -408,7 +408,7 @@ fn source_encoding_labels_require_matching_decoded_source_fingerprint() {
 #[test]
 fn search_family_roles_use_bound_values_and_omit_stale_callers_and_targets() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&dir.path().join("roles.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&dir.path().join("roles.duckdb")).unwrap();
     put(
         &store,
         "api",
@@ -512,7 +512,7 @@ fn search_family_roles_use_bound_values_and_omit_stale_callers_and_targets() {
 #[test]
 fn exact_and_numbered_copies_have_static_liveness_evidence_and_no_delete_claim() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&dir.path().join("dups.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&dir.path().join("dups.duckdb")).unwrap();
     put(
         &store,
         "base",
@@ -564,7 +564,7 @@ fn exact_and_numbered_copies_have_static_liveness_evidence_and_no_delete_claim()
 #[test]
 fn approximate_families_have_threshold_evidence_and_explicit_work_cap() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&dir.path().join("dups.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&dir.path().join("dups.duckdb")).unwrap();
     for i in 0..4 {
         put(
             &store,
@@ -593,7 +593,7 @@ fn approximate_families_have_threshold_evidence_and_explicit_work_cap() {
 #[test]
 fn duplicate_roles_include_imports_and_resources_from_outside_target_prefix() {
     let temp = tempfile::tempdir().unwrap();
-    let store = Store::open(&temp.path().join("roles.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&temp.path().join("roles.duckdb")).unwrap();
     for (id, path, body) in [
         ("css1", "/p/copies/theme.css", "body { color:red; }"),
         ("css2", "/p/copies/theme2.css", "body { color:red; }"),
@@ -656,7 +656,7 @@ fn duplicate_roles_include_imports_and_resources_from_outside_target_prefix() {
 #[test]
 fn duplicate_roles_include_function_values_and_drop_stale_sources() {
     let temp = tempfile::tempdir().unwrap();
-    let store = Store::open(&temp.path().join("values.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&temp.path().join("values.duckdb")).unwrap();
     for (id, path) in [("base", "/p/copies/api.py"), ("used", "/p/copies/api2.py")] {
         put(
             &store,
@@ -709,7 +709,7 @@ fn duplicate_roles_include_function_values_and_drop_stale_sources() {
 #[test]
 fn duplicate_resource_target_identity_and_parsed_target_fingerprints_are_required() {
     let temp = tempfile::tempdir().unwrap();
-    let store = Store::open(&temp.path().join("identity.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&temp.path().join("identity.duckdb")).unwrap();
     for (id, path) in [("a", "/p/icon.svg"), ("b", "/p/icon2.svg")] {
         put(&store, id, path, "<svg><path d='M0 0'/></svg>", "p");
     }
@@ -747,7 +747,7 @@ fn duplicate_resource_target_identity_and_parsed_target_fingerprints_are_require
 #[test]
 fn duplicate_evidence_counts_and_bounded_retention_are_order_independent() {
     let temp = tempfile::tempdir().unwrap();
-    let store = Store::open(&temp.path().join("cap.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&temp.path().join("cap.duckdb")).unwrap();
     put(&store, "a", "/p/mod.js", "const value=1;", "p");
     put(&store, "b", "/p/mod2.js", "const value=1;", "p");
     put(
@@ -790,7 +790,7 @@ fn duplicate_evidence_counts_and_bounded_retention_are_order_independent() {
 #[test]
 fn duplicate_primary_remains_in_member_window_and_counts_break_role_ties() {
     let temp = tempfile::tempdir().unwrap();
-    let store = Store::open(&temp.path().join("order.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&temp.path().join("order.duckdb")).unwrap();
     put(
         &store,
         "long",
@@ -838,7 +838,7 @@ fn duplicate_primary_remains_in_member_window_and_counts_break_role_ties() {
 #[test]
 fn search_roles_include_imports_resources_and_sources_outside_target_prefix() {
     let temp = tempfile::tempdir().unwrap();
-    let store = Store::open(&temp.path().join("roles.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&temp.path().join("roles.duckdb")).unwrap();
     for (id, path, body) in [
         ("css1", "/p/copies/theme.css", "/*needle*/body{color:red}"),
         ("css2", "/p/copies/theme2.css", "/*needle*/body{color:red}"),
@@ -922,7 +922,7 @@ fn search_roles_include_imports_resources_and_sources_outside_target_prefix() {
 #[test]
 fn search_resource_roles_exclude_unindexed_and_stale_sources_and_targets() {
     let temp = tempfile::tempdir().unwrap();
-    let store = Store::open(&temp.path().join("stale.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&temp.path().join("stale.duckdb")).unwrap();
     for (id, path) in [("a", "/p/copies/theme.css"), ("b", "/p/copies/theme2.css")] {
         put(&store, id, path, "/*needle*/body{color:red}", "p");
     }
@@ -987,7 +987,7 @@ fn search_resource_roles_exclude_unindexed_and_stale_sources_and_targets() {
 #[test]
 fn search_scopes_index_reads_and_skips_role_index_for_empty_windows() {
     let temp = tempfile::tempdir().unwrap();
-    let store = Store::open(&temp.path().join("scope.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&temp.path().join("scope.duckdb")).unwrap();
     put(&store, "p", "/p/a.py", "def work(): return 'needle'", "p");
     put(&store, "q", "/q/a.py", "def work(): return 'needle'", "q");
     crate::code_index::CodeIndex::new(&store)
@@ -1031,7 +1031,7 @@ fn search_scopes_index_reads_and_skips_role_index_for_empty_windows() {
 fn corpus_read_transaction_keeps_roles_consistent_across_a_concurrent_publication() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("snapshot.duckdb");
-    let reader = Store::open(&path).unwrap();
+    let reader = crate::testkit::open_test_store(&path).unwrap();
     let mut writer = reader.lock().unwrap().try_clone().unwrap();
     put(
         &reader,
@@ -1136,7 +1136,7 @@ fn corpus_read_transaction_keeps_roles_consistent_across_a_concurrent_publicatio
 #[test]
 fn scoped_corpus_body_reads_cross_parameter_batches_without_losing_order() {
     let temp = tempfile::tempdir().unwrap();
-    let store = Store::open(&temp.path().join("batches.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&temp.path().join("batches.duckdb")).unwrap();
     store.lock().unwrap().execute("INSERT INTO documents(id,uri,title,content,source_file,wing,created_at,updated_at) SELECT 'd'||i,'file://d'||i,'doc','needle','/p/copies/f'||i||'.txt','p',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP FROM range(513) t(i)",[]).unwrap();
     put(&store, "quoted'?)", "/p/copies/quoted.txt", "needle", "p");
     put(&store, "outside", "/p/other.txt", "outside", "p");
@@ -1157,7 +1157,7 @@ fn scoped_corpus_body_reads_cross_parameter_batches_without_losing_order() {
 #[test]
 fn literal_path_roles_find_endpoint_constants_outside_target_scope() {
     let temp = tempfile::tempdir().unwrap();
-    let store = Store::open(&temp.path().join("literal.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&temp.path().join("literal.duckdb")).unwrap();
     for (id, path) in [("base", "/p/php/Files.php"), ("used", "/p/php/Files2.php")] {
         put(
             &store,
@@ -1217,7 +1217,7 @@ fn literal_path_roles_find_endpoint_constants_outside_target_scope() {
 #[test]
 fn literal_path_basename_uniqueness_uses_the_whole_project_inventory() {
     let temp = tempfile::tempdir().unwrap();
-    let store = Store::open(&temp.path().join("ambiguous.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&temp.path().join("ambiguous.duckdb")).unwrap();
     put(&store, "a", "/p/a/Files.php", "<?php echo 'needle';", "p");
     put(&store, "b", "/p/b/Files.php", "<?php echo 'needle';", "p");
     put(&store, "js", "/p/app.js", "const path='Files.php';", "p");
@@ -1249,7 +1249,7 @@ fn literal_path_basename_uniqueness_uses_the_whole_project_inventory() {
 #[test]
 fn literal_path_boundaries_reject_substrings_unrelated_paths_and_external_urls() {
     let temp = tempfile::tempdir().unwrap();
-    let store = Store::open(&temp.path().join("boundaries.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&temp.path().join("boundaries.duckdb")).unwrap();
     put(
         &store,
         "target",
@@ -1287,7 +1287,7 @@ fn literal_path_boundaries_reject_substrings_unrelated_paths_and_external_urls()
 #[test]
 fn literal_path_scan_reports_budgets_disabled_mode_and_stale_sources() {
     let temp = tempfile::tempdir().unwrap();
-    let store = Store::open(&temp.path().join("budgets.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&temp.path().join("budgets.duckdb")).unwrap();
     put(
         &store,
         "target",
@@ -1357,7 +1357,7 @@ fn literal_path_scan_reports_budgets_disabled_mode_and_stale_sources() {
 #[test]
 fn literal_path_scan_caps_retention_but_keeps_complete_unique_source_counts() {
     let temp = tempfile::tempdir().unwrap();
-    let store = Store::open(&temp.path().join("retention.duckdb")).unwrap();
+    let store = crate::testkit::open_test_store(&temp.path().join("retention.duckdb")).unwrap();
     for (id, path) in [("a", "/p/copies/Files.php"), ("b", "/p/copies/Files2.php")] {
         put(&store, id, path, "<?php echo 'needle';", "p");
     }

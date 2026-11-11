@@ -374,7 +374,7 @@ mod tests {
     fn inline_resource_impact_liveness_refresh_and_frozen_property_diffs() {
         use crate::models::Document;
         let temp = tempfile::tempdir().unwrap();
-        let store = Store::open(&temp.path().join("inline.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&temp.path().join("inline.duckdb")).unwrap();
         let doc = |id: &str, path: &str, body: &str| Document {
             id: id.into(),
             uri: format!("file://{id}"),

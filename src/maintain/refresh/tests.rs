@@ -94,7 +94,7 @@ fn flags_explicit_single_action() {
 fn reindex_fts_and_wiki_index() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("refresh.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     seed_doc(&store, "d1", "Alpha", "hello world [[Beta]] #tag", "raw");
     seed_doc(
         &store,
@@ -117,7 +117,7 @@ fn reindex_fts_and_wiki_index() {
 fn rebuild_graph_dirty_then_all() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("graph.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     seed_doc(&store, "d1", "Alpha", "see [[Beta]] and #topic", "raw");
     seed_doc(&store, "d2", "Gamma", "plain text no links", "raw");
 
@@ -146,7 +146,7 @@ fn rebuild_graph_dirty_then_all() {
 fn graph_respects_max_docs_cap() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cap.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     for i in 0..5 {
         seed_doc(
             &store,
@@ -167,7 +167,7 @@ fn graph_respects_max_docs_cap() {
 async fn maintain_refresh_dry_run_and_apply() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("maint.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let dims = 8usize;
     let config = test_config(path.clone(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -258,7 +258,7 @@ async fn maintain_refresh_dry_run_and_apply() {
 async fn reembed_all_updates_vectors_and_manifest() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("reembed.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let dims = 16usize;
     let config = test_config(path.clone(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -300,7 +300,7 @@ async fn reembed_all_updates_vectors_and_manifest() {
 async fn graph_and_uncapped_reembed_use_multiple_bounded_pages() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("paged-refresh.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let dims = 8usize;
     let config = test_config(path, dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -340,7 +340,7 @@ async fn graph_and_uncapped_reembed_use_multiple_bounded_pages() {
 async fn maintain_refresh_clamps_user_max_docs_to_config() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("refresh-service-cap.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let mut config = test_config(path, 8);
     config.maint_max_docs = 2;
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
@@ -375,7 +375,7 @@ async fn maintain_refresh_clamps_user_max_docs_to_config() {
 async fn reembed_all_refuses_orphan_chunk_without_publishing_manifest() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("reembed-orphan.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let dims = 16usize;
     let config = test_config(path, dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -453,7 +453,7 @@ async fn reembed_all_refuses_orphan_chunk_without_publishing_manifest() {
 async fn capped_same_dimension_identity_migration_remains_closed_until_resumed() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("reembed-cap.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let old_config = test_config(path, 8);
     let mut target_config = old_config.clone();
     target_config.embedding_model = "next-model-same-dims".into();
@@ -498,7 +498,7 @@ async fn capped_same_dimension_identity_migration_remains_closed_until_resumed()
 async fn reembed_all_groups_small_documents_into_one_provider_call() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("reembed-grouped.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let config = test_config(path, 16);
     for (id, body) in [
         ("g1", "alpha body"),
@@ -524,7 +524,7 @@ async fn reembed_all_groups_small_documents_into_one_provider_call() {
 async fn partial_migration_marker_refuses_old_and_target_until_full_retry() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("reembed-partial.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let old_config = test_config(path.clone(), 8);
     let target_config = test_config(path, 16);
     store
@@ -549,7 +549,8 @@ async fn partial_migration_marker_refuses_old_and_target_until_full_retry() {
     assert_eq!(failing.calls.load(Ordering::Relaxed), 3);
 
     drop(store);
-    let store = Store::open(&target_config.db_path).expect("reopen partial migration");
+    let store =
+        crate::testkit::open_test_store(&target_config.db_path).expect("reopen partial migration");
     let marker = store
         .embedding_manifest()
         .get_embedding_manifest()
@@ -628,7 +629,7 @@ async fn partial_migration_marker_refuses_old_and_target_until_full_retry() {
 async fn direct_refresh_reports_partial_reembed_as_top_level_failure() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("refresh-partial-reembed.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let old_config = test_config(path.clone(), 8);
     let target_config = test_config(path, 16);
     store
@@ -674,7 +675,7 @@ async fn direct_refresh_reports_partial_reembed_as_top_level_failure() {
 async fn refresh_final_fts_failure_returns_report_and_terminal_ops_log() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("refresh-finalize-failure.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let dims = 8usize;
     let mut config = test_config(path, dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -742,7 +743,7 @@ async fn refresh_final_fts_failure_returns_report_and_terminal_ops_log() {
 async fn write_wiki_then_refresh_index() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("wiki.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let dims = 8usize;
     let config = test_config(path.clone(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -794,7 +795,7 @@ async fn write_wiki_then_refresh_index() {
 async fn reembed_all_capped_migration_runs_one_resumable_batch() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("reembed-cap.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let old_config = test_config(path.clone(), 8);
     let mut target_config = old_config.clone();
     target_config.embedding_model = "next-model-same-dims".into();
@@ -849,7 +850,7 @@ async fn reembed_all_capped_migration_runs_one_resumable_batch() {
 async fn reembed_status_reports_match_pending_and_completion() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("reembed-status.duckdb");
-    let store = Store::open(&path).unwrap();
+    let store = crate::testkit::open_test_store(&path).unwrap();
     let old_config = test_config(path.clone(), 8);
     let target_config = test_config(path, 16);
     store
@@ -895,7 +896,7 @@ async fn reembed_status_reports_match_pending_and_completion() {
 
     // Simulate a restart between batches: reopen the same database file.
     drop(store);
-    let store = Store::open(&target_config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&target_config.db_path).unwrap();
     let status = reembed_status(&store, &target_config).unwrap();
     assert_eq!(status.migration.unwrap().documents_pending, 1);
 

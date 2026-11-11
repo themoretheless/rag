@@ -1,6 +1,5 @@
 use super::*;
 use crate::config::Config;
-use crate::db::Store;
 use crate::embeddings::MockEmbedder;
 use axum::body::{to_bytes, Body};
 use axum::http::Request;
@@ -19,7 +18,7 @@ fn state(root: &std::path::Path) -> HttpState {
         ..Config::for_tests()
     };
     HttpState {
-        store: Arc::new(Store::open(&config.db_path).unwrap()),
+        store: Arc::new(crate::testkit::open_test_store(&config.db_path).unwrap()),
         mcp_http: false,
         embedder: Arc::new(MockEmbedder::new(16)),
         config: config.into(),
@@ -462,7 +461,8 @@ fn retention_keeps_the_newest_terminal_jobs() {
 #[test]
 fn deleting_a_job_row_waits_for_an_in_flight_persist() {
     let root = tempfile::tempdir().unwrap();
-    let store = Arc::new(Store::open(&root.path().join("overlap.duckdb")).unwrap());
+    let store =
+        Arc::new(crate::testkit::open_test_store(&root.path().join("overlap.duckdb")).unwrap());
     let registry = JobRegistry::new(Some(store));
     // Stand in for a persist that has checked the map and not yet written.
     let in_flight = registry.inner.persist_order.lock().unwrap();
@@ -490,7 +490,8 @@ fn deleting_a_job_row_waits_for_an_in_flight_persist() {
 #[test]
 fn persisting_a_pruned_job_does_not_bring_its_row_back() {
     let root = tempfile::tempdir().unwrap();
-    let store = Arc::new(Store::open(&root.path().join("pruned.duckdb")).unwrap());
+    let store =
+        Arc::new(crate::testkit::open_test_store(&root.path().join("pruned.duckdb")).unwrap());
     let registry = JobRegistry::new(Some(store.clone()));
     registry
         .jobs()
@@ -516,7 +517,8 @@ fn persisting_a_pruned_job_does_not_bring_its_row_back() {
 #[test]
 fn a_stale_snapshot_never_overwrites_a_newer_persisted_state() {
     let root = tempfile::tempdir().unwrap();
-    let store = Arc::new(Store::open(&root.path().join("order.duckdb")).unwrap());
+    let store =
+        Arc::new(crate::testkit::open_test_store(&root.path().join("order.duckdb")).unwrap());
     let registry = JobRegistry::new(Some(store.clone()));
     registry
         .jobs()
@@ -541,7 +543,8 @@ fn a_stale_snapshot_never_overwrites_a_newer_persisted_state() {
 #[test]
 fn progress_updates_persist_at_most_once_per_interval_but_status_at_once() {
     let root = tempfile::tempdir().unwrap();
-    let store = Arc::new(Store::open(&root.path().join("progress.duckdb")).unwrap());
+    let store =
+        Arc::new(crate::testkit::open_test_store(&root.path().join("progress.duckdb")).unwrap());
     let registry = JobRegistry::new(Some(store.clone()));
     registry
         .jobs()
@@ -582,7 +585,7 @@ fn restore_marks_running_jobs_interrupted_and_persists() {
         embedding_dims: 16,
         ..Config::for_tests()
     };
-    let store = Arc::new(Store::open(&config.db_path).unwrap());
+    let store = Arc::new(crate::testkit::open_test_store(&config.db_path).unwrap());
     let snapshot = JobSnapshot {
         id: "job-running".into(),
         kind: "source_sync".into(),

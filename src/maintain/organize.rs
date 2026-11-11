@@ -1098,7 +1098,7 @@ mod tests {
     async fn dry_run_suggests_path_refile() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("org.duckdb");
-        let store = Store::open(&path).unwrap();
+        let store = crate::testkit::open_test_store(&path).unwrap();
         let cfg = test_config(path, 8);
 
         seed_doc(
@@ -1155,7 +1155,7 @@ mod tests {
     async fn apply_refiles_unscoped() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("org_apply.duckdb");
-        let store = Store::open(&path).unwrap();
+        let store = crate::testkit::open_test_store(&path).unwrap();
         let cfg = test_config(path, 8);
 
         seed_doc(
@@ -1196,7 +1196,7 @@ mod tests {
     async fn migration_disables_embedding_heuristics_without_false_suggestions() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("org-migration-incomplete.duckdb");
-        let store = Store::open(&path).unwrap();
+        let store = crate::testkit::open_test_store(&path).unwrap();
         let cfg = test_config(path, 8);
         seed_doc(
             &store,
@@ -1243,7 +1243,7 @@ mod tests {
     async fn no_unscoped_is_empty_report() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("empty_org.duckdb");
-        let store = Store::open(&path).unwrap();
+        let store = crate::testkit::open_test_store(&path).unwrap();
         let cfg = test_config(path, 8);
         seed_doc(
             &store,
@@ -1264,7 +1264,7 @@ mod tests {
     async fn respects_max_docs_cap() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cap_org.duckdb");
-        let store = Store::open(&path).unwrap();
+        let store = crate::testkit::open_test_store(&path).unwrap();
         let cfg = test_config(path, 8);
         seed_doc(
             &store,

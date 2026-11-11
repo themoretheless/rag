@@ -40,7 +40,7 @@ impl Documents<'_> {
     /// resolves the agent name with [`DiaryEntry::from_document`] itself, so
     /// it matches the full entries exactly (including Unicode whitespace).
     /// About 3x cheaper than loading the full row projection.
-    pub(crate) fn list_diary_activity(
+    pub fn list_diary_activity(
         &self,
         agent_name: Option<&str>,
         limit: usize,

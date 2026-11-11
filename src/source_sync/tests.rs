@@ -126,7 +126,7 @@ fn permission_denied_source_is_reported_without_deleting_indexed_state() {
         embedding_dims: 16,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let source = "/vault/private.md";
     let document = crate::models::Document {
         id: "permission-doc".into(),
@@ -202,7 +202,7 @@ async fn store_clones_serialize_source_sync_runs() {
         embedding_dims: 16,
         ..Config::for_tests()
     });
-    let store = Arc::new(Store::open(&config.db_path).unwrap());
+    let store = Arc::new(crate::testkit::open_test_store(&config.db_path).unwrap());
     let entered = Arc::new(tokio::sync::Notify::new());
     let release = Arc::new(tokio::sync::Notify::new());
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(GatedEmbedder {
@@ -287,7 +287,7 @@ async fn small_documents_share_one_embedding_call_and_keep_path_mapping() {
         chunk_overlap: 0,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let calls = Arc::new(Mutex::new(Vec::new()));
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(RecordingEmbedder {
         dims: 4,
@@ -352,7 +352,7 @@ async fn sixty_five_small_documents_split_at_the_batch_cap() {
         chunk_overlap: 0,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let calls = Arc::new(Mutex::new(Vec::new()));
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(RecordingEmbedder {
         dims: 4,
@@ -393,7 +393,7 @@ async fn chunk_count_splits_a_batch_before_the_document_count_cap() {
         chunk_overlap: 0,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let calls = Arc::new(Mutex::new(Vec::new()));
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(RecordingEmbedder {
         dims: 4,
@@ -433,7 +433,7 @@ async fn document_over_chunk_cap_is_embedded_alone_without_internal_splitting() 
         chunk_overlap: 0,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let calls = Arc::new(Mutex::new(Vec::new()));
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(RecordingEmbedder {
         dims: 4,
@@ -473,7 +473,7 @@ async fn embedding_failure_writes_none_of_a_multi_document_batch() {
         chunk_overlap: 0,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let calls = Arc::new(AtomicUsize::new(0));
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(FailingBatchEmbedder {
         dims: 4,
@@ -534,7 +534,7 @@ async fn cancellation_during_embedding_writes_none_of_the_current_batch() {
         chunk_overlap: 0,
         ..Config::for_tests()
     });
-    let store = Arc::new(Store::open(&config.db_path).unwrap());
+    let store = Arc::new(crate::testkit::open_test_store(&config.db_path).unwrap());
     let entered = Arc::new(tokio::sync::Notify::new());
     let release = Arc::new(tokio::sync::Notify::new());
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(GatedEmbedder {
@@ -594,7 +594,7 @@ async fn cancellation_between_commits_persists_exactly_the_sorted_prefix() {
         chunk_overlap: 0,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     store.maintenance().ensure_fts(&config.fts_stemmer).unwrap();
     let generation_before = {
         let conn = store.lock().unwrap();
@@ -703,7 +703,7 @@ async fn source_commit_keeps_the_revision_captured_before_embedding() {
         chunk_overlap: 0,
         ..Config::for_tests()
     });
-    let store = Arc::new(Store::open(&config.db_path).unwrap());
+    let store = Arc::new(crate::testkit::open_test_store(&config.db_path).unwrap());
     let initial_embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(4));
     SourceSyncService::new(store.as_ref(), &initial_embedder, config.as_ref())
         .sync(SourceSyncCommand::new(root.path().to_path_buf()))
@@ -791,7 +791,7 @@ async fn sync_preflight_updates_one_changed_file_and_cleans_deleted_manifest() {
         embedding_dims: 16,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let embed_batches = Arc::new(AtomicUsize::new(0));
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(CountingEmbedder {
         inner: MockEmbedder::new(16),
@@ -908,7 +908,7 @@ async fn completed_sync_prepares_fts_before_the_first_user_search() {
         embedding_dims: 16,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
     let service = SourceSyncService::new(&store, &embedder, &config);
     store.maintenance().ensure_fts(&config.fts_stemmer).unwrap();
@@ -1031,7 +1031,7 @@ async fn terminal_fts_failure_preserves_committed_sync_report_and_dirty_fallback
         embedding_dims: 16,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     store.maintenance().ensure_fts(&config.fts_stemmer).unwrap();
     config.fts_stemmer = crate::db::fts::test_fault::panic("source-sync");
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
@@ -1107,7 +1107,7 @@ async fn completed_sync_with_file_error_still_prepares_fts() {
         embedding_dims: 16,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
     let service = SourceSyncService::new(&store, &embedder, &config);
     let command = || SourceSyncCommand {
@@ -1204,7 +1204,7 @@ async fn remove_deleted_prunes_existing_sources_newly_excluded_by_scan_policy() 
         embedding_dims: 16,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
     let service = SourceSyncService::new(&store, &embedder, &config);
     let canonical_root = root.path().canonicalize().unwrap();
@@ -1267,7 +1267,7 @@ async fn controlled_sync_reports_progress_and_cancels_before_the_next_write() {
         embedding_dims: 16,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
     let cancellation = CancellationToken::new();
     let cancellation_from_progress = cancellation.clone();
@@ -1316,7 +1316,7 @@ async fn warm_sync_reapplies_an_explicit_scope_change() {
         embedding_dims: 16,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
     let service = SourceSyncService::new(&store, &embedder, &config);
     let mut command = SourceSyncCommand {
@@ -1350,7 +1350,7 @@ async fn empty_source_is_a_stable_non_searchable_manifest_entry() {
         embedding_dims: 16,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
     let service = SourceSyncService::new(&store, &embedder, &config);
     let command = SourceSyncCommand {
@@ -1384,7 +1384,7 @@ async fn manifest_moves_between_parent_and_child_roots_without_losing_cleanup() 
         embedding_dims: 16,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
     let service = SourceSyncService::new(&store, &embedder, &config);
     service
@@ -1487,7 +1487,7 @@ async fn oversized_sources_are_reported_and_never_silently_stale() {
         embedding_dims: 16,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
     let service = SourceSyncService::new(&store, &embedder, &config);
     let mut command = SourceSyncCommand {
@@ -1556,7 +1556,7 @@ async fn unchanged_files_between_changed_ones_keep_one_batch() {
         chunk_overlap: 0,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let calls = Arc::new(Mutex::new(Vec::new()));
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(RecordingEmbedder {
         dims: 4,
@@ -1692,7 +1692,7 @@ async fn source_sync_refreshes_code_index_for_add_change_delete_and_warm_runs() 
         embedding_dims: 16,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
     let service = SourceSyncService::new(&store, &embedder, &config);
     let mut command = SourceSyncCommand::new(root.path().to_path_buf());
@@ -1740,7 +1740,7 @@ async fn html_original_survives_style_only_sync_and_repairs_missing_or_corrupt_b
         embedding_dims: 16,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
     let service = SourceSyncService::new(&store, &embedder, &config);
     let command = SourceSyncCommand::new(root.path().to_path_buf());
@@ -1818,7 +1818,7 @@ async fn source_sync_code_index_failure_retains_committed_sources_and_structured
         embedding_dims: 16,
         ..Config::for_tests()
     };
-    let store = Store::open(&config.db_path).unwrap();
+    let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
     store
         .lock()

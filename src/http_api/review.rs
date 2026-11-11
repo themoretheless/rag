@@ -118,9 +118,7 @@ async fn accept(st: &HttpState, id: &str, revision: i64) -> crate::error::Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        config::Config, db::Store, embeddings::MockEmbedder, models::Document, util::content_hash,
-    };
+    use crate::{config::Config, embeddings::MockEmbedder, models::Document, util::content_hash};
     use std::sync::Arc;
 
     async fn fixture() -> (HttpState, review::Proposal) {
@@ -130,7 +128,7 @@ mod tests {
             embedding_dims: 16,
             ..Config::for_tests()
         };
-        let store = Arc::new(Store::open(&config.db_path).unwrap());
+        let store = Arc::new(crate::testkit::open_test_store(&config.db_path).unwrap());
         let st = HttpState::from_context(
             crate::context::AppContext::with_store(store, Arc::new(MockEmbedder::new(16)), config),
             false,
@@ -291,7 +289,7 @@ mod tests {
         let (st, p) = fixture().await;
         let path = st.config.db_path.clone();
         drop(st);
-        let reopened = Store::open(&path).unwrap();
+        let reopened = crate::testkit::open_test_store(&path).unwrap();
         let restored = review::get(&reopened, &p.id).unwrap();
         assert_eq!(restored.content, "After");
         assert_eq!(restored.status, "pending");

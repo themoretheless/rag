@@ -335,7 +335,7 @@ mod tests {
     fn file_imports_survive_missing_symbols_and_refresh_with_frozen_history() {
         use crate::models::Document;
         let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("imports.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&root.path().join("imports.duckdb")).unwrap();
         let doc = |id: &str, path: &str, body: &str| Document {
             id: id.into(),
             uri: format!("file://{path}"),

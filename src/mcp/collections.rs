@@ -1,5 +1,6 @@
 //! Collection, outline, and dependency-order tools.
 
+use crate::mcp::error::mcp_error;
 use chrono::Utc;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
@@ -40,7 +41,8 @@ impl RagServer {
             let entries = Self::collection_entries(params.entries);
             let detail = store
                 .collections()
-                .create_collection(&collection, &entries)?;
+                .create_collection(&collection, &entries)
+                .map_err(mcp_error)?;
             store.ops_log().record(
                 &OpsLogEntry::new(
                     "collection_create",
@@ -65,7 +67,7 @@ impl RagServer {
         Parameters(_params): Parameters<CollectionListParams>,
     ) -> Result<CallToolResult, McpError> {
         self.blocking_tool("collection_list", move |store| {
-            Self::json_result(&store.collections().list_collections()?)
+            Self::json_result(&store.collections().list_collections().map_err(mcp_error)?)
         })
         .await
     }
@@ -83,9 +85,10 @@ impl RagServer {
         self.blocking_tool("collection_get", move |store| {
             let detail = store
                 .collections()
-                .get_collection(params.collection_id.trim())?
+                .get_collection(params.collection_id.trim())
+                .map_err(mcp_error)?
                 .ok_or_else(|| {
-                    McpError::from(AppError::not_found(format!(
+                    mcp_error(AppError::not_found(format!(
                         "collection not found: {}",
                         params.collection_id
                     )))
@@ -115,13 +118,16 @@ impl RagServer {
                     Some(trimmed)
                 }
             });
-            let detail = store.collections().update_collection(
-                params.collection_id.trim(),
-                params.name.as_deref(),
-                description,
-                params.metadata_json.as_deref(),
-                entries.as_deref(),
-            )?;
+            let detail = store
+                .collections()
+                .update_collection(
+                    params.collection_id.trim(),
+                    params.name.as_deref(),
+                    description,
+                    params.metadata_json.as_deref(),
+                    entries.as_deref(),
+                )
+                .map_err(mcp_error)?;
             store.ops_log().record(
                 &OpsLogEntry::new(
                     "collection_update",

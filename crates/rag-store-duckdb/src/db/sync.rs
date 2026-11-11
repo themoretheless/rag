@@ -55,7 +55,7 @@ pub struct SyncStatus {
 
 /// Stable process identity shared by local journalling and the HTTP worker.
 #[derive(Debug, Clone)]
-pub(crate) struct SyncIdentity {
+pub struct SyncIdentity {
     pub node_id: String,
     pub primary_url: Option<String>,
 }
@@ -71,7 +71,7 @@ pub fn configure_identity(node_id: Option<String>, primary_url: Option<String>) 
 }
 
 impl SyncIdentity {
-    pub(crate) fn current() -> Result<Self> {
+    pub fn current() -> Result<Self> {
         let (configured_node, configured_primary) =
             CONFIGURED_IDENTITY.get_or_init(|| (None, None)).clone();
         let primary_url = configured_primary
@@ -98,7 +98,7 @@ impl SyncIdentity {
         })
     }
 
-    pub(crate) fn role(&self) -> &'static str {
+    pub fn role(&self) -> &'static str {
         if self.primary_url.is_some() {
             "replica"
         } else {
@@ -109,7 +109,7 @@ impl SyncIdentity {
 
 /// Typed internal provenance; user-controlled agent strings never disable the journal.
 #[derive(Debug, Clone)]
-pub(crate) enum WikiSyncWrite<'a> {
+pub enum WikiSyncWrite<'a> {
     Local(SyncIdentity),
     Push {
         origin_node: &'a str,
@@ -122,7 +122,7 @@ pub(crate) enum WikiSyncWrite<'a> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct WikiSyncPayload {
+pub struct WikiSyncPayload {
     pub slug: String,
     pub title: String,
     pub content: String,
@@ -142,7 +142,7 @@ pub(crate) struct WikiSyncPayload {
 }
 
 /// Validate the complete immutable event before any page is prepared or written.
-pub(crate) fn validate_wiki_change(change: &SyncChangeInput) -> Result<WikiSyncPayload> {
+pub fn validate_wiki_change(change: &SyncChangeInput) -> Result<WikiSyncPayload> {
     // validate_change already restricts events to wiki upserts.
     validate_change(change)?;
     let payload: WikiSyncPayload = serde_json::from_str(&change.payload_json)
@@ -517,12 +517,12 @@ impl SyncRepo<'_> {
         Ok(stored_event_locked(&conn, origin_node, origin_seq)?.is_some())
     }
 
-    pub(crate) fn previously_applied_sync(&self, mode: &WikiSyncWrite<'_>) -> Result<Option<i64>> {
+    pub fn previously_applied_sync(&self, mode: &WikiSyncWrite<'_>) -> Result<Option<i64>> {
         let conn = self.store.lock()?;
         sync_duplicate_locked(&conn, mode)
     }
 
-    pub(crate) fn preflight_sync_batch(
+    pub fn preflight_sync_batch(
         &self,
         origin_node: &str,
         changes: &[SyncChangeInput],

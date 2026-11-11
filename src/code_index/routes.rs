@@ -182,7 +182,7 @@ mod tests {
     }
     fn setup() -> (tempfile::TempDir, Store) {
         let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("routes.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&root.path().join("routes.duckdb")).unwrap();
         put(&store,"a","alpha","/same.py","@app.get('/same')\ndef same(): pass\n@app.route('/unknown')\ndef unknown(): pass\n@app.post('/literal_%.*')\ndef post(): pass\n");
         put(
             &store,
