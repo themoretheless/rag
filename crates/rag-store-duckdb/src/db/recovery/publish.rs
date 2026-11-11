@@ -81,7 +81,10 @@ pub fn verify_backup(path: &Path) -> Result<BackupVerification> {
                 path.display()
             )));
         }
-        let store = Store::open(temporary.path())?;
+        // Core schema only: the checks below read core tables, and opening
+        // with no extensions keeps the result independent of which schema
+        // extensions this process happened to register.
+        let store = Store::open_with_extensions(temporary.path(), &[])?;
         let schema_version = store.maintenance().schema_version()?.unwrap_or(0);
         let (documents, chunks, nodes, edges) = store.maintenance().stats()?;
         let (_, orphan_chunks, orphan_document_nodes, orphan_edges, _) =

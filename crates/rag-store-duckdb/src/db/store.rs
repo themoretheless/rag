@@ -209,6 +209,16 @@ pub struct WikiDocumentWrite<'a> {
 impl Store {
     /// Open (or create) a DuckDB database at `path` and run schema migrations.
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_with_extensions(path, &schema::registered_schema_extensions())
+    }
+
+    /// [`Self::open`] with an explicit set of schema extensions instead of
+    /// the process-wide registry, so the result does not depend on what the
+    /// process registered (backup verification opens with none).
+    pub(crate) fn open_with_extensions(
+        path: &Path,
+        extensions: &[schema::SchemaExtension],
+    ) -> Result<Self> {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() && !parent.exists() {
                 std::fs::create_dir_all(parent)?;
@@ -217,8 +227,7 @@ impl Store {
 
         let conn = Connection::open(path)?;
         apply_performance_pragmas(&conn)?;
-        let extensions = schema::registered_schema_extensions();
-        schema::migrate_with(&conn, &extensions)?;
+        schema::migrate_with(&conn, extensions)?;
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
