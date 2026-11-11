@@ -77,7 +77,9 @@ pub fn find_stale_wiki(store: &Store) -> Result<Vec<StaleWikiItem>> {
     // The raw corpus is read without bodies: staleness needs ids, uris and
     // timestamps; only sources cited by a `source_versions` snapshot are hashed,
     // and their bodies are fetched in one batch below.
-    let raws = store.list_documents_by_layer_without_body(LAYER_RAW)?;
+    let raws = store
+        .documents()
+        .list_documents_by_layer_without_body(LAYER_RAW)?;
     let (raw_by_id, raw_by_uri) = raw_lookups(&raws);
 
     // (wiki_id, raw_id) -> item (prefer more specific link_kind if already present)
@@ -86,12 +88,12 @@ pub fn find_stale_wiki(store: &Store) -> Result<Vec<StaleWikiItem>> {
 
     // 1) Graph `related` edges between a raw source and a wiki page, either
     // direction: one edge query instead of a neighborhood walk per raw.
-    let wiki_docs = store.list_documents_by_layer(LAYER_WIKI)?;
+    let wiki_docs = store.documents().list_documents_by_layer(LAYER_WIKI)?;
     let wiki_by_id: HashMap<&str, &Document> = wiki_docs
         .iter()
         .map(|wiki| (wiki.id.as_str(), wiki))
         .collect();
-    for (a, b) in store.document_pairs_by_relation("related")? {
+    for (a, b) in store.graph().document_pairs_by_relation("related")? {
         for (raw_id, wiki_id) in [(&a, &b), (&b, &a)] {
             let (Some(raw), Some(wiki)) = (
                 raw_by_id.get(raw_id.as_str()),
@@ -124,6 +126,7 @@ pub fn find_stale_wiki(store: &Store) -> Result<Vec<StaleWikiItem>> {
         ids
     };
     let mut source_hashes: HashMap<String, String> = store
+        .documents()
         .document_contents(&cited_raw_ids)?
         .into_iter()
         .map(|(id, content)| (id, content_hash(&content)))
@@ -141,7 +144,9 @@ pub fn find_stale_wiki(store: &Store) -> Result<Vec<StaleWikiItem>> {
                 let source = match in_memory {
                     Some(source) => Some(source),
                     None => {
-                        fetched = store.find_by_id_or_uri(&version.document_id, &version.uri)?;
+                        fetched = store
+                            .documents()
+                            .find_by_id_or_uri(&version.document_id, &version.uri)?;
                         fetched.as_ref()
                     }
                 };
@@ -197,8 +202,9 @@ pub(crate) fn review_parent_ids(store: &Store, page: &Document) -> Result<Vec<(S
         let mut refs = Vec::new();
         for v in versions {
             let source = store
+                .documents()
                 .get_document(&v.document_id)?
-                .or(store.find_by_uri(&v.uri)?);
+                .or(store.documents().find_by_uri(&v.uri)?);
             refs.push(
                 source
                     .map(|d| (d.id, d.uri))
@@ -217,8 +223,10 @@ pub(crate) fn review_parent_ids(store: &Store, page: &Document) -> Result<Vec<(S
         .into_iter()
         .map(|(d, _)| (d.id.clone(), d.uri.clone()))
         .collect();
-    if let Some(node) = store.find_node_by_document_id(&page.id)? {
-        let view = store.neighbors(&node.id, 1, REVIEW_NEIGHBOR_LIMIT)?;
+    if let Some(node) = store.graph().find_node_by_document_id(&page.id)? {
+        let view = store
+            .graph()
+            .neighbors(&node.id, 1, REVIEW_NEIGHBOR_LIMIT)?;
         if view.nodes.len() >= REVIEW_NEIGHBOR_LIMIT as usize {
             return Err(AppError::config(
                 "review dependency set exceeds graph limit",
@@ -239,7 +247,7 @@ pub(crate) fn review_parent_ids(store: &Store, page: &Document) -> Result<Vec<(S
                 &edge.source_id
             };
             if let Some(id) = node_documents.get(other.as_str()) {
-                if let Some((id, uri)) = store.document_id_and_uri(id)? {
+                if let Some((id, uri)) = store.documents().document_id_and_uri(id)? {
                     result.push((id, uri));
                 }
             }
@@ -347,33 +355,33 @@ pub async fn refresh_stale_wiki(
         });
     }
 
-    let _ = crate::util::blocking_section(|| {
-        store.append_ops_log(&OpsLogEntry {
-            id: Uuid::new_v4().to_string(),
-            seq: 0,
-            ts: Utc::now(),
-            op: "refresh_stale_wiki".into(),
-            prefix: Some("MAINT".into()),
-            message: format!(
-                "refresh_stale_wiki dry_run={dry_run} stale={} raws={} applied={applied}",
-                stale.len(),
-                total_raws
-            ),
-            entity_id: None,
-            entity_kind: Some("wiki".into()),
-            payload_json: serde_json::json!({
-                "stale_count": stale.len(),
-                "raw_count": total_raws,
-                "dry_run": dry_run,
-                "applied": applied,
-                "capped": capped,
-                "max_docs": max_docs,
-                "recompiled": recompiled.len(),
-                "errors": errors.len(),
-            })
-            .to_string(),
-            agent_name: agent.map(|s| s.to_string()),
-        })
+    crate::util::blocking_section(|| {
+        store.ops_log().append(
+            &OpsLogEntry::new(
+                "refresh_stale_wiki",
+                "MAINT",
+                format!(
+                    "refresh_stale_wiki dry_run={dry_run} stale={} raws={} applied={applied}",
+                    stale.len(),
+                    total_raws
+                ),
+            )
+            .entity(None, "wiki")
+            .payload(
+                serde_json::json!({
+                    "stale_count": stale.len(),
+                    "raw_count": total_raws,
+                    "dry_run": dry_run,
+                    "applied": applied,
+                    "capped": capped,
+                    "max_docs": max_docs,
+                    "recompiled": recompiled.len(),
+                    "errors": errors.len(),
+                })
+                .to_string(),
+            )
+            .agent(agent.map(|s| s.to_string())),
+        )
     })?;
 
     Ok(RefreshStaleWikiResult {
@@ -559,13 +567,13 @@ pub(super) fn try_push_raw(
         (*r).clone()
     } else if let Some(r) = raw_by_uri.get(id) {
         (*r).clone()
-    } else if let Some(d) = store.get_document(id)? {
+    } else if let Some(d) = store.documents().get_document(id)? {
         if is_raw_layer(&d.layer) {
             d
         } else {
             return Ok(());
         }
-    } else if let Some(d) = store.find_by_uri(id)? {
+    } else if let Some(d) = store.documents().find_by_uri(id)? {
         if is_raw_layer(&d.layer) {
             d
         } else {

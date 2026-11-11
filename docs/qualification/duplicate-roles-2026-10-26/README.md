@@ -1,6 +1,6 @@
 # Duplicate role evidence qualification — 2026-10-26
 
-See the [contract](../../DUPLICATE_ROLE_EVIDENCE.md). RAGRAF's pinned
+See the [contract](../../code-intelligence/DUPLICATE_ROLE_EVIDENCE.md). RAGRAF's pinned
 075caf86dc2f6274b9c48487e521915bcdfeaf2c facade/duplicates contract was inspected.
 The implementation extends existing exact/similar text groups with captured
 value, import and markup/resource roles, without a runtime or deletion claim.

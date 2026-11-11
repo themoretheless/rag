@@ -27,10 +27,8 @@ use super::{
 use crate::config::Config;
 use crate::db::store::embedding_manifest_matches_config;
 use crate::db::Store;
-use crate::diagnostics;
 use crate::error::AppError;
-use crate::util::{non_blank, parse_optional_timestamp, run_blocking};
-use crate::wiki;
+use crate::util::{non_blank, run_blocking};
 
 /// ops_log rows returned when `limit` is absent.
 const DEFAULT_OPS_LOG_LIMIT: usize = 50;
@@ -81,7 +79,7 @@ struct OpsLogQuery {
 }
 
 async fn ops_log(State(st): State<HttpState>, Query(q): Query<OpsLogQuery>) -> impl IntoResponse {
-    crate::util::blocking_section(|| {
+    st.blocking_response("ops_log", move |store| {
         // Page size is bounded by `Store` (MAX_OPS_LOG_PAGE) for every transport.
         let limit = q
             .limit
@@ -89,7 +87,10 @@ async fn ops_log(State(st): State<HttpState>, Query(q): Query<OpsLogQuery>) -> i
             .clamp(1, crate::db::store::MAX_OPS_LOG_PAGE);
         let id = non_blank(q.id);
         let has_key = id.is_some() || q.seq.is_some();
-        match st.store.read_ops_log(id.as_deref(), q.seq, Some(limit)) {
+        match store
+            .ops_log()
+            .read_ops_log(id.as_deref(), q.seq, Some(limit))
+        {
             Ok(rows) if has_key && rows.is_empty() => {
                 api_err(AppError::not_found("ops_log entry not found"))
             }
@@ -113,7 +114,7 @@ async fn ops_log(State(st): State<HttpState>, Query(q): Query<OpsLogQuery>) -> i
                         })
                     })
                     .collect();
-                let next_seq = st.store.next_ops_seq().ok();
+                let next_seq = store.ops_log().next_ops_seq().ok();
                 api_ok(
                     json!({"ok": true, "count": items.len(), "next_seq": next_seq, "items": items}),
                 )
@@ -121,20 +122,21 @@ async fn ops_log(State(st): State<HttpState>, Query(q): Query<OpsLogQuery>) -> i
             Err(error) => api_err(error),
         }
     })
+    .await
 }
 
 async fn taxonomy(State(st): State<HttpState>) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.get_taxonomy() {
+    match st.admin_use_case().taxonomy().await {
         Ok(value) => api_ok(json!({"ok": true, "taxonomy": value})),
         Err(error) => api_err(error),
-    })
+    }
 }
 
 async fn wings(State(st): State<HttpState>) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.list_wings() {
+    match st.admin_use_case().wings().await {
         Ok(items) => api_ok(json!({"ok": true, "items": items})),
         Err(error) => api_err(error),
-    })
+    }
 }
 
 #[derive(Deserialize)]
@@ -144,19 +146,19 @@ struct RoomsQuery {
 }
 
 async fn rooms(State(st): State<HttpState>, Query(q): Query<RoomsQuery>) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.list_rooms(non_blank(q.wing).as_deref()) {
+    match st.admin_use_case().rooms(q.wing).await {
         Ok(items) => api_ok(json!({"ok": true, "items": items})),
         Err(error) => api_err(error),
-    })
+    }
 }
 
 async fn llm_status(State(st): State<HttpState>) -> impl IntoResponse {
-    let report = diagnostics::llm_status(&st.config, st.llm.as_ref()).await;
+    let report = st.admin_use_case().llm_status(st.llm.as_ref()).await;
     api_ok(json!({"ok": true, "llm": report}))
 }
 
 async fn reembed_status(State(st): State<HttpState>) -> impl IntoResponse {
-    match crate::maintain::reembed_status(&st.store, &st.config) {
+    match st.admin_use_case().reembed_status().await {
         Ok(status) => api_ok(json!({"ok": true, "status": status})),
         Err(error) => api_err(error),
     }
@@ -178,7 +180,7 @@ async fn embedding_manifest(State(st): State<HttpState>) -> impl IntoResponse {
 /// `match` uses the canonical corpus-identity predicate (provider, model, dims,
 /// base endpoint and fingerprint), the same one that gates vector retrieval.
 fn embedding_manifest_report(store: &Store, config: &Config) -> Result<Value, AppError> {
-    let manifest = store.get_embedding_manifest()?;
+    let manifest = store.embedding_manifest().get_embedding_manifest()?;
     let matches = manifest
         .as_ref()
         .is_some_and(|m| embedding_manifest_matches_config(m, config));
@@ -208,15 +210,16 @@ async fn diary(State(st): State<HttpState>, Query(q): Query<DiaryQuery>) -> impl
         .limit
         .unwrap_or(DEFAULT_DIARY_LIMIT)
         .clamp(1, MAX_DIARY_LIMIT);
-    crate::util::blocking_section(|| {
-        match st
-            .store
+    st.blocking_response("diary", move |store| {
+        match store
+            .documents()
             .list_diary_entries(non_blank(q.agent).as_deref(), limit)
         {
             Ok(items) => api_ok(json!({"ok": true, "count": items.len(), "items": items})),
             Err(error) => api_err(error),
         }
     })
+    .await
 }
 
 #[derive(Deserialize)]
@@ -238,22 +241,17 @@ async fn kg_query(
     State(st): State<HttpState>,
     Query(q): Query<KgQueryParams>,
 ) -> impl IntoResponse {
-    crate::util::blocking_section(|| {
-        let at_time = match parse_optional_timestamp(q.at_time.as_deref()) {
-            Ok(value) => value,
-            Err(error) => return api_err(error),
-        };
-        match st.store.kg_query_page(
-            non_blank(q.subject).as_deref(),
-            non_blank(q.predicate).as_deref(),
-            non_blank(q.object).as_deref(),
-            at_time,
-            q.limit,
-        ) {
-            Ok((items, total)) => api_ok(json!({"ok": true, "count": total, "items": items})),
-            Err(error) => api_err(error),
-        }
-    })
+    let command = crate::app::KgQueryCommand {
+        subject: q.subject,
+        predicate: q.predicate,
+        object: q.object,
+        at_time: q.at_time,
+        limit: q.limit,
+    };
+    match st.admin_use_case().kg_query(command).await {
+        Ok(page) => api_ok(json!({"ok": true, "count": page.total, "items": page.facts})),
+        Err(error) => api_err(error),
+    }
 }
 
 #[derive(Deserialize)]
@@ -265,17 +263,17 @@ async fn kg_timeline(
     State(st): State<HttpState>,
     Query(q): Query<KgTimelineQuery>,
 ) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.kg_timeline(q.subject.trim()) {
+    match st.admin_use_case().kg_timeline(q.subject).await {
         Ok(items) => api_ok(json!({"ok": true, "count": items.len(), "items": items})),
         Err(error) => api_err(error),
-    })
+    }
 }
 
 async fn kg_stats(State(st): State<HttpState>) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.kg_stats() {
+    match st.admin_use_case().kg_stats().await {
         Ok(value) => api_ok(json!({"ok": true, "stats": value})),
         Err(error) => api_err(error),
-    })
+    }
 }
 
 #[derive(Deserialize)]
@@ -285,19 +283,20 @@ struct TunnelsQuery {
 }
 
 async fn tunnels(State(st): State<HttpState>, Query(q): Query<TunnelsQuery>) -> impl IntoResponse {
-    crate::util::blocking_section(
-        || match st.store.list_tunnels(non_blank(q.node_id).as_deref()) {
+    st.blocking_response("tunnels", move |store| {
+        match store.graph().list_tunnels(non_blank(q.node_id).as_deref()) {
             Ok(items) => api_ok(json!({"ok": true, "count": items.len(), "items": items})),
             Err(error) => api_err(error),
-        },
-    )
+        }
+    })
+    .await
 }
 
 async fn lint_wiki(State(st): State<HttpState>) -> impl IntoResponse {
-    crate::util::blocking_section(|| match wiki::lint_wiki(&st.store) {
+    match st.admin_use_case().lint_wiki().await {
         Ok(report) => api_ok(json!({"ok": true, "report": report})),
         Err(error) => api_err(error),
-    })
+    }
 }
 
 #[derive(Deserialize)]
@@ -411,24 +410,27 @@ mod tests {
             embedding_dims: 8,
             ..Config::for_tests()
         };
-        let store = Arc::new(Store::open(&config.db_path).unwrap());
+        let store = Arc::new(crate::testkit::open_test_store(&config.db_path).unwrap());
         for (op, prefix, agent) in [
             ("ingest", "INGEST", Some("alice")),
             ("wiki_write", "WIKI", Some("alice")),
             ("wiki_write", "WIKI", Some("bob")),
         ] {
             store
+                .ops_log()
                 .append_ops_log(
                     &crate::models::OpsLogEntry::new(op, prefix, op)
                         .agent(agent.map(str::to_string)),
                 )
                 .unwrap();
         }
-        let st = HttpState::new(
-            store,
+        let st = HttpState::from_context(
+            crate::context::AppContext::with_store(
+                store,
+                Arc::new(crate::embeddings::MockEmbedder::new(8)),
+                config,
+            ),
             false,
-            config,
-            Arc::new(crate::embeddings::MockEmbedder::new(8)),
         );
         let query = |agent: Option<&str>, prefix: Option<&str>, id: Option<&str>| OpsLogQuery {
             limit: None,
@@ -462,8 +464,11 @@ mod tests {
             embedding_dims: 16,
             ..Config::for_tests()
         };
-        let store = Store::open(&config.db_path).unwrap();
-        store.ensure_embedding_manifest(&config).unwrap();
+        let store = crate::testkit::open_test_store(&config.db_path).unwrap();
+        store
+            .embedding_manifest()
+            .ensure_embedding_manifest(&config)
+            .unwrap();
         let same = embedding_manifest_report(&store, &config).unwrap();
         assert_eq!(same["match"], true);
 

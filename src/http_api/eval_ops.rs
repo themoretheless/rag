@@ -2,7 +2,7 @@
 
 use axum::{
     extract::{Path, Query, State},
-    response::{IntoResponse, Response},
+    response::Response,
     routing::{get, post},
     Json, Router,
 };
@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use super::{
     error::{api_err, api_ok},
     feedback::persist_eval_run,
-    retrieval::{search_http, SearchBody},
+    retrieval::SearchBody,
     HttpState,
 };
 use crate::db::Store;
@@ -222,20 +222,12 @@ async fn online_one(st: HttpState, body: OnlineBody) -> Result<Value> {
     if question.trim().is_empty() {
         return Err(AppError::invalid("online eval requires a search query"));
     }
-    let response = search_http(State(st.clone()), Json(body.search.clone()))
-        .await
-        .into_response();
-    if !response.status().is_success() {
-        return Err(super::error::search_response_error(response).await);
-    }
-    let bytes = axum::body::to_bytes(response.into_body(), 16 * 1024 * 1024)
-        .await
-        .map_err(|e| AppError::invalid(e.to_string()))?;
-    let search_result: Value = serde_json::from_slice(&bytes)?;
-    let hits = search_result["items"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    let (mode, hits) = super::retrieval::run_search(&st, &body.search).await?;
+    let hits = hits
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let search_result = json!({ "mode": mode });
     let cited_ids: Vec<String> = hits
         .iter()
         .filter_map(|h| h.get("document_id").and_then(|v| v.as_str()))
@@ -326,13 +318,14 @@ async fn replay(State(st): State<HttpState>, Json(body): Json<ReplayBody>) -> Re
 }
 
 async fn replay_one(st: HttpState, body: ReplayBody) -> Result<Value> {
-    crate::util::blocking_section(|| {
+    st.blocking("replay_one", move |store| {
         let report = replay_bundle(&body.bundle)?;
         if body.persist {
-            persist_eval_run(&st.store, &replay_run_payload(&report))?;
+            persist_eval_run(store, &replay_run_payload(&report))?;
         }
         Ok(json!({"ok": true, "persisted": body.persist, "report": report}))
     })
+    .await
 }
 
 /// Optional LLM enrichment. Returns `None` when disabled or the client cannot be built.
@@ -428,10 +421,10 @@ mod tests {
             ..Config::for_tests()
         };
         HttpState {
-            store: Arc::new(Store::open(&config.db_path).unwrap()),
+            store: Arc::new(crate::testkit::open_test_store(&config.db_path).unwrap()),
             mcp_http: false,
             embedder: Arc::new(MockEmbedder::new(16)),
-            config,
+            config: config.into(),
             jobs: JobRegistry::default(),
             llm: None,
             auth: crate::http_api::auth::AuthPosture::default(),

@@ -4,7 +4,7 @@ The pinned RAGRAF op_impact at 075caf86dc2f6274b9c48487e521915bcdfeaf2c provides
 an affected_files summary. The local result previously exposed affected symbols
 only. This extension groups returned symbols by exact document identity and adds
 captured source provenance, minimum depth and retained-witness relation counts.
-See [contract](../../IMPACT_RELATIONS.md#affected-file-summary).
+See [contract](../../code-intelligence/IMPACT_RELATIONS.md#affected-file-summary).
 
 Two native regressions cover a multi-file imported callback/caller chain with
 counts/provenance/depth and a capped lower-bound result, and identical paths in

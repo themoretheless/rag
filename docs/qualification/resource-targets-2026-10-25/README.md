@@ -1,7 +1,7 @@
 # Captured non-code resource identities — 2026-10-25
 
 Continues the unparsed-resource gap in the RAGRAF matrix. See the
-[target contract](../../RESOURCE_TARGET_IDENTITIES.md). The implementation
+[target contract](../../code-intelligence/RESOURCE_TARGET_IDENTITIES.md). The implementation
 preserves code/parser coverage semantics while extending HTML/CSS file-resource
 links to published source attachments without symbol extractors. It validates
 current stored source identity against both graph inventory and frozen file

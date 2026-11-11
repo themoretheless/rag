@@ -1,6 +1,6 @@
 # Impact relation traversal — 2026-10-25
 
-[Contract](../../IMPACT_RELATIONS.md). The previous local implementation traversed
+[Contract](../../code-intelligence/IMPACT_RELATIONS.md). The previous local implementation traversed
 only calls. Pinned RAGRAF 075caf86dc2f6274b9c48487e521915bcdfeaf2c op_impact uses
 incoming BFS plus stated/derived and affected-file summaries, and supports table
 targets. This milestone transfers broader symbol-dependency traversal while

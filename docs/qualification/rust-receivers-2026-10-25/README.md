@@ -1,8 +1,8 @@
 # Rust receiver qualification — 2026-10-25
 
 Scope: captured AST receiver typing, as described in
-[RUST_RECEIVER_TYPES.md](../../RUST_RECEIVER_TYPES.md). The complete
-[code intelligence plan](../../CODE_INTELLIGENCE_PLAN.md) remains open.
+[RUST_RECEIVER_TYPES.md](../../code-intelligence/RUST_RECEIVER_TYPES.md). The complete
+[code intelligence plan](../../code-intelligence/CODE_INTELLIGENCE_PLAN.md) remains open.
 
 ## Reproduce
 

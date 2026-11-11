@@ -69,7 +69,10 @@ async fn change(State(st): State<HttpState>, Json(body): Json<Change>) -> Respon
     }
 }
 async fn accept(st: &HttpState, id: &str, revision: i64) -> crate::error::Result<review::Proposal> {
-    let p = crate::util::blocking_section(|| review::get(&st.store, id))?;
+    let key = id.to_string();
+    let p = st
+        .blocking("review get", move |store| review::get(store, &key))
+        .await?;
     if p.revision != revision || p.status != "pending" {
         return Err(AppError::conflict("proposal changed; reload it"));
     }
@@ -107,15 +110,15 @@ async fn accept(st: &HttpState, id: &str, revision: i64) -> crate::error::Result
         },
     )
     .await?;
-    crate::util::blocking_section(|| review::get(&st.store, id))
+    let key = id.to_string();
+    st.blocking("review get", move |store| review::get(store, &key))
+        .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        config::Config, db::Store, embeddings::MockEmbedder, models::Document, util::content_hash,
-    };
+    use crate::{config::Config, embeddings::MockEmbedder, models::Document, util::content_hash};
     use std::sync::Arc;
 
     async fn fixture() -> (HttpState, review::Proposal) {
@@ -125,9 +128,13 @@ mod tests {
             embedding_dims: 16,
             ..Config::for_tests()
         };
-        let store = Arc::new(Store::open(&config.db_path).unwrap());
-        let st = HttpState::new(store, false, config, Arc::new(MockEmbedder::new(16)));
+        let store = Arc::new(crate::testkit::open_test_store(&config.db_path).unwrap());
+        let st = HttpState::from_context(
+            crate::context::AppContext::with_store(store, Arc::new(MockEmbedder::new(16)), config),
+            false,
+        );
         st.store
+            .documents()
             .upsert_document(&Document {
                 id: "source".into(),
                 uri: "raw://source".into(),
@@ -149,7 +156,12 @@ mod tests {
         let (st, p) = fixture().await;
         let accepted = accept(&st, &p.id, p.revision).await.unwrap();
         assert_eq!(accepted.status, "accepted");
-        let page = st.store.get_document(&p.base.id).unwrap().unwrap();
+        let page = st
+            .store
+            .documents()
+            .get_document(&p.base.id)
+            .unwrap()
+            .unwrap();
         assert_eq!(page.content, "After");
         assert_eq!(page.revision, p.base.revision + 1);
         let metadata: serde_json::Value = serde_json::from_str(&page.metadata_json).unwrap();
@@ -165,16 +177,26 @@ mod tests {
     #[tokio::test]
     async fn proposal_rejects_changed_source_and_retains_draft() {
         let (st, p) = fixture().await;
-        let mut source = st.store.get_document("source").unwrap().unwrap();
+        let mut source = st
+            .store
+            .documents()
+            .get_document("source")
+            .unwrap()
+            .unwrap();
         source.content = "new source".into();
-        st.store.upsert_document(&source).unwrap();
+        st.store.documents().upsert_document(&source).unwrap();
         assert!(matches!(
             accept(&st, &p.id, p.revision).await,
             Err(AppError::Conflict(_))
         ));
         assert_eq!(review::get(&st.store, &p.id).unwrap().status, "pending");
         assert_eq!(
-            st.store.get_document(&p.base.id).unwrap().unwrap().content,
+            st.store
+                .documents()
+                .get_document(&p.base.id)
+                .unwrap()
+                .unwrap()
+                .content,
             "Before"
         );
     }
@@ -187,9 +209,14 @@ mod tests {
             accept(&st, &p.id, p.revision).await,
             Err(AppError::Conflict(_))
         ));
-        let mut page = st.store.get_document(&p.base.id).unwrap().unwrap();
+        let mut page = st
+            .store
+            .documents()
+            .get_document(&p.base.id)
+            .unwrap()
+            .unwrap();
         page.content = "Concurrent author".into();
-        st.store.upsert_document(&page).unwrap();
+        st.store.documents().upsert_document(&page).unwrap();
         assert!(matches!(
             accept(&st, &p.id, next.revision).await,
             Err(AppError::Conflict(_))
@@ -202,11 +229,12 @@ mod tests {
     #[tokio::test]
     async fn missing_source_reappearing_with_new_id_blocks_acceptance() {
         let (st, p) = fixture().await;
-        st.store.delete_document("source").unwrap();
+        st.store.documents().delete_document("source").unwrap();
         let p = crate::wiki::create_review_proposal(&st.store, &p.base.id).unwrap();
         assert_eq!(p.sources[0].uri, "raw://source");
         assert!(p.sources[0].content_hash.is_none());
         st.store
+            .documents()
             .upsert_document(&Document {
                 id: "replacement".into(),
                 uri: "raw://source".into(),
@@ -246,7 +274,12 @@ mod tests {
         }
         assert_eq!(review::get(&st.store, &p.id).unwrap().status, "pending");
         assert_eq!(
-            st.store.get_document(&doc.id).unwrap().unwrap().content,
+            st.store
+                .documents()
+                .get_document(&doc.id)
+                .unwrap()
+                .unwrap()
+                .content,
             "Before"
         );
     }
@@ -256,7 +289,7 @@ mod tests {
         let (st, p) = fixture().await;
         let path = st.config.db_path.clone();
         drop(st);
-        let reopened = Store::open(&path).unwrap();
+        let reopened = crate::testkit::open_test_store(&path).unwrap();
         let restored = review::get(&reopened, &p.id).unwrap();
         assert_eq!(restored.content, "After");
         assert_eq!(restored.status, "pending");
@@ -273,7 +306,12 @@ mod tests {
             Err(AppError::Conflict(_))
         ));
         assert_eq!(
-            st.store.get_document(&p.base.id).unwrap().unwrap().content,
+            st.store
+                .documents()
+                .get_document(&p.base.id)
+                .unwrap()
+                .unwrap()
+                .content,
             "Before"
         );
         assert_eq!(review::list(&st.store).unwrap().len(), 1);

@@ -1,6 +1,6 @@
 # Source continuation and byte windows — 2026-10-26
 
-[Contract](../../CODE_SOURCE_PAGINATION.md). This closes the previously documented
+[Contract](../../code-intelligence/CODE_SOURCE_PAGINATION.md). This closes the previously documented
 unreachable-tail limitation of a bounded single-line symbol read. RAGRAF pinned
 at 075caf86dc2f6274b9c48487e521915bcdfeaf2c accepts comma/whitespace `entry_ids`;
 local code now accepts that form alongside typed arrays. Cursor continuation is

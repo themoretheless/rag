@@ -1,6 +1,6 @@
 # Captured source-byte copies — 2026-10-26
 
-Implemented [source-byte duplicate contract](../../SOURCE_BYTE_DUPLICATES.md).
+Implemented [source-byte duplicate contract](../../code-intelligence/SOURCE_BYTE_DUPLICATES.md).
 The new grouping separates captured source-byte identity from decoded/extracted
 text equality, including supported binary document containers.
 

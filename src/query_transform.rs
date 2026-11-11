@@ -20,52 +20,18 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, OnceLock};
 
-use async_trait::async_trait;
-
 use crate::config::Config;
 use crate::error::{AppError, Result};
-use crate::llm::{ChatClient, ChatMessage};
+use crate::llm::{system_user, ChatClient, ChatCompleter};
 
-/// Default number of rewrite variants (`RAG_QUERY_REWRITE_VARIANTS`).
-pub const DEFAULT_REWRITE_VARIANTS: usize = 3;
-/// Hard cap on rewrite variants fused per search.
-pub const MAX_REWRITE_VARIANTS: usize = 8;
-/// Default bounded-cache capacity per transform kind.
-pub const DEFAULT_CACHE_SIZE: usize = 256;
+pub use crate::config::limits::{
+    DEFAULT_CACHE_SIZE, DEFAULT_REWRITE_VARIANTS, MAX_REWRITE_VARIANTS,
+};
 /// Character cap for the hypothetical passage sent to the embedder.
 const MAX_HYDE_CHARS: usize = 2_000;
 /// Completion budget for rewrite / HyDE calls (short outputs).
 const REWRITE_MAX_TOKENS: u32 = 256;
 const HYDE_MAX_TOKENS: u32 = 512;
-
-/// Minimal chat capability the transform stages need (stubbed in tests).
-#[async_trait]
-pub trait TransformLlm: Send + Sync {
-    async fn complete(&self, system: &str, user: &str, max_tokens: u32) -> Result<String>;
-    /// Cache-key identity: `provider/model`.
-    fn cache_identity(&self) -> String;
-}
-
-#[async_trait]
-impl TransformLlm for ChatClient {
-    async fn complete(&self, system: &str, user: &str, max_tokens: u32) -> Result<String> {
-        let messages = [
-            ChatMessage {
-                role: "system".into(),
-                content: system.into(),
-            },
-            ChatMessage {
-                role: "user".into(),
-                content: user.into(),
-            },
-        ];
-        self.complete_with_max_tokens(&messages, max_tokens).await
-    }
-
-    fn cache_identity(&self) -> String {
-        format!("{}/{}", self.provider().as_str(), self.model())
-    }
-}
 
 /// Which transform stage an LLM client is being built for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -208,7 +174,7 @@ fn cache_key(kind: TransformKind, identity: &str, query: &str) -> String {
 /// Ask the LLM for query variants (cached). Returns up to
 /// `RAG_QUERY_REWRITE_VARIANTS` rewrites, excluding the original query.
 pub async fn rewrite_queries(
-    llm: &dyn TransformLlm,
+    llm: &dyn ChatCompleter,
     config: &Config,
     query: &str,
 ) -> Result<Vec<String>> {
@@ -227,7 +193,9 @@ pub async fn rewrite_queries(
          Keep the original language and intent; vary vocabulary and specificity.\n\n\
          Query: {query}"
     );
-    let raw = llm.complete(system, &user, REWRITE_MAX_TOKENS).await?;
+    let raw = llm
+        .complete_with_max_tokens(&system_user(system, user), REWRITE_MAX_TOKENS)
+        .await?;
     let variants = parse_variants(&raw, query, variants_goal);
     if variants.is_empty() {
         return Err(AppError::llm(format!(
@@ -243,7 +211,7 @@ pub async fn rewrite_queries(
 }
 
 /// Ask the LLM for a short hypothetical answer passage (cached).
-pub async fn hyde_passage(llm: &dyn TransformLlm, config: &Config, query: &str) -> Result<String> {
+pub async fn hyde_passage(llm: &dyn ChatCompleter, config: &Config, query: &str) -> Result<String> {
     let kind = TransformKind::Hyde;
     let key = cache_key(kind, &llm.cache_identity(), query);
     let cache = cache_for(kind, cache_capacity(config, kind));
@@ -258,7 +226,9 @@ pub async fn hyde_passage(llm: &dyn TransformLlm, config: &Config, query: &str) 
                   plausibly appear in a document answering it. No preamble, no \
                   markdown fences.";
     let user = format!("Query: {query}");
-    let raw = llm.complete(system, &user, HYDE_MAX_TOKENS).await?;
+    let raw = llm
+        .complete_with_max_tokens(&system_user(system, user), HYDE_MAX_TOKENS)
+        .await?;
     let passage: String = raw.trim().chars().take(MAX_HYDE_CHARS).collect();
     if passage.trim().is_empty() {
         return Err(AppError::llm("hyde returned an empty passage".to_string()));
@@ -309,7 +279,8 @@ fn parse_variants(raw: &str, original: &str, limit: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::LlmProviderKind;
+    use crate::llm::{ChatMessage, LlmProviderKind};
+    use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
     // These tests reset shared process-wide caches. Holding one async guard
     // prevents another test from clearing a cache between the two lookups.
@@ -330,25 +301,35 @@ mod tests {
     }
 
     #[async_trait]
-    impl TransformLlm for StubLlm {
-        async fn complete(&self, _: &str, _: &str, _: u32) -> Result<String> {
+    impl ChatCompleter for StubLlm {
+        async fn complete(&self, _: &[ChatMessage]) -> Result<String> {
             self.calls.fetch_add(1, Ordering::Relaxed);
             Ok(self.reply.clone())
         }
-        fn cache_identity(&self) -> String {
-            "stub/test".into()
+
+        async fn complete_with_max_tokens(&self, m: &[ChatMessage], _: u32) -> Result<String> {
+            self.complete(m).await
+        }
+
+        fn model(&self) -> &str {
+            "stub/test"
         }
     }
 
     struct FailingLlm;
 
     #[async_trait]
-    impl TransformLlm for FailingLlm {
-        async fn complete(&self, _: &str, _: &str, _: u32) -> Result<String> {
+    impl ChatCompleter for FailingLlm {
+        async fn complete(&self, _: &[ChatMessage]) -> Result<String> {
             Err(AppError::llm("stub llm down"))
         }
-        fn cache_identity(&self) -> String {
-            "stub/failing".into()
+
+        async fn complete_with_max_tokens(&self, m: &[ChatMessage], _: u32) -> Result<String> {
+            self.complete(m).await
+        }
+
+        fn model(&self) -> &str {
+            "stub/failing"
         }
     }
 

@@ -1,5 +1,6 @@
 //! Backup and portable recovery bundle MCP tools.
 
+use crate::mcp::error::mcp_error;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -7,7 +8,6 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::{tool, tool_router, ErrorData as McpError};
 
-use super::facade::retain_mutation_guard_while_blocking;
 use super::facade::RagServer;
 use super::tools::{BackupDbParams, ExportBundleParams, ExportVaultParams, ImportBundleParams};
 use crate::config::Config;
@@ -37,15 +37,18 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<BackupDbParams>,
     ) -> Result<CallToolResult, McpError> {
-        let path = resolve_allowlisted_output_file(&params.path, &self.config.ingest_roots)?;
-        validate_backup_output_paths(&path, &self.config.ingest_roots, self.store.path())?;
+        let path = resolve_allowlisted_output_file(&params.path, &self.config.ingest_roots)
+            .map_err(mcp_error)?;
+        validate_backup_output_paths(&path, &self.config.ingest_roots, self.store.path())
+            .map_err(mcp_error)?;
         let store = self.store.clone();
         let dry_run = params.dry_run.unwrap_or(false);
         let overwrite = params.overwrite.unwrap_or(false);
         let report = run_blocking("backup", move || {
-            store.backup_database(&path, dry_run, overwrite)
+            store.recovery().backup_database(&path, dry_run, overwrite)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&report)
     }
 
@@ -60,9 +63,10 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ExportBundleParams>,
     ) -> Result<CallToolResult, McpError> {
-        let path = resolve_allowlisted_output_file(&params.path, &self.config.ingest_roots)?;
-        refuse_live_database_target(&path, self.store.path())?;
-        let format = recovery_format(params.format.as_deref(), &path)?;
+        let path = resolve_allowlisted_output_file(&params.path, &self.config.ingest_roots)
+            .map_err(mcp_error)?;
+        refuse_live_database_target(&path, self.store.path()).map_err(mcp_error)?;
+        let format = recovery_format(params.format.as_deref(), &path).map_err(mcp_error)?;
         let overwrite = params.overwrite.unwrap_or(false);
         let dry_run = params.dry_run.unwrap_or(false);
         let store = self.store.clone();
@@ -74,8 +78,8 @@ impl RagServer {
                     path.display()
                 )));
             }
-            store.portable_recovery_preflight()?;
-            let bundle = store.recovery_bundle()?;
+            store.recovery().portable_recovery_preflight()?;
+            let bundle = store.recovery().recovery_bundle()?;
             let documents = bundle.documents.len() as u64;
             let chunks = bundle.documents.iter().map(|d| d.chunks.len() as u64).sum();
             let encoded = encode_recovery_bundle(&bundle, format)?;
@@ -96,7 +100,8 @@ impl RagServer {
                 errors: Vec::new(),
             })
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&report)
     }
 
@@ -111,15 +116,17 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ExportVaultParams>,
     ) -> Result<CallToolResult, McpError> {
-        let path = resolve_allowlisted_output_file(&params.path, &self.config.ingest_roots)?;
-        refuse_live_database_target(&path, self.store.path())?;
+        let path = resolve_allowlisted_output_file(&params.path, &self.config.ingest_roots)
+            .map_err(mcp_error)?;
+        refuse_live_database_target(&path, self.store.path()).map_err(mcp_error)?;
         let store = self.store.clone();
         let dry_run = params.dry_run.unwrap_or(true);
         let overwrite = params.overwrite.unwrap_or(false);
         let report = run_blocking("export_vault", move || {
-            store.export_vault(&path, dry_run, overwrite)
+            store.recovery().export_vault(&path, dry_run, overwrite)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&report)
     }
 
@@ -135,26 +142,33 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ImportBundleParams>,
     ) -> Result<CallToolResult, McpError> {
-        let path = resolve_allowlisted_output_file(&params.path, &self.config.ingest_roots)?;
+        let path = resolve_allowlisted_output_file(&params.path, &self.config.ingest_roots)
+            .map_err(mcp_error)?;
         if !path.is_file() {
-            return Err(McpError::from(AppError::not_found(format!(
+            return Err(mcp_error(AppError::not_found(format!(
                 "bundle file '{}'",
                 path.display()
             ))));
         }
-        let format = recovery_format(params.format.as_deref(), &path)?;
-        let policy = ConflictPolicy::parse(params.conflict_policy.as_deref())?;
+        let format = recovery_format(params.format.as_deref(), &path).map_err(mcp_error)?;
+        let policy = ConflictPolicy::parse(params.conflict_policy.as_deref()).map_err(mcp_error)?;
         let read_path = path.clone();
         let bundle = run_blocking("read recovery bundle", move || {
             let input = read_recovery_bundle_file(&read_path)?;
             decode_recovery_bundle(&input, format)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         let dry_run = params.dry_run.unwrap_or(true);
-        let mut mutation_guard = if dry_run {
+        let mutation_guard = if dry_run {
             None
         } else {
-            Some(self.store.try_corpus_mutation_guard("bundle import")?)
+            Some(
+                self.store
+                    .corpus_lane()
+                    .try_corpus_mutation_guard("bundle import")
+                    .map_err(mcp_error)?,
+            )
         };
         let prepared = prepare_recovery_bundle_for_import(
             bundle,
@@ -163,52 +177,48 @@ impl RagServer {
             &self.embedder,
             &self.config,
         )
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         let PreparedRecoveryBundle {
             bundle,
             legacy_bundle_version,
             embeddings_reembed_planned,
             embeddings_reembedded,
         } = prepared;
-        let store = self.store.clone();
         let import_path = path.clone();
-        let mut report = if let Some(guard) = mutation_guard.take() {
-            let (guard, result) = retain_mutation_guard_while_blocking(guard, move || {
-                store.import_recovery_bundle(&bundle, policy, dry_run, &import_path, format)
-            })
-            .await
-            .map_err(|error| {
-                McpError::from(AppError::db(format!("import_bundle task failed: {error}")))
-            })?;
-            mutation_guard = Some(guard);
-            result?
+        let import = move |store: &crate::db::Store| {
+            store
+                .recovery()
+                .import_recovery_bundle(&bundle, policy, dry_run, &import_path, format)
+        };
+        // Import and FTS refresh share one blocking task that owns the lane.
+        let (mut report, _mutation_guard, fts_error) = if let Some(guard) = mutation_guard {
+            let outcome = self
+                .guarded_mutation("import_bundle", guard, import, |report| {
+                    report.success
+                        && !report.dry_run
+                        && (report.documents_overwritten > 0 || report.chunks_inserted > 0)
+                })
+                .await
+                .map_err(mcp_error)?;
+            (outcome.value, Some(outcome.guard), outcome.fts_error)
         } else {
-            run_blocking("import_bundle", move || {
-                store.import_recovery_bundle(&bundle, policy, dry_run, &import_path, format)
-            })
-            .await?
+            (
+                self.blocking("import_bundle", import)
+                    .await
+                    .map_err(mcp_error)?,
+                None,
+                None,
+            )
         };
         report.legacy_bundle_version = legacy_bundle_version;
         report.legacy_reembed_requested = params.reembed_legacy.unwrap_or(false);
         report.embeddings_reembed_planned = embeddings_reembed_planned;
         report.embeddings_reembedded = embeddings_reembedded;
-        if report.success
-            && !report.dry_run
-            && (report.documents_overwritten > 0 || report.chunks_inserted > 0)
-        {
-            let guard = mutation_guard
-                .take()
-                .expect("non-dry bundle import owns the mutation lane");
-            let outcome = self
-                .refresh_fts_after_mutation("import_bundle", guard)
-                .await;
-            mutation_guard = outcome.guard;
-            if let Some(error) = outcome.error {
-                report.success = false;
-                report.errors.push(error);
-            }
+        if let Some(error) = fts_error {
+            report.success = false;
+            report.errors.push(error);
         }
-        let _mutation_guard = mutation_guard;
         Self::json_result(&report)
     }
 }

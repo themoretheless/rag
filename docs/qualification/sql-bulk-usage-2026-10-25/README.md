@@ -1,7 +1,7 @@
 # Bulk SQL table-use subset — 2026-10-25
 
 Previously MERGE/TRUNCATE had a generic unsupported-write diagnostic and COPY
-had no directional table-use extraction. The [new contract](../../SQL_BULK_USAGE.md)
+had no directional table-use extraction. The [new contract](../../code-intelligence/SQL_BULK_USAGE.md)
 captures explicit static roles while preserving unverified secondary effects.
 The sqlparser version remains 0.63.0; no dependency versions changed.
 

@@ -4,7 +4,7 @@ use super::*;
 
 /// Ensure `schema://agents` exists; seed with [`DEFAULT_SCHEMA`] when missing.
 pub fn ensure_default_schema(store: &Store) -> Result<Document> {
-    if let Some(d) = store.get_schema_document()? {
+    if let Some(d) = store.documents().get_schema_document()? {
         return Ok(d);
     }
     let now = Utc::now();
@@ -22,20 +22,15 @@ pub fn ensure_default_schema(store: &Store) -> Result<Document> {
         ..Default::default()
     };
     // Document, graph node (schema can carry wikilinks) and audit row commit together.
-    store.write_unchunked_document_with_audit(
+    store.documents().write_unchunked_document_with_audit(
         &doc,
-        &OpsLogEntry {
-            id: Uuid::new_v4().to_string(),
-            seq: 0,
-            ts: now,
-            op: "schema_init".into(),
-            prefix: Some("SCHEMA".into()),
-            message: format!("initialized default {SCHEMA_URI}"),
-            entity_id: Some(doc.id.clone()),
-            entity_kind: Some("schema".into()),
-            payload_json: "{}".into(),
-            agent_name: None,
-        },
+        &OpsLogEntry::new(
+            "schema_init",
+            "SCHEMA",
+            format!("initialized default {SCHEMA_URI}"),
+        )
+        .at(now)
+        .entity(Some(doc.id.clone()), "schema"),
     )?;
     Ok(doc)
 }
@@ -65,7 +60,9 @@ pub fn update_schema(
     agent: Option<&str>,
 ) -> Result<SchemaDocumentView> {
     if content.trim().is_empty() {
-        return Err(AppError::config("update_schema: content must not be empty"));
+        return Err(AppError::invalid(
+            "update_schema: content must not be empty",
+        ));
     }
 
     let now = Utc::now();
@@ -76,10 +73,10 @@ pub fn update_schema(
         .to_string();
 
     let (document_id, created_at, created) =
-        if let Some(existing) = store.find_by_uri(SCHEMA_URI)? {
+        if let Some(existing) = store.documents().find_by_uri(SCHEMA_URI)? {
             assert_content_mutable(&existing)?;
             (existing.id, existing.created_at, false)
-        } else if let Some(existing) = store.get_schema_document()? {
+        } else if let Some(existing) = store.documents().get_schema_document()? {
             // Fallback layer=schema row with a non-canonical uri: re-key to SCHEMA_URI.
             assert_content_mutable(&existing)?;
             (existing.id, existing.created_at, false)
@@ -101,26 +98,21 @@ pub fn update_schema(
         content_hash: Some(hash.clone()),
         ..Default::default()
     };
-    store.write_unchunked_document_with_audit(
+    store.documents().write_unchunked_document_with_audit(
         &doc,
-        &OpsLogEntry {
-            id: Uuid::new_v4().to_string(),
-            seq: 0,
-            ts: now,
-            op: "schema_update".into(),
-            prefix: Some("SCHEMA".into()),
-            message: format!("updated {SCHEMA_URI}"),
-            entity_id: Some(document_id.clone()),
-            entity_kind: Some("schema".into()),
-            payload_json: serde_json::json!({
-                "uri": SCHEMA_URI,
-                "title": title,
-                "content_hash": hash,
-                "created": created,
-            })
-            .to_string(),
-            agent_name: agent.map(|s| s.to_string()),
-        },
+        &OpsLogEntry::new("schema_update", "SCHEMA", format!("updated {SCHEMA_URI}"))
+            .at(now)
+            .entity(Some(document_id.clone()), "schema")
+            .payload(
+                serde_json::json!({
+                    "uri": SCHEMA_URI,
+                    "title": title,
+                    "content_hash": hash,
+                    "created": created,
+                })
+                .to_string(),
+            )
+            .agent(agent.map(|s| s.to_string())),
     )?;
 
     Ok(SchemaDocumentView::from_doc(&doc, created))

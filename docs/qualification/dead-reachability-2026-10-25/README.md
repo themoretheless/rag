@@ -1,6 +1,6 @@
 # Possible routine reachability — 2026-10-25
 
-[Contract](../../DEAD_CODE_REACHABILITY.md). The previous local query used a
+[Contract](../../code-intelligence/DEAD_CODE_REACHABILITY.md). The previous local query used a
 corpus-wide lexical short-name exclusion and did not propagate that uncertainty
 to callees or inherited method candidates. This extends possible routine liveness
 without promoting candidates to runtime proofs. RAGRAF op_dead_code at pinned

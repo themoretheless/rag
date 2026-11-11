@@ -22,12 +22,23 @@ impl RagServer {
             + Self::recovery_router()
     }
 
+    /// The full tool router, built once per process.
+    pub(super) fn shared_tool_router(
+    ) -> std::sync::Arc<rmcp::handler::server::router::tool::ToolRouter<Self>> {
+        static ROUTER: std::sync::OnceLock<
+            std::sync::Arc<rmcp::handler::server::router::tool::ToolRouter<RagServer>>,
+        > = std::sync::OnceLock::new();
+        ROUTER
+            .get_or_init(|| std::sync::Arc::new(Self::all_tools_router()))
+            .clone()
+    }
+
     /// Number of tools registered on the full surface, computed once.
     ///
     /// Status endpoints need the count without building a server (and its
     /// store/embedder handles) per request.
     pub fn registered_tool_count() -> usize {
         static COUNT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-        *COUNT.get_or_init(|| Self::all_tools_router().map.len())
+        *COUNT.get_or_init(|| Self::shared_tool_router().map.len())
     }
 }

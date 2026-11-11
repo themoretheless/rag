@@ -5,7 +5,7 @@
 - One writer: `rag-mcp` with `RAG_HTTP_BIND` / MCP. Do not open `rag.duckdb` twice (not from UI, CLI, or a second MCP process).
 - **Re-ingest:** after editing files on disk, call `ingest_file` with the same absolute path (upsert by `file://` URI). Path must sit under `RAG_INGEST_ROOTS`.
 - **Wing / room (optional on `ingest_file`):** pass `wing` and `room` for project shelf placement (MemPalace-style). Example for this repo: `wing=rag`, `room=src` or `room=docs`. Prefer stable names so `search` / `list_documents` filters stay useful. `ingest_text` has no wing/room params; use `ingest_file`, `ingest_raw`, or `add_drawer` when placement matters. `add_drawer` requires both wing and room.
-- **Wiki is compiled, not live:** `ingest_file` does **not** update wiki pages or wiki index. After meaningful doc/runbook/architecture changes: `get_wiki_page` then `update_wiki_page` / `write_wiki_page` (with CAS, below). Optional later: `rebuild_wiki_index` if the catalog is stale.
+- **Wiki is compiled, not live:** `ingest_file` does **not** update wiki pages or wiki index. After meaningful doc/runbook/architecture changes: `get_wiki_page` then `update_wiki_page` / `write_wiki_page` (with CAS, below). Optional later: `rebuild_index` if the wiki catalog is stale.
 
 ## Multi-LLM concurrency (CAS / etag)
 
@@ -20,7 +20,7 @@ Notes:
 - `if_match` is optional by default (omit = last-write-wins). Agents **must** still send it for wiki updates when concurrent writers may run.
 - **`RAG_WIKI_REQUIRE_IF_MATCH`** (default **false**): when `true`, wiki page **updates** reject missing `if_match_revision` / `if_match_etag` (creates may still omit). Enable for multi-agent / multi-LLM setups.
 - If both `if_match_revision` and `if_match_etag` are set, **revision wins**.
-- MCP maps store `Conflict` to `invalid_params` (not a distinct conflict code). Treat that as CAS failure: re-get and retry. Missing if_match under require mode is a config/invalid-params style error, not conflict.
+- MCP maps store `Conflict` to `invalid_params` with `data.code = "CONFLICT"` (no distinct JSON-RPC error code). Treat that as CAS failure: re-get and retry. Missing if_match under require mode is a config/invalid-params style error, not conflict.
 - HTTP exposes wiki GET plus CAS-protected `PUT /v1/wiki` with
   `if_match_revision` / `if_match_etag`; stale writes return `409`. Agents should
   still prefer the MCP wiki tools and always use read-then-CAS when concurrent

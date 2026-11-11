@@ -2,7 +2,7 @@
 
 Reference RAGRAF `extract/generic.py` includes Lua function definitions/calls at
 revision `075caf86dc2f6274b9c48487e521915bcdfeaf2c`. Previously Lua was readable
-text but had no local structural index. The [new extractor](../../LUA_CODE_ANALYSIS.md)
+text but had no local structural index. The [new extractor](../../code-intelligence/LUA_CODE_ANALYSIS.md)
 adds source symbols and conservative lexical function/value links, while dynamic
 globals/imports/table dispatch remain explicit unknowns.
 

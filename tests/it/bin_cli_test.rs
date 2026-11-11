@@ -27,7 +27,13 @@ fn stderr(output: &Output) -> String {
 fn assert_help(binary: &str, cwd: &Path) {
     let output = run(binary, cwd, &["--help"]);
     assert!(output.status.success(), "{}", stderr(&output));
-    assert!(stderr(&output).contains("Usage"), "{}", stderr(&output));
+    // clap prints help on stdout.
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        stderr(&output)
+    );
+    assert!(text.contains("Usage"), "{text}");
 }
 
 fn assert_fails_with(binary: &str, cwd: &Path, args: &[&str], needle: &str) {
@@ -62,15 +68,21 @@ fn db_repair_cli_validates_arguments() {
     let root = tempfile::tempdir().unwrap();
     let binary = env!("CARGO_BIN_EXE_db_repair");
     assert_help(binary, root.path());
-    assert_fails_with(binary, root.path(), &[], "required: --db");
+    // clap's wording since Stage 4 (bins parse arguments with clap).
+    assert_fails_with(binary, root.path(), &[], "--db <DB>");
+    assert_fails_with(binary, root.path(), &["--db", "x.duckdb"], "--out <OUT>");
     assert_fails_with(
         binary,
         root.path(),
-        &["--db", "x.duckdb"],
-        "required: --out",
+        &["--bogus"],
+        "unexpected argument '--bogus'",
     );
-    assert_fails_with(binary, root.path(), &["--bogus"], "unknown arg: --bogus");
-    assert_fails_with(binary, root.path(), &["--db"], "--db needs path");
+    assert_fails_with(
+        binary,
+        root.path(),
+        &["--db"],
+        "a value is required for '--db <DB>'",
+    );
 }
 
 #[test]
@@ -81,6 +93,7 @@ fn db_repair_cli_rebuilds_into_a_new_file_and_refuses_to_overwrite() {
     {
         let store = Store::open(&db).unwrap();
         store
+            .documents()
             .upsert_document(&document("keep-me", "w", "r", ""))
             .unwrap();
     }
@@ -96,7 +109,12 @@ fn db_repair_cli_rebuilds_into_a_new_file_and_refuses_to_overwrite() {
 
     let rebuilt = Store::open(&out).unwrap();
     assert_eq!(
-        rebuilt.get_document("keep-me").unwrap().unwrap().content,
+        rebuilt
+            .documents()
+            .get_document("keep-me")
+            .unwrap()
+            .unwrap()
+            .content,
         "keep-me body"
     );
     drop(rebuilt);
@@ -142,7 +160,12 @@ fn ingest_file_cli_validates_arguments() {
         ],
         "--path is not a file",
     );
-    assert_fails_with(binary, root.path(), &["--nope"], "unknown arg: --nope");
+    assert_fails_with(
+        binary,
+        root.path(),
+        &["--nope"],
+        "unexpected argument '--nope'",
+    );
     assert!(!db.exists(), "argument errors must not create the database");
 }
 
@@ -177,7 +200,7 @@ fn ingest_file_cli_ingests_one_file_offline() {
     let id = result["document_id"].as_str().unwrap().to_string();
 
     let store = Store::open(&db).unwrap();
-    let doc = store.get_document(&id).unwrap().unwrap();
+    let doc = store.documents().get_document(&id).unwrap().unwrap();
     assert!(doc.content.contains("offline ingest body"));
     assert_eq!(doc.wing.as_deref(), Some("proj"));
     assert_eq!(doc.room.as_deref(), Some("notes"));
@@ -224,7 +247,25 @@ fn ingest_project_cli_validates_arguments_and_dry_run_skips_the_database() {
         ],
         "--root is not a directory",
     );
-    assert_fails_with(binary, root.path(), &["--max-bytes", "lots"], "max-bytes");
+    // clap's wording since Stage 4: parse errors exit with code 2.
+    assert_fails_with(
+        binary,
+        root.path(),
+        &["--max-bytes", "lots"],
+        "invalid value 'lots' for '--max-bytes <N>'",
+    );
+    assert_eq!(
+        run(binary, root.path(), &["--max-bytes", "lots"])
+            .status
+            .code(),
+        Some(2)
+    );
+    assert_fails_with(
+        binary,
+        root.path(),
+        &["--bogus"],
+        "unexpected argument '--bogus'",
+    );
 
     let output = run(
         binary,
@@ -291,6 +332,7 @@ fn ingest_project_cli_ingests_a_tree_offline() {
 
     let store = Store::open(&db).unwrap();
     let mut uris: Vec<String> = store
+        .documents()
         .list_documents()
         .unwrap()
         .into_iter()
@@ -314,7 +356,7 @@ fn promote_dodo_projects_cli_requires_a_database_argument() {
         env!("CARGO_BIN_EXE_promote_dodo_projects"),
         root.path(),
         &[],
-        "usage: promote_dodo_projects",
+        "Usage: promote_dodo_projects <DB_PATH>",
     );
 }
 
@@ -330,7 +372,7 @@ fn promote_dodo_projects_cli_moves_dodo_rooms_to_project_wings() {
             document("flat", "Dodo", "beta", "/elsewhere/file.md"),
             document("untouched", "Other", "alpha", "/repos/Dodo/alpha/api/x.md"),
         ] {
-            store.upsert_document(&doc).unwrap();
+            store.documents().upsert_document(&doc).unwrap();
         }
     }
     let output = run(
@@ -345,7 +387,7 @@ fn promote_dodo_projects_cli_moves_dodo_rooms_to_project_wings() {
 
     let store = Store::open(&db).unwrap();
     let placement = |id: &str| {
-        let doc = store.get_document(id).unwrap().unwrap();
+        let doc = store.documents().get_document(id).unwrap().unwrap();
         let tags = doc.metadata().unwrap()["tags"].clone();
         (
             doc.wing.unwrap_or_default(),
@@ -366,5 +408,85 @@ fn promote_dodo_projects_cli_moves_dodo_rooms_to_project_wings() {
     assert_eq!(
         placement("untouched"),
         ("Other".into(), "alpha".into(), serde_json::Value::Null)
+    );
+}
+
+#[test]
+fn recovery_cli_parses_subcommands_with_clap() {
+    let root = tempfile::tempdir().unwrap();
+    let binary = env!("CARGO_BIN_EXE_recovery");
+    assert_help(binary, root.path());
+    // No subcommand prints the help on stderr and exits 2 (it exited 0).
+    let bare = run(binary, root.path(), &[]);
+    assert_eq!(bare.status.code(), Some(2));
+    assert!(stderr(&bare).contains("Usage"), "{}", stderr(&bare));
+    assert_fails_with(binary, root.path(), &["backup"], "--db <DB>");
+    assert_fails_with(
+        binary,
+        root.path(),
+        &["import-bundle", "--db", "x.duckdb"],
+        "--in <FILE>",
+    );
+    assert_fails_with(
+        binary,
+        root.path(),
+        &["bogus"],
+        "unrecognized subcommand 'bogus'",
+    );
+    assert_fails_with(
+        binary,
+        root.path(),
+        &["retention", "--dir", ".", "--keep", "many"],
+        "invalid value 'many'",
+    );
+
+    let dir = root.path().to_str().unwrap();
+    let output = run(binary, root.path(), &["retention", "--dir", dir]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["keep"], 7);
+    assert_eq!(report["dry_run"], true);
+    let output = run(
+        binary,
+        root.path(),
+        &["inventory", "--dir", dir, "--keep", "3"],
+    );
+    assert!(output.status.success(), "{}", stderr(&output));
+}
+
+#[test]
+fn eval_cli_parses_flags_with_clap() {
+    let root = tempfile::tempdir().unwrap();
+    let binary = env!("CARGO_BIN_EXE_eval");
+    assert_help(binary, root.path());
+    assert_fails_with(
+        binary,
+        root.path(),
+        &["--bogus"],
+        "unexpected argument '--bogus'",
+    );
+    assert_fails_with(
+        binary,
+        root.path(),
+        &["--top-k", "x"],
+        "invalid value 'x' for '--top-k <N>'",
+    );
+    assert_eq!(
+        run(binary, root.path(), &["--top-k", "x"]).status.code(),
+        Some(2)
+    );
+    // Semantic checks keep their own message and exit code 1.
+    let zero = run(binary, root.path(), &["--top-k", "0"]);
+    assert_eq!(zero.status.code(), Some(1));
+    assert!(
+        stderr(&zero).contains("--top-k must be greater than zero"),
+        "{}",
+        stderr(&zero)
+    );
+    assert_fails_with(
+        binary,
+        root.path(),
+        &["--checkpoint", "c.json"],
+        "--checkpoint requires --settings-a and --settings-b",
     );
 }

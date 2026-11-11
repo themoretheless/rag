@@ -12,23 +12,23 @@
 use anyhow::{bail, Context, Result};
 use std::path::PathBuf;
 
+/// Rebuild a DuckDB file through EXPORT/IMPORT DATABASE.
+///
+/// Opens raw DuckDB connections, not `bootstrap::open_offline`: the source may
+/// be corrupt, and opening it as a `Store` would run migrations on it.
+#[derive(clap::Parser)]
+#[command(name = "db_repair")]
+struct Args {
+    /// Source database (left untouched).
+    #[arg(long)]
+    db: PathBuf,
+    /// Rebuilt database to create (must not exist).
+    #[arg(long)]
+    out: PathBuf,
+}
+
 fn main() -> Result<()> {
-    let mut db = None;
-    let mut out = None;
-    let mut it = std::env::args().skip(1);
-    while let Some(a) = it.next() {
-        match a.as_str() {
-            "--db" => db = Some(PathBuf::from(it.next().context("--db needs path")?)),
-            "--out" => out = Some(PathBuf::from(it.next().context("--out needs path")?)),
-            "-h" | "--help" => {
-                eprintln!("Usage: db_repair --db SOURCE.duckdb --out REBUILT.duckdb");
-                std::process::exit(0);
-            }
-            other => bail!("unknown arg: {other}"),
-        }
-    }
-    let db = db.context("required: --db")?;
-    let out = out.context("required: --out")?;
+    let Args { db, out } = <Args as clap::Parser>::parse();
     if out.exists() {
         bail!("--out already exists: {}", out.display());
     }

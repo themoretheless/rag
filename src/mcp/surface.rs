@@ -2,71 +2,16 @@
 //!
 //! See `docs/ARCHITECTURE_VISION.md` §5. Env: `RAG_TOOLS=spine|full`.
 
-use std::collections::HashSet;
-use std::sync::LazyLock;
-
 pub use crate::config::ToolSurface;
+pub use crate::tool_spec::spine_tool_names;
 
-/// Spine tools (index-first cascade + minimal control). Keep SPEC names.
-///
-/// Cascade: `query_with_index` → `search_wiki` → `search` → neighbors/backlinks.
-static SPINE: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-    HashSet::from([
-        // L0 deposit / read
-        "ingest_raw",
-        "ingest_text",
-        "ingest_file",
-        "ingest_url",
-        "list_sources",
-        "get_source",
-        "list_documents",
-        "get_document",
-        // L3 compile
-        "write_wiki_page",
-        "update_wiki_page",
-        "get_wiki_page",
-        "list_wiki_pages",
-        "get_schema",
-        "update_schema",
-        "read_index",
-        "rebuild_index",
-        "append_log",
-        "read_log",
-        "query_with_index",
-        "search_wiki",
-        "file_answer",
-        "lint_wiki",
-        // L1 escape hatch + pack
-        "search",
-        "multi_query_search",
-        "pack_context",
-        // L2 structure (+ snapshot for concurrent UI)
-        "get_neighbors",
-        "get_backlinks",
-        "link_nodes",
-        "find_node",
-        "get_graph",
-        "export_graph_snapshot",
-        // control
-        "status",
-        "doctor",
-        "doctor_repair",
-    ])
-});
-
-/// Whether `tool_name` is allowed for the given surface.
+/// Whether `tool_name` is allowed for the given surface (spine flag in
+/// [`crate::tool_spec::TOOL_SPECS`]).
 pub fn tool_allowed(surface: ToolSurface, tool_name: &str) -> bool {
     match surface {
         ToolSurface::Full => true,
-        ToolSurface::Spine => SPINE.contains(tool_name),
+        ToolSurface::Spine => crate::tool_spec::tool_spec(tool_name).is_some_and(|spec| spec.spine),
     }
-}
-
-/// Sorted spine tool names (tests / docs).
-pub fn spine_tool_names() -> Vec<&'static str> {
-    let mut v: Vec<_> = SPINE.iter().copied().collect();
-    v.sort_unstable();
-    v
 }
 
 /// Short index-first playbook for `get_info` and schema://agents.

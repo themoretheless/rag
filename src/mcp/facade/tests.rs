@@ -1,10 +1,12 @@
 //! Behavior tests for the composed MCP server: tool calls, guards, and policy.
 
+use crate::mcp::error::mcp_error;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use chrono::Utc;
+use rmcp::handler::server::wrapper::Parameters;
 
 use super::*;
 use crate::db::recovery::{
@@ -42,6 +44,33 @@ fn every_registered_tool_has_an_explicit_access_policy() {
             tool.name
         );
     }
+}
+
+#[test]
+fn every_registered_tool_has_a_spec_and_every_spec_is_registered() {
+    let registered: std::collections::BTreeSet<String> = RagServer::all_tools_router()
+        .list_all()
+        .into_iter()
+        .map(|tool| tool.name.to_string())
+        .collect();
+    let specs: std::collections::BTreeSet<String> = crate::tool_spec::TOOL_SPECS
+        .iter()
+        .map(|spec| spec.name.to_string())
+        .collect();
+    assert_eq!(
+        registered.difference(&specs).collect::<Vec<_>>(),
+        Vec::<&String>::new(),
+        "registered tools without a ToolSpec"
+    );
+    assert_eq!(
+        specs.difference(&registered).collect::<Vec<_>>(),
+        Vec::<&String>::new(),
+        "ToolSpec rows without a registered tool"
+    );
+    assert_eq!(
+        RagServer::registered_tool_count(),
+        crate::tool_spec::TOOL_SPECS.len()
+    );
 }
 
 #[test]
@@ -105,14 +134,11 @@ impl EmbeddingProvider for GatedEmbedder {
     }
 }
 
+/// Shared baseline plus the ingest allowlist these tests vary.
 fn test_config(db_path: PathBuf, roots: Vec<PathBuf>, dims: usize) -> Config {
     Config {
-        db_path,
-        embedding_model: "mock".to_string(),
-        embedding_dims: dims,
         ingest_roots: roots,
-        llm_enabled: false,
-        ..Config::for_tests()
+        ..crate::testkit::test_config(db_path, dims)
     }
 }
 
@@ -121,8 +147,12 @@ async fn pack_context_mcp_enforces_complete_context_budget() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("pack-mcp.duckdb");
     let config = test_config(path.clone(), Vec::new(), 2);
-    let store = Store::open(&path).unwrap();
-    let server = RagServer::new(store, Arc::new(MockEmbedder::new(2)), config);
+    let store = crate::testkit::open_test_store(&path).unwrap();
+    let server = RagServer::from_context(crate::context::AppContext::new(
+        store,
+        Arc::new(MockEmbedder::new(2)),
+        config,
+    ));
     for budget in [0, 1, 32] {
         let params: PackContextParams = serde_json::from_value(serde_json::json!({
             "max_tokens": budget,
@@ -149,11 +179,11 @@ async fn pack_context_mcp_enforces_complete_context_budget() {
 fn status_and_doctor_empty_corpus() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("status.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 32usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     let status = server.status_report().expect("status");
     assert_eq!(status.backend, "duckdb");
@@ -180,14 +210,15 @@ fn status_and_doctor_empty_corpus() {
 async fn doctor_repair_rebuilds_missing_chunks() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("doctor-repair.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 16usize;
     let config = test_config(path, Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
     let now = Utc::now();
     server
         .store
+        .documents()
         .upsert_document(&Document {
             id: "missing-chunks".into(),
             uri: "file://missing.md".into(),
@@ -201,7 +232,11 @@ async fn doctor_repair_rebuilds_missing_chunks() {
             ..Default::default()
         })
         .unwrap();
-    server.store.ensure_fts(&server.config.fts_stemmer).unwrap();
+    server
+        .store
+        .maintenance()
+        .ensure_fts(&server.config.fts_stemmer)
+        .unwrap();
     assert_eq!(server.doctor_report().unwrap().documents_without_chunks, 1);
 
     server
@@ -213,11 +248,17 @@ async fn doctor_repair_rebuilds_missing_chunks() {
         .unwrap();
     assert!(server
         .store
+        .chunks()
         .list_chunks_for_document("missing-chunks")
         .unwrap()
         .is_empty());
 
-    let search_guard = server.store.corpus_mutation_lane().read_owned().await;
+    let search_guard = server
+        .store
+        .corpus_lane()
+        .corpus_mutation_lane()
+        .read_owned()
+        .await;
     let busy = server
         .doctor_repair(Parameters(DoctorRepairParams {
             dry_run: Some(false),
@@ -237,6 +278,7 @@ async fn doctor_repair_rebuilds_missing_chunks() {
         .unwrap();
     assert!(!server
         .store
+        .chunks()
         .list_chunks_for_document("missing-chunks")
         .unwrap()
         .is_empty());
@@ -272,17 +314,21 @@ async fn import_bundle_finishes_with_generation_clean_fts() {
     let bundle_path = dir.path().join("bundle.json");
     let dims = 8usize;
     let config = test_config(path.clone(), vec![dir.path().to_path_buf()], dims);
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
-    server.store.ensure_fts(&server.config.fts_stemmer).unwrap();
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
+    server
+        .store
+        .maintenance()
+        .ensure_fts(&server.config.fts_stemmer)
+        .unwrap();
     let body = "portable searchable recovery body";
     let bundle = RecoveryBundle {
         format: "rag-recovery-bundle".into(),
         version: BUNDLE_VERSION,
         exported_at: Utc::now(),
         embedding_manifest: Some(crate::db::store::embedding_manifest_from_config(
-            &server.config,
+            server.config.as_ref(),
         )),
         documents: vec![BundleDocument {
             document: Document {
@@ -303,7 +349,8 @@ async fn import_bundle_finishes_with_generation_clean_fts() {
                 char_start: 0,
                 char_end: body.len() as i32,
                 metadata_json: "{}".into(),
-            }],
+            }
+            .into()],
         }],
     };
     std::fs::write(
@@ -312,7 +359,12 @@ async fn import_bundle_finishes_with_generation_clean_fts() {
     )
     .unwrap();
 
-    let search_guard = server.store.corpus_mutation_lane().read_owned().await;
+    let search_guard = server
+        .store
+        .corpus_lane()
+        .corpus_mutation_lane()
+        .read_owned()
+        .await;
     let busy = server
         .import_bundle(Parameters(ImportBundleParams {
             path: bundle_path.display().to_string(),
@@ -372,9 +424,9 @@ async fn legacy_bundle_requires_opt_in_and_reembeds_before_import() {
     let bundle_path = dir.path().join("legacy-v1.json");
     let dims = 8usize;
     let config = test_config(path.clone(), vec![dir.path().to_path_buf()], dims);
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
     let body = "legacy vector must be replaced";
     let legacy_vector = vec![42.0; dims];
     let bundle = RecoveryBundle {
@@ -399,7 +451,8 @@ async fn legacy_bundle_requires_opt_in_and_reembeds_before_import() {
                 char_start: 0,
                 char_end: body.len() as i32,
                 metadata_json: "{}".into(),
-            }],
+            }
+            .into()],
         }],
     };
     std::fs::write(
@@ -421,6 +474,7 @@ async fn legacy_bundle_requires_opt_in_and_reembeds_before_import() {
     assert!(refused.message.contains("reembed_legacy=true"));
     assert!(server
         .store
+        .documents()
         .get_document("legacy-document")
         .unwrap()
         .is_none());
@@ -444,6 +498,7 @@ async fn legacy_bundle_requires_opt_in_and_reembeds_before_import() {
     assert_eq!(result_json["embeddings_reembedded"], 1);
     let chunks = server
         .store
+        .chunks()
         .list_chunks_for_document("legacy-document")
         .unwrap();
     assert_eq!(chunks.len(), 1);
@@ -451,7 +506,8 @@ async fn legacy_bundle_requires_opt_in_and_reembeds_before_import() {
     assert_ne!(chunks[0].embedding, legacy_vector);
     assert!(server
         .store
-        .embedding_manifest_matches_config(&server.config)
+        .embedding_manifest()
+        .embedding_manifest_matches_config(server.config.as_ref())
         .unwrap());
 }
 
@@ -488,7 +544,8 @@ async fn legacy_reembed_preflight_rejects_oversized_vectors_before_provider_call
                 char_start: 0,
                 char_end: 4,
                 metadata_json: "{}".into(),
-            }],
+            }
+            .into()],
         }],
     };
 
@@ -508,10 +565,15 @@ async fn bulk_maintenance_apply_paths_refuse_active_guarded_search() {
     let path = dir.path().join("maintenance-lane.duckdb");
     let dims = 8usize;
     let config = test_config(path.clone(), Vec::new(), dims);
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
-    let search_guard = server.store.corpus_mutation_lane().read_owned().await;
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
+    let search_guard = server
+        .store
+        .corpus_lane()
+        .corpus_mutation_lane()
+        .read_owned()
+        .await;
 
     let plan_error = server
         .apply_maintenance_plan(Parameters(ApplyMaintenancePlanParams {
@@ -616,10 +678,14 @@ async fn dropped_apply_request_leaves_owned_mutation_workflow_running() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("owned-maintenance.duckdb");
     let dims = 8usize;
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let config = test_config(path, Vec::new(), dims);
-    store.ensure_embedding_manifest(&config).unwrap();
     store
+        .embedding_manifest()
+        .ensure_embedding_manifest(&config)
+        .unwrap();
+    store
+        .documents()
         .upsert_document(&Document {
             id: "owned-doc".into(),
             uri: "wiki://owned-doc".into(),
@@ -631,6 +697,7 @@ async fn dropped_apply_request_leaves_owned_mutation_workflow_running() {
         })
         .expect("seed document");
     store
+        .chunks()
         .insert_chunks(&[Chunk {
             id: "owned-chunk".into(),
             document_id: "owned-doc".into(),
@@ -649,7 +716,7 @@ async fn dropped_apply_request_leaves_owned_mutation_workflow_running() {
         release: release.clone(),
         dims,
     });
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
     let request_server = server.clone();
     let waiter = tokio::spawn(async move {
         request_server
@@ -674,7 +741,7 @@ async fn dropped_apply_request_leaves_owned_mutation_workflow_running() {
 
     waiter.abort();
     assert!(waiter.await.unwrap_err().is_cancelled());
-    let lane = server.store.corpus_mutation_lane();
+    let lane = server.store.corpus_lane().corpus_mutation_lane();
     assert!(
         lane.clone().try_write_owned().is_err(),
         "owned child must retain the lane after its request waiter is dropped"
@@ -694,6 +761,7 @@ async fn dropped_apply_request_leaves_owned_mutation_workflow_running() {
     .expect("owned maintenance workflow completed");
     let chunks = server
         .store
+        .chunks()
         .list_chunks_for_document("owned-doc")
         .expect("reembedded chunks");
     assert_eq!(chunks.len(), 1);
@@ -704,11 +772,11 @@ async fn dropped_apply_request_leaves_owned_mutation_workflow_running() {
 async fn retrieval_helpers_multi_get_expand_and_find_similar() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("retrieval-helpers.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 16usize;
     let config = test_config(path, Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
     let first = server
         .ingest_pipeline(IngestCommand {
             text: "alpha architecture and duckdb reliability ".repeat(80),
@@ -775,7 +843,7 @@ async fn retrieval_helpers_multi_get_expand_and_find_similar() {
 async fn llm_status_reports_config_and_unreachable_when_no_server() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("llm_status.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 32usize;
     // Closed local port so the probe fails fast without a live Ollama.
     let mut config = test_config(path.clone(), Vec::new(), dims);
@@ -785,7 +853,7 @@ async fn llm_status_reports_config_and_unreachable_when_no_server() {
     config.llm_model = "test-model".to_string();
     config.embedding_model = "mock-embed".to_string();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     assert!(server.llm.is_some(), "ChatClient should wire from config");
 
@@ -805,8 +873,9 @@ async fn llm_status_reports_config_and_unreachable_when_no_server() {
 fn doctor_detects_manifest_dim_mismatch_and_roots() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("doctor.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     store
+        .embedding_manifest()
         .set_embedding_manifest(&crate::models::EmbeddingManifest {
             id: "default".into(),
             provider: "mock".into(),
@@ -821,7 +890,7 @@ fn doctor_detects_manifest_dim_mismatch_and_roots() {
     let dims = 32usize;
     let config = test_config(path.clone(), vec![PathBuf::from("/allowed")], dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     let doctor = server.doctor_report().expect("doctor");
     assert!(!doctor.embed_ok);
@@ -838,11 +907,11 @@ fn doctor_detects_manifest_dim_mismatch_and_roots() {
 async fn status_ready_for_search_after_ingest() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("ready.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 32usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     server
         .ingest_pipeline(IngestCommand {
@@ -876,11 +945,11 @@ async fn status_ready_for_search_after_ingest() {
 async fn list_wings_rooms_taxonomy_and_status_wings() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("taxonomy.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 32usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     for (text, uri, wing, room) in [
         ("alpha body", "raw://a", "research", "rag"),
@@ -904,7 +973,7 @@ async fn list_wings_rooms_taxonomy_and_status_wings() {
             .expect("ingest");
     }
 
-    let wings = server.store.list_wings().expect("list_wings");
+    let wings = server.store.documents().list_wings().expect("list_wings");
     assert_eq!(wings.len(), 2);
     assert_eq!(wings[0].wing, "ops");
     assert_eq!(wings[0].document_count, 1);
@@ -913,6 +982,7 @@ async fn list_wings_rooms_taxonomy_and_status_wings() {
 
     let rooms = server
         .store
+        .documents()
         .list_rooms(Some("research"))
         .expect("list_rooms");
     assert_eq!(rooms.len(), 2);
@@ -923,7 +993,7 @@ async fn list_wings_rooms_taxonomy_and_status_wings() {
         .iter()
         .any(|r| r.room == "eval" && r.document_count == 1));
 
-    let tax = server.store.get_taxonomy().expect("taxonomy");
+    let tax = server.store.documents().get_taxonomy().expect("taxonomy");
     assert_eq!(tax.total_documents, 3);
     assert_eq!(tax.unscoped_count, 0);
     assert_eq!(tax.wings.len(), 2);
@@ -944,11 +1014,11 @@ async fn list_wings_rooms_taxonomy_and_status_wings() {
 async fn update_document_meta_skips_reembed_unless_content_changes() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("meta.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 32usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     // Wiki layer so body updates are allowed (raw is immutable).
     let ing = server
@@ -968,12 +1038,14 @@ async fn update_document_meta_skips_reembed_unless_content_changes() {
         .expect("ingest");
     let chunks_before = server
         .store
+        .chunks()
         .list_chunks_for_document(&ing.document_id)
         .expect("chunks")
         .len();
     assert!(chunks_before > 0);
     let emb_before = server
         .store
+        .chunks()
         .list_chunks_for_document(&ing.document_id)
         .expect("chunks")[0]
         .embedding
@@ -1006,6 +1078,7 @@ async fn update_document_meta_skips_reembed_unless_content_changes() {
 
     let emb_after_meta = server
         .store
+        .chunks()
         .list_chunks_for_document(&ing.document_id)
         .expect("chunks")[0]
         .embedding
@@ -1058,11 +1131,11 @@ async fn update_document_meta_skips_reembed_unless_content_changes() {
 async fn check_duplicate_and_delete_by_source_tools() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("dedupe.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 32usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     let body = "duplicate candidate body";
     let src = "/vault/shared.md";
@@ -1099,6 +1172,7 @@ async fn check_duplicate_and_delete_by_source_tools() {
 
     let dup = server
         .store
+        .documents()
         .check_duplicate(Some(body), None, None)
         .expect("check_duplicate");
     assert!(dup.is_duplicate);
@@ -1107,6 +1181,7 @@ async fn check_duplicate_and_delete_by_source_tools() {
 
     let by_uri = server
         .store
+        .documents()
         .check_duplicate(None, None, Some("raw://two"))
         .expect("uri probe");
     assert!(by_uri.is_duplicate);
@@ -1114,21 +1189,41 @@ async fn check_duplicate_and_delete_by_source_tools() {
 
     let deleted = server
         .store
+        .documents()
         .delete_by_source(src)
         .expect("delete_by_source");
     assert_eq!(deleted, 2);
-    assert_eq!(server.store.list_documents().expect("list").len(), 0);
-    assert_eq!(server.store.delete_by_source(src).expect("again"), 0);
+    assert_eq!(
+        server
+            .store
+            .documents()
+            .list_documents()
+            .expect("list")
+            .len(),
+        0
+    );
+    assert_eq!(
+        server
+            .store
+            .documents()
+            .delete_by_source(src)
+            .expect("again"),
+        0
+    );
 }
 
 #[tokio::test]
 async fn delete_by_source_preview_matches_archived_and_tombstone_apply_scope() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("delete-source-preview.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 8usize;
     let config = test_config(path, Vec::new(), dims);
-    let server = RagServer::new(store, Arc::new(MockEmbedder::new(dims)), config);
+    let server = RagServer::from_context(crate::context::AppContext::new(
+        store,
+        Arc::new(MockEmbedder::new(dims)),
+        config,
+    ));
     let source = "/vault/all-lifecycle-states.md";
     let now = Utc::now();
     for (id, status) in [
@@ -1138,6 +1233,7 @@ async fn delete_by_source_preview_matches_archived_and_tombstone_apply_scope() {
     ] {
         server
             .store
+            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("raw://{id}"),
@@ -1188,7 +1284,12 @@ async fn delete_by_source_preview_matches_archived_and_tombstone_apply_scope() {
         serde_json::from_str(&applied.content[0].as_text().expect("text result").text).unwrap();
     assert_eq!(applied["match_count"], 3);
     assert_eq!(applied["deleted"], 3);
-    assert!(server.store.list_documents().unwrap().is_empty());
+    assert!(server
+        .store
+        .documents()
+        .list_documents()
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]
@@ -1197,11 +1298,11 @@ async fn delete_by_source_finalization_failure_returns_committed_report() {
     let path = dir.path().join("delete-source-finalize-failure.duckdb");
     let dims = 8usize;
     let config = test_config(path.clone(), Vec::new(), dims);
-    let mut server = RagServer::new(
-        Store::open(&path).expect("open"),
+    let mut server = RagServer::from_context(crate::context::AppContext::new(
+        crate::testkit::open_test_store(&path).expect("open"),
         Arc::new(MockEmbedder::new(dims)),
         config,
-    );
+    ));
     let source = "/vault/finalization-failure.md";
     let ingested = server
         .ingest_pipeline(IngestCommand {
@@ -1218,8 +1319,13 @@ async fn delete_by_source_finalization_failure_returns_committed_report() {
         })
         .await
         .expect("seed document");
-    server.store.ensure_fts(&server.config.fts_stemmer).unwrap();
-    server.config.fts_stemmer = crate::db::fts::test_fault::fail("facade");
+    server
+        .store
+        .maintenance()
+        .ensure_fts(&server.config.fts_stemmer)
+        .unwrap();
+    std::sync::Arc::make_mut(&mut server.config).fts_stemmer =
+        crate::db::fts::test_fault::fail("facade");
 
     let result = server
         .delete_by_source(Parameters(DeleteBySourceParams {
@@ -1239,6 +1345,7 @@ async fn delete_by_source_finalization_failure_returns_committed_report() {
         .contains("FTS_FINALIZATION_FAILED"));
     assert!(server
         .store
+        .documents()
         .get_document(&ingested.document_id)
         .unwrap()
         .is_none());
@@ -1249,6 +1356,7 @@ async fn delete_by_source_finalization_failure_returns_committed_report() {
     assert!(generation.dirty, "next lexical read must retry FTS");
     assert!(server
         .store
+        .ops_log()
         .list_recent_ops(10)
         .unwrap()
         .iter()
@@ -1259,11 +1367,11 @@ async fn delete_by_source_finalization_failure_returns_committed_report() {
 async fn cleanup_source_duplicates_defaults_safe_requires_confirm_and_respects_lane() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("source-dedupe-tool.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 16usize;
     let config = test_config(path, Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
     let source = "/vault/tool.md";
     let body = "tool duplicate";
     let hash = content_hash(body);
@@ -1274,6 +1382,7 @@ async fn cleanup_source_duplicates_defaults_safe_requires_confirm_and_respects_l
     ] {
         server
             .store
+            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: uri.into(),
@@ -1291,7 +1400,11 @@ async fn cleanup_source_duplicates_defaults_safe_requires_confirm_and_respects_l
             })
             .unwrap();
     }
-    server.store.ensure_fts(&server.config.fts_stemmer).unwrap();
+    server
+        .store
+        .maintenance()
+        .ensure_fts(&server.config.fts_stemmer)
+        .unwrap();
     let generation_before = {
         let conn = server.store.lock().unwrap();
         crate::db::fts::fts_generation_state(&conn).unwrap()
@@ -1307,7 +1420,12 @@ async fn cleanup_source_duplicates_defaults_safe_requires_confirm_and_respects_l
     assert_eq!(preview_json["dry_run"], true);
     assert_eq!(preview_json["applied"], false);
     assert_eq!(preview_json["candidate_count"], 1);
-    assert!(server.store.get_document("legacy").unwrap().is_some());
+    assert!(server
+        .store
+        .documents()
+        .get_document("legacy")
+        .unwrap()
+        .is_some());
 
     let missing_confirm = server
         .cleanup_source_duplicates(Parameters(CleanupSourceDuplicatesParams {
@@ -1319,7 +1437,12 @@ async fn cleanup_source_duplicates_defaults_safe_requires_confirm_and_respects_l
         .unwrap_err();
     assert!(missing_confirm.message.contains("confirm=true"));
 
-    let search_guard = server.store.corpus_mutation_lane().read_owned().await;
+    let search_guard = server
+        .store
+        .corpus_lane()
+        .corpus_mutation_lane()
+        .read_owned()
+        .await;
     let concurrent_preview = server
         .cleanup_source_duplicates(Parameters(CleanupSourceDuplicatesParams::default()))
         .await
@@ -1357,7 +1480,12 @@ async fn cleanup_source_duplicates_defaults_safe_requires_confirm_and_respects_l
         serde_json::from_str(&applied.content[0].as_text().expect("text result").text).unwrap();
     assert_eq!(applied_json["applied"], true);
     assert_eq!(applied_json["deleted_documents"], 1);
-    assert!(server.store.get_document("legacy").unwrap().is_none());
+    assert!(server
+        .store
+        .documents()
+        .get_document("legacy")
+        .unwrap()
+        .is_none());
     let generation_after = {
         let conn = server.store.lock().unwrap();
         crate::db::fts::fts_generation_state(&conn).unwrap()
@@ -1381,11 +1509,11 @@ async fn cleanup_source_duplicates_defaults_safe_requires_confirm_and_respects_l
 async fn ingest_raw_list_sources_get_source_immutable() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("raw.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 32usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     let r1 = server
         .ingest_pipeline(IngestCommand {
@@ -1447,6 +1575,7 @@ async fn ingest_raw_list_sources_get_source_immutable() {
 
     let sources = server
         .store
+        .documents()
         .list_documents_by_layer("raw")
         .expect("list raw");
     assert_eq!(sources.len(), 1);
@@ -1457,6 +1586,7 @@ async fn ingest_raw_list_sources_get_source_immutable() {
 
     let got = server
         .store
+        .documents()
         .get_document(&r1.document_id)
         .expect("get")
         .expect("present");
@@ -1477,11 +1607,11 @@ async fn ingest_file_respects_allowlist() {
     std::fs::write(&outside, "should not ingest").expect("write outside");
 
     let db_path = dir.path().join("allow.duckdb");
-    let store = Store::open(&db_path).expect("open");
+    let store = crate::testkit::open_test_store(&db_path).expect("open");
     let dims = 32usize;
     let config = test_config(db_path.clone(), vec![allowed.clone()], dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     // Outside root refused before read.
     let err = check_path_allowlist(Path::new(&outside), &server.config.ingest_roots)
@@ -1521,11 +1651,11 @@ async fn ingest_file_respects_allowlist() {
 async fn add_drawer_check_duplicate_delete_by_source() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("drawer.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 32usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     let body = "verbatim drawer body for parity";
     let hash = content_hash(body);
@@ -1533,6 +1663,7 @@ async fn add_drawer_check_duplicate_delete_by_source() {
     // Before ingest: not a duplicate.
     let miss = server
         .store
+        .documents()
         .check_duplicate(Some(body), None, None)
         .expect("check miss");
     assert!(!miss.is_duplicate);
@@ -1558,6 +1689,7 @@ async fn add_drawer_check_duplicate_delete_by_source() {
 
     let doc = server
         .store
+        .documents()
         .get_document(&ing.document_id)
         .expect("get")
         .expect("present");
@@ -1569,6 +1701,7 @@ async fn add_drawer_check_duplicate_delete_by_source() {
     // check_duplicate by content and by hash.
     let by_content = server
         .store
+        .documents()
         .check_duplicate(Some(body), None, None)
         .expect("by content");
     assert!(by_content.is_duplicate);
@@ -1577,11 +1710,16 @@ async fn add_drawer_check_duplicate_delete_by_source() {
 
     let by_hash = server
         .store
+        .documents()
         .check_duplicate(None, Some(&hash), None)
         .expect("by hash");
     assert!(by_hash.is_duplicate);
 
-    server.store.ensure_fts(&server.config.fts_stemmer).unwrap();
+    server
+        .store
+        .maintenance()
+        .ensure_fts(&server.config.fts_stemmer)
+        .unwrap();
 
     // dry_run delete_by_source leaves rows and the clean generation intact.
     let dry = server
@@ -1597,11 +1735,17 @@ async fn add_drawer_check_duplicate_delete_by_source() {
     assert_eq!(dry_json["deleted"], 0);
     assert!(server
         .store
+        .documents()
         .get_document(&ing.document_id)
         .expect("get")
         .is_some());
 
-    let search_guard = server.store.corpus_mutation_lane().read_owned().await;
+    let search_guard = server
+        .store
+        .corpus_lane()
+        .corpus_mutation_lane()
+        .read_owned()
+        .await;
     let busy = server
         .delete_by_source(Parameters(DeleteBySourceParams {
             source_file: "/vault/drawer-a.md".into(),
@@ -1624,12 +1768,14 @@ async fn add_drawer_check_duplicate_delete_by_source() {
     assert_eq!(deleted_json["deleted"], 1);
     assert!(server
         .store
+        .documents()
         .get_document(&ing.document_id)
         .expect("get after")
         .is_none());
     assert!(
         !server
             .store
+            .documents()
             .check_duplicate(Some(body), None, None)
             .expect("after delete")
             .is_duplicate
@@ -1645,7 +1791,7 @@ async fn add_drawer_check_duplicate_delete_by_source() {
 async fn single_reembed_refuses_identity_migration_until_full_reembed() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("reembed.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 16usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let calls = Arc::new(AtomicUsize::new(0));
@@ -1653,7 +1799,7 @@ async fn single_reembed_refuses_identity_migration_until_full_reembed() {
         calls: calls.clone(),
         dims,
     });
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     let ingest = server
         .ingest_pipeline(IngestCommand {
@@ -1674,6 +1820,7 @@ async fn single_reembed_refuses_identity_migration_until_full_reembed() {
     let calls_after_ingest = calls.load(Ordering::Relaxed);
     let chunks_before = server
         .store
+        .chunks()
         .list_chunks_for_document(&ingest.document_id)
         .expect("chunks before mismatch");
     let generation_before = {
@@ -1683,10 +1830,12 @@ async fn single_reembed_refuses_identity_migration_until_full_reembed() {
 
     // Same provider/model/dims is still a mismatch when a persisted
     // fingerprint says the vectors came from another endpoint identity.
-    let mut stale_manifest = crate::db::store::embedding_manifest_from_config(&server.config);
+    let mut stale_manifest =
+        crate::db::store::embedding_manifest_from_config(server.config.as_ref());
     stale_manifest.content_fingerprint = Some("stale-fingerprint".into());
     server
         .store
+        .embedding_manifest()
         .set_embedding_manifest(&stale_manifest)
         .expect("force mismatch");
 
@@ -1708,6 +1857,7 @@ async fn single_reembed_refuses_identity_migration_until_full_reembed() {
     assert_eq!(
         server
             .store
+            .chunks()
             .list_chunks_for_document(&ingest.document_id)
             .unwrap()
             .iter()
@@ -1726,6 +1876,7 @@ async fn single_reembed_refuses_identity_migration_until_full_reembed() {
     assert_eq!(
         server
             .store
+            .embedding_manifest()
             .get_embedding_manifest()
             .unwrap()
             .unwrap()
@@ -1746,6 +1897,7 @@ async fn single_reembed_refuses_identity_migration_until_full_reembed() {
         .expect("compatible after complete reembed");
     let chunks = server
         .store
+        .chunks()
         .list_chunks_for_document(&ingest.document_id)
         .expect("chunks");
     assert!(chunks.iter().all(|c| c.embedding.len() == dims));
@@ -1794,10 +1946,10 @@ fn recovery_jsonl_requires_one_typed_manifest_before_documents() {
 async fn recovery_tools_refuse_oversized_io_without_publishing_an_artifact() {
     let root = tempfile::tempdir().unwrap();
     let db_path = root.path().join("bounded.duckdb");
-    let store = Store::open(&db_path).unwrap();
+    let store = crate::testkit::open_test_store(&db_path).unwrap();
     let config = test_config(db_path, vec![root.path().to_path_buf()], 32);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(32));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     let oversized_input = root.path().join("oversized.json");
     let file = std::fs::File::create(&oversized_input).unwrap();
@@ -1849,7 +2001,7 @@ async fn recovery_tools_refuse_oversized_io_without_publishing_an_artifact() {
 
 #[test]
 fn busy_error_is_structured_retryable_and_resource_safe() {
-    let mcp = McpError::from(AppError::busy(
+    let mcp = mcp_error(AppError::busy(
         "exclusive corpus mutation is active; retry search after it completes",
     ));
     assert_eq!(mcp.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
@@ -1869,7 +2021,7 @@ fn busy_error_is_structured_retryable_and_resource_safe() {
 async fn multi_query_search_fails_busy_before_embedding_any_rewrite() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("multi-query-busy.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 2;
     let calls = Arc::new(AtomicUsize::new(0));
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(CountingEmbedder {
@@ -1878,8 +2030,13 @@ async fn multi_query_search_fails_busy_before_embedding_any_rewrite() {
     });
     let mut config = test_config(path, Vec::new(), dims);
     config.default_search_mode = SearchMode::Hybrid;
-    let server = RagServer::new(store, embedder, config);
-    let sync_guard = server.store.corpus_mutation_lane().write_owned().await;
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
+    let sync_guard = server
+        .store
+        .corpus_lane()
+        .corpus_mutation_lane()
+        .write_owned()
+        .await;
 
     let error = server
         .multi_query_search(Parameters(MultiQuerySearchParams {
@@ -1905,7 +2062,7 @@ async fn multi_query_search_fails_busy_before_embedding_any_rewrite() {
 async fn vector_search_holds_corpus_guard_across_async_embedding() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("vector-search-guard.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 2;
     let started = Arc::new(tokio::sync::Semaphore::new(0));
     let release = Arc::new(tokio::sync::Semaphore::new(0));
@@ -1914,7 +2071,11 @@ async fn vector_search_holds_corpus_guard_across_async_embedding() {
         release: release.clone(),
         dims,
     });
-    let server = RagServer::new(store, embedder, test_config(path, Vec::new(), dims));
+    let server = RagServer::from_context(crate::context::AppContext::new(
+        store,
+        embedder,
+        test_config(path, Vec::new(), dims),
+    ));
     let request_server = server.clone();
     let search_task = tokio::spawn(async move {
         request_server
@@ -1952,6 +2113,7 @@ async fn vector_search_holds_corpus_guard_across_async_embedding() {
 
     let mutation_error = match server
         .store
+        .corpus_lane()
         .try_corpus_mutation_guard("embedding migration")
     {
         Ok(_) => panic!("vector search must retain the corpus read guard while embedding"),
@@ -1971,14 +2133,15 @@ async fn vector_search_holds_corpus_guard_across_async_embedding() {
 fn kg_store_roundtrip_via_server() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("kg_mcp.duckdb");
-    let store = Store::open(&path).expect("open");
+    let store = crate::testkit::open_test_store(&path).expect("open");
     let dims = 16usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     let f = server
         .store
+        .kg()
         .kg_add(crate::db::kg::KgFactInput {
             subject: "Alice",
             predicate: "works_at",
@@ -1994,12 +2157,14 @@ fn kg_store_roundtrip_via_server() {
 
     let hits = server
         .store
+        .kg()
         .kg_query(Some("Alice"), Some("works_at"), None, None)
         .expect("kg_query");
     assert_eq!(hits.len(), 1);
 
     let new_f = server
         .store
+        .kg()
         .kg_supersede(crate::db::kg::KgSupersedeInput {
             subject: "Alice",
             predicate: "works_at",
@@ -2012,11 +2177,86 @@ fn kg_store_roundtrip_via_server() {
         .expect("kg_supersede");
     assert_eq!(new_f.object, "BetaCo");
 
-    let timeline = server.store.kg_timeline("Alice").expect("timeline");
+    let timeline = server.store.kg().kg_timeline("Alice").expect("timeline");
     assert_eq!(timeline.len(), 2);
 
-    let stats = server.store.kg_stats().expect("stats");
+    let stats = server.store.kg().kg_stats().expect("stats");
     assert_eq!(stats.total_facts, 2);
     assert_eq!(stats.active_facts, 1);
     assert_eq!(stats.superseded_facts, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dropped_guarded_mutation_keeps_the_lane_until_work_and_fts_finish() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("guarded-mutation.duckdb");
+    let store = crate::testkit::open_test_store(&path).expect("open");
+    let dims = 8usize;
+    let config = test_config(path, Vec::new(), dims);
+    let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
+
+    let guard = server
+        .store
+        .corpus_lane()
+        .try_corpus_mutation_guard("test mutation")
+        .expect("initial mutation guard");
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    let waiter_server = server.clone();
+    let waiter = tokio::spawn(async move {
+        waiter_server
+            .guarded_mutation(
+                "test mutation",
+                guard,
+                move |_store| {
+                    let _ = started_tx.send(());
+                    release_rx.recv().expect("release mutation");
+                    Ok(())
+                },
+                move |_| {
+                    // The refresh decision runs after the mutation, inside
+                    // the same blocking task and under the same guard.
+                    let _ = done_tx.send(());
+                    false
+                },
+            )
+            .await
+            .map(|_| ())
+    });
+    started_rx.await.expect("mutation started");
+    // Cancel the request future while the blocking mutation runs.
+    waiter.abort();
+    assert!(waiter.await.unwrap_err().is_cancelled());
+    assert!(
+        matches!(
+            server
+                .store
+                .corpus_lane()
+                .try_corpus_mutation_guard("second mutation"),
+            Err(AppError::Busy(_))
+        ),
+        "a dropped request must not release the lane while its mutation runs"
+    );
+
+    release_tx.send(()).expect("release mutation");
+    done_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("the post-mutation step still ran after cancellation");
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Ok(guard) = server
+                .store
+                .corpus_lane()
+                .try_corpus_mutation_guard("after mutation")
+            {
+                drop(guard);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("lane released once the blocking work finished");
 }

@@ -6,7 +6,6 @@ use std::path::Path;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::config::Config;
 use crate::db::analytics::{
@@ -180,7 +179,7 @@ pub fn analyze_corpus(
     let db_path = store.path().display().to_string();
     let db_size_bytes = file_size_bytes(store.path());
 
-    let (document_count, chunk_count, node_count, edge_count) = store.stats()?;
+    let (document_count, chunk_count, node_count, edge_count) = store.maintenance().stats()?;
     let counts = collect_counts(store, document_count, chunk_count, node_count, edge_count)?;
     let size = collect_size_stats(store, db_size_bytes)?;
     let doctor = DiagnosticsService::new(store, config).doctor()?;
@@ -189,7 +188,7 @@ pub fn analyze_corpus(
     let embed_mismatch = if doctor.embed_ok {
         None
     } else {
-        let manifest = store.get_embedding_manifest()?;
+        let manifest = store.embedding_manifest().get_embedding_manifest()?;
         Some(EmbedMismatchInfo {
             config_dims: config.embedding_dims,
             config_provider: config.embedding_provider.as_str().to_string(),
@@ -198,6 +197,7 @@ pub fn analyze_corpus(
             manifest_provider: manifest.as_ref().map(|m| m.provider.clone()),
             manifest_model: manifest.as_ref().map(|m| m.model.clone()),
             message: store
+                .embedding_manifest()
                 .require_embedding_manifest_match(config)
                 .err()
                 .map(|error| error.to_string())
@@ -211,7 +211,9 @@ pub fn analyze_corpus(
     let near_duplicates = if opts.include_near_dups {
         let corpus_guard =
             crate::db::search::acquire_corpus_search_guard(store, crate::models::SearchMode::Vec)?;
-        store.require_embedding_manifest_match(config)?;
+        store
+            .embedding_manifest()
+            .require_embedding_manifest_match(config)?;
         let pairs = near_duplicate_pairs(store, opts.near_dup_threshold, false)?;
         drop(corpus_guard);
         pairs
@@ -359,35 +361,33 @@ pub fn analyze_corpus(
     };
 
     if opts.log_ops {
-        if let Err(error) = store.append_ops_log(&OpsLogEntry {
-            id: Uuid::new_v4().to_string(),
-            seq: 0,
-            ts: generated_at,
-            op: "analyze_corpus".into(),
-            prefix: Some("MAINT".into()),
-            message: format!(
-                "analyze_corpus: {} issues, {} docs, {} stubs",
-                report.issue_count,
-                report.counts.documents,
-                report.unresolved_stubs.len()
+        store.ops_log().record(
+            &OpsLogEntry::new(
+                "analyze_corpus",
+                "MAINT",
+                format!(
+                    "analyze_corpus: {} issues, {} docs, {} stubs",
+                    report.issue_count,
+                    report.counts.documents,
+                    report.unresolved_stubs.len()
+                ),
+            )
+            .at(generated_at)
+            .entity(None, "maintenance")
+            .payload(
+                serde_json::json!({
+                    "issue_count": report.issue_count,
+                    "document_count": report.counts.documents,
+                    "chunk_count": report.counts.chunks,
+                    "exact_dup_groups": report.exact_duplicates.len(),
+                    "near_dup_pairs": report.near_duplicates.len(),
+                    "orphan_nodes": report.orphan_nodes.len(),
+                    "stale_wiki": report.stale_wiki.len(),
+                    "unresolved_stubs": report.unresolved_stubs.len(),
+                })
+                .to_string(),
             ),
-            entity_id: None,
-            entity_kind: Some("maintenance".into()),
-            payload_json: serde_json::json!({
-                "issue_count": report.issue_count,
-                "document_count": report.counts.documents,
-                "chunk_count": report.counts.chunks,
-                "exact_dup_groups": report.exact_duplicates.len(),
-                "near_dup_pairs": report.near_duplicates.len(),
-                "orphan_nodes": report.orphan_nodes.len(),
-                "stale_wiki": report.stale_wiki.len(),
-                "unresolved_stubs": report.unresolved_stubs.len(),
-            })
-            .to_string(),
-            agent_name: None,
-        }) {
-            tracing::warn!(%error, "failed to append analyze_corpus ops_log entry");
-        }
+        );
     }
 
     Ok(report)
@@ -424,8 +424,12 @@ pub(crate) fn near_duplicate_pairs(
     active_only: bool,
 ) -> Result<Vec<NearDuplicatePair>> {
     let threshold = threshold.clamp(0.0, 1.0) as f32;
-    let entries =
-        store.representative_document_embeddings(NEAR_DUP_MAX_DOCS, active_only, false, false)?;
+    let entries = store.chunks().representative_document_embeddings(
+        NEAR_DUP_MAX_DOCS,
+        active_only,
+        false,
+        false,
+    )?;
 
     // Score every pair first (at most NEAR_DUP_MAX_DOCS^2 / 2), then keep the
     // most similar REPORT_LIST_CAP. Stopping at the first cap matches in scan
@@ -500,19 +504,9 @@ mod tests {
         assert_eq!(AnalysisCode::from("stale_wiki"), AnalysisCode::StaleWiki);
     }
     use crate::models::{Chunk, Document, GraphEdge, GraphNode};
+    use crate::testkit::test_config;
     use crate::util::content_hash;
     use chrono::Duration;
-    use std::path::PathBuf;
-
-    fn test_config(db_path: PathBuf) -> Config {
-        Config {
-            db_path,
-            embedding_model: "mock".into(),
-            embedding_dims: 8,
-            llm_enabled: false,
-            ..Config::for_tests()
-        }
-    }
 
     fn doc(id: &str, uri: &str, title: &str, content: &str, layer: &str) -> Document {
         let now = Utc::now();
@@ -539,8 +533,8 @@ mod tests {
     fn analyze_empty_corpus() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("empty.duckdb");
-        let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let store = crate::testkit::open_test_store(&path).unwrap();
+        let cfg = test_config(path, 8);
         let mut opts = AnalyzeOptions::from_config(&cfg);
         opts.log_ops = true;
         let report = analyze_corpus(&store, &cfg, &opts).unwrap();
@@ -549,7 +543,7 @@ mod tests {
         assert!(report.doctor.schema_ok);
         assert!(report.exact_duplicates.is_empty());
         // ops_log row written
-        let ops = store.list_ops_log(5).unwrap();
+        let ops = store.ops_log().list_ops_log(5).unwrap();
         assert!(ops.iter().any(|o| o.op == "analyze_corpus"));
     }
 
@@ -557,18 +551,21 @@ mod tests {
     fn analyze_finds_exact_dups_and_stubs() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("dups.duckdb");
-        let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let store = crate::testkit::open_test_store(&path).unwrap();
+        let cfg = test_config(path, 8);
 
         let body = "identical body for dedupe";
         store
+            .documents()
             .upsert_document(&doc("d1", "raw://a", "A", body, "raw"))
             .unwrap();
         store
+            .documents()
             .upsert_document(&doc("d2", "raw://b", "B", body, "raw"))
             .unwrap();
 
         store
+            .graph()
             .upsert_graph_node(&GraphNode {
                 id: "stub-1".into(),
                 kind: "stub".into(),
@@ -595,8 +592,8 @@ mod tests {
     fn near_duplicate_analysis_fails_closed_during_embedding_migration() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("near-dups-migration-incomplete.duckdb");
-        let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let store = crate::testkit::open_test_store(&path).unwrap();
+        let cfg = test_config(path, 8);
         for id in ["a", "b"] {
             let document = doc(
                 id,
@@ -605,8 +602,9 @@ mod tests {
                 &format!("unique body {id}"),
                 "raw",
             );
-            store.upsert_document(&document).unwrap();
+            store.documents().upsert_document(&document).unwrap();
             store
+                .chunks()
                 .insert_chunks(&[Chunk {
                     id: format!("{id}-c0"),
                     document_id: id.into(),
@@ -620,6 +618,7 @@ mod tests {
                 .unwrap();
         }
         store
+            .embedding_manifest()
             .set_embedding_manifest(&crate::db::store::embedding_migration_manifest(&cfg))
             .unwrap();
         let mut opts = AnalyzeOptions::from_config(&cfg);
@@ -629,29 +628,30 @@ mod tests {
 
         assert!(matches!(error, crate::error::AppError::Embeddings(_)));
         assert!(error.to_string().contains("incomplete corpus migration"));
-        assert!(store.list_ops_log(10).unwrap().is_empty());
+        assert!(store.ops_log().list_ops_log(10).unwrap().is_empty());
     }
 
     #[test]
     fn analyze_stale_wiki_via_related_edge() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("stale.duckdb");
-        let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let store = crate::testkit::open_test_store(&path).unwrap();
+        let cfg = test_config(path, 8);
 
         let older = Utc::now() - Duration::days(5);
         let newer = Utc::now();
 
         let mut raw = doc("raw1", "raw://src", "Source", "raw body v2", "raw");
         raw.updated_at = newer;
-        store.upsert_document(&raw).unwrap();
+        store.documents().upsert_document(&raw).unwrap();
 
         let mut wiki = doc("wiki1", "wiki://sum", "Summary", "old summary", "wiki");
         wiki.updated_at = older;
         wiki.kind = crate::models::DocumentKind::SourceSummary.as_str().into();
-        store.upsert_document(&wiki).unwrap();
+        store.documents().upsert_document(&wiki).unwrap();
 
         store
+            .graph()
             .upsert_graph_node(&GraphNode {
                 id: "n-raw".into(),
                 kind: "document".into(),
@@ -663,6 +663,7 @@ mod tests {
             })
             .unwrap();
         store
+            .graph()
             .upsert_graph_node(&GraphNode {
                 id: "n-wiki".into(),
                 kind: "document".into(),
@@ -674,6 +675,7 @@ mod tests {
             })
             .unwrap();
         store
+            .graph()
             .insert_graph_edges(&[GraphEdge {
                 id: "e1".into(),
                 source_id: "n-raw".into(),
@@ -696,8 +698,8 @@ mod tests {
     fn missing_source_diagnostics_keep_null_timestamp_and_require_restoration() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("missing-source.duckdb");
-        let store = Store::open(&path).unwrap();
-        let config = test_config(path);
+        let store = crate::testkit::open_test_store(&path).unwrap();
+        let config = test_config(path, 8);
         let mut wiki = doc(
             "wiki1",
             "wiki://summary",
@@ -709,7 +711,7 @@ mod tests {
             "document_id":"deleted-source", "uri":"raw://deleted", "content_hash":crate::util::content_hash("original source body")
         }]})
         .to_string();
-        store.upsert_document(&wiki).unwrap();
+        store.documents().upsert_document(&wiki).unwrap();
         let mut options = AnalyzeOptions::from_config(&config);
         options.log_ops = false;
         let report = analyze_corpus(&store, &config, &options).unwrap();

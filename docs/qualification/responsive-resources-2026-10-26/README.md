@@ -1,7 +1,7 @@
 # Responsive image resource qualification — 2026-10-26
 
 Continues the srcset/image-set gap in the RAGRAF matrix. See the
-[contract](../../RESPONSIVE_RESOURCE_RELATIONS.md) and its linked primary HTML/
+[contract](../../code-intelligence/RESPONSIVE_RESOURCE_RELATIONS.md) and its linked primary HTML/
 CSS specifications. This is a structural file-resource extension, not a browser
 selection engine or full CSS validity checker. Full RAGRAF parity remains open.
 

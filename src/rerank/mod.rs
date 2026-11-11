@@ -10,7 +10,6 @@
 //! Any provider error is handled by the caller as a fallback to the
 //! un-reranked ranking; search never fails because of the reranker.
 
-use std::str::FromStr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -24,47 +23,7 @@ use crate::models::SearchHit;
 /// Maximum characters of each candidate sent to a rerank provider.
 const MAX_DOC_CHARS: usize = 2_000;
 
-/// Rerank backend selected via `RAG_RERANK_PROVIDER` (default `off`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RerankProviderKind {
-    /// Disabled (default): `rerank=true` is a no-op.
-    Off,
-    /// Deterministic token-overlap scorer (tests / offline eval).
-    Mock,
-    /// Jina / vLLM-style `POST {base_url}/rerank`.
-    OpenAiCompat,
-    /// Ollama chat-based relevance scoring (`POST {base_url}/api/chat`).
-    Ollama,
-}
-
-impl FromStr for RerankProviderKind {
-    type Err = AppError;
-
-    fn from_str(s: &str) -> Result<Self> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "off" | "none" | "disabled" => Ok(Self::Off),
-            "mock" => Ok(Self::Mock),
-            "openai_compat" | "openai" | "jina" | "vllm" => Ok(Self::OpenAiCompat),
-            "ollama" => Ok(Self::Ollama),
-            other => Err(AppError::config(format!(
-                "invalid RAG_RERANK_PROVIDER '{other}': expected 'off', 'mock', \
-                 'openai_compat', or 'ollama'"
-            ))),
-        }
-    }
-}
-
-impl RerankProviderKind {
-    /// Wire / config name for this provider.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::Mock => "mock",
-            Self::OpenAiCompat => "openai_compat",
-            Self::Ollama => "ollama",
-        }
-    }
-}
+pub use crate::config::providers::RerankProviderKind;
 
 /// A rerank backend: score each candidate document against the query.
 ///

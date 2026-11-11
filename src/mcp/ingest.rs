@@ -1,5 +1,7 @@
 //! Ingest, source inventory, document integrity, taxonomy, and health tools.
 
+use crate::config::Config;
+use crate::mcp::error::mcp_error;
 use std::path::PathBuf;
 
 use rmcp::handler::server::wrapper::Parameters;
@@ -18,7 +20,7 @@ use super::views::{DocumentDetail, SourceDetail};
 use crate::db::{DocumentCatalogFilter, DEFAULT_CATALOG_PAGE_SIZE, MAX_CATALOG_PAGE_SIZE};
 use crate::diagnostics::DiagnosticsService;
 use crate::error::AppError;
-use crate::ingest::{IngestCommand, IngestFileCommand, IngestService};
+use crate::ingest::{IngestCommand, IngestFileCommand};
 use crate::models::{DocumentFilter, Stats};
 use crate::retrieval::{self};
 use crate::source_sync::{
@@ -49,7 +51,8 @@ impl RagServer {
                 kind: "document".into(),
                 immutable: false,
             })
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         Self::json_result(&result)
     }
 
@@ -61,7 +64,8 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<IngestFileParams>,
     ) -> Result<CallToolResult, McpError> {
-        let result = IngestService::new(&self.store, &self.embedder, &self.config)
+        let result = self
+            .ingest_use_case()
             .ingest_file(IngestFileCommand {
                 path: params.path,
                 title: params.title,
@@ -70,7 +74,8 @@ impl RagServer {
                 wing: params.wing,
                 room: params.room,
             })
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         Self::json_result(&result)
     }
 
@@ -84,10 +89,21 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<SyncSourcesParams>,
     ) -> Result<CallToolResult, McpError> {
+        self.sync_sources_with_control(params, SourceSyncControl::default())
+            .await
+    }
+
+    /// `sync_sources` body with an explicit control, so background callers
+    /// (auto-sync) can stop the walk when their cancellation token fires.
+    pub(super) async fn sync_sources_with_control(
+        &self,
+        params: SyncSourcesParams,
+        control: SourceSyncControl,
+    ) -> Result<CallToolResult, McpError> {
         let outcome = sync_sources_nonblocking(
             self.store.clone(),
             self.embedder.clone(),
-            self.config.clone(),
+            Config::clone(&self.config),
             SourceSyncCommand {
                 path: PathBuf::from(params.path),
                 remove_deleted: params.remove_deleted.unwrap_or(false),
@@ -95,9 +111,10 @@ impl RagServer {
                 room: params.room,
                 max_file_bytes: params.max_file_bytes,
             },
-            SourceSyncControl::default(),
+            control,
         )
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         let report = match outcome {
             SourceSyncOutcome::Completed(report) | SourceSyncOutcome::Cancelled(report) => report,
         };
@@ -125,7 +142,8 @@ impl RagServer {
                 kind: "document".into(),
                 immutable: true,
             })
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         Self::json_result(&result)
     }
 
@@ -141,15 +159,13 @@ impl RagServer {
         let wing = params.wing.trim();
         let room = params.room.trim();
         if wing.is_empty() {
-            return Err(McpError::from(AppError::invalid("wing must be non-empty")));
+            return Err(mcp_error(AppError::invalid("wing must be non-empty")));
         }
         if room.is_empty() {
-            return Err(McpError::from(AppError::invalid("room must be non-empty")));
+            return Err(mcp_error(AppError::invalid("room must be non-empty")));
         }
         if params.content.is_empty() {
-            return Err(McpError::from(AppError::invalid(
-                "content must be non-empty",
-            )));
+            return Err(mcp_error(AppError::invalid("content must be non-empty")));
         }
 
         let result = self
@@ -165,7 +181,8 @@ impl RagServer {
                 kind: "document".into(),
                 immutable: false,
             })
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         Self::json_result(&result)
     }
 
@@ -180,13 +197,14 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let body = self
             .blocking("check_duplicate", move |store| {
-                store.check_duplicate(
+                store.documents().check_duplicate(
                     params.content.as_deref(),
                     params.content_hash.as_deref(),
                     params.uri.as_deref(),
                 )
             })
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         Self::json_result(&body)
     }
 
@@ -200,19 +218,23 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let source_file = params.source_file.trim();
         if source_file.is_empty() {
-            return Err(McpError::from(AppError::invalid(
+            return Err(mcp_error(AppError::invalid(
                 "source_file (or source) must be non-empty",
             )));
         }
         let dry_run = params.dry_run.unwrap_or(false);
         if dry_run {
-            let matched = crate::util::blocking_section(|| {
-                self.store.list_documents_filtered(&DocumentFilter {
-                    source_file: Some(source_file.to_string()),
-                    include_archived: Some(true),
-                    ..Default::default()
+            let filter = DocumentFilter {
+                source_file: Some(source_file.to_string()),
+                include_archived: Some(true),
+                ..Default::default()
+            };
+            let matched = self
+                .blocking("delete_by_source preview", move |store| {
+                    store.documents().list_documents_filtered(&filter)
                 })
-            })?;
+                .await
+                .map_err(mcp_error)?;
             let document_ids: Vec<String> = matched.iter().map(|d| d.id.clone()).collect();
             return Self::json_result(&serde_json::json!({
                 "success": true,
@@ -224,25 +246,28 @@ impl RagServer {
             }));
         }
 
-        let mut mutation_guard = Some(self.store.try_corpus_mutation_guard("source deletion")?);
-        let document_ids =
-            crate::util::blocking_section(|| self.store.delete_by_source_ids(source_file))?;
+        let mutation_guard = self
+            .store
+            .corpus_lane()
+            .try_corpus_mutation_guard("source deletion")
+            .map_err(mcp_error)?;
+        let owned_source = source_file.to_string();
+        // Delete and FTS refresh share one blocking task that owns the lane:
+        // a cancelled request cannot release it or skip the refresh.
+        let outcome = self
+            .guarded_mutation(
+                "delete_by_source",
+                mutation_guard,
+                move |store| store.documents().delete_by_source_ids(&owned_source),
+                |ids: &Vec<String>| !ids.is_empty(),
+            )
+            .await
+            .map_err(mcp_error)?;
+        let _mutation_guard = outcome.guard;
+        let document_ids = outcome.value;
         let deleted = document_ids.len() as u64;
         let match_count = deleted;
-        let mut finalization_errors = Vec::new();
-        if deleted > 0 {
-            let guard = mutation_guard
-                .take()
-                .expect("non-dry source deletion owns the mutation lane");
-            let outcome = self
-                .refresh_fts_after_mutation("delete_by_source", guard)
-                .await;
-            mutation_guard = outcome.guard;
-            if let Some(error) = outcome.error {
-                finalization_errors.push(error);
-            }
-        }
-        let _mutation_guard = mutation_guard;
+        let finalization_errors: Vec<String> = outcome.fts_error.into_iter().collect();
         Self::json_result(&serde_json::json!({
             "success": finalization_errors.is_empty(),
             "dry_run": false,
@@ -277,8 +302,11 @@ impl RagServer {
             ..DocumentCatalogFilter::default()
         };
         let store = self.store.clone();
-        let docs =
-            run_blocking("list_sources", move || store.list_document_catalog(&filter)).await?;
+        let docs = run_blocking("list_sources", move || {
+            store.documents().list_document_catalog(&filter)
+        })
+        .await
+        .map_err(mcp_error)?;
         let summaries: Vec<SourceSummary> = docs
             .items
             .into_iter()
@@ -321,7 +349,7 @@ impl RagServer {
             .filter(|s| !s.is_empty());
 
         if doc_id.is_none() && uri.is_none() {
-            return Err(McpError::from(AppError::invalid(
+            return Err(mcp_error(AppError::invalid(
                 "get_source requires document_id or uri",
             )));
         }
@@ -333,10 +361,12 @@ impl RagServer {
         let body = run_blocking("get_source", move || {
             let doc = if let Some(id) = document_id.as_deref() {
                 store
+                    .documents()
                     .get_document(id)?
                     .ok_or_else(|| AppError::not_found(format!("source not found: {id}")))?
             } else if let Some(uri) = uri.as_deref() {
                 store
+                    .documents()
                     .find_by_uri(uri)?
                     .ok_or_else(|| AppError::not_found(format!("source not found: uri={uri}")))?
             } else {
@@ -351,7 +381,8 @@ impl RagServer {
             retrieval::document_with_chunks(&store, doc, include_chunks, chunk_limit)
                 .map(SourceDetail::from)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&body)
     }
 
@@ -385,9 +416,10 @@ impl RagServer {
         };
         let store = self.store.clone();
         let page = run_blocking("list_documents", move || {
-            store.list_document_catalog(&filter)
+            store.documents().list_document_catalog(&filter)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&page.items)
     }
 
@@ -409,7 +441,8 @@ impl RagServer {
             retrieval::get_document(&store, &document_id, include_chunks, chunk_limit)
                 .map(DocumentDetail::from)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&body)
     }
 
@@ -424,11 +457,12 @@ impl RagServer {
         let document_id = params.document_id.clone();
         let deleted = self
             .blocking("delete_document", move |store| {
-                store.delete_document(&document_id)
+                store.documents().delete_document(&document_id)
             })
-            .await?;
+            .await
+            .map_err(mcp_error)?;
         if !deleted {
-            return Err(McpError::from(AppError::not_found(format!(
+            return Err(mcp_error(AppError::not_found(format!(
                 "document not found: {}",
                 params.document_id
             ))));
@@ -450,7 +484,10 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<UpdateDocumentMetaParams>,
     ) -> Result<CallToolResult, McpError> {
-        let result = self.update_document_via_service(params).await?;
+        let result = self
+            .update_document_via_service(params)
+            .await
+            .map_err(mcp_error)?;
         Self::json_result(&result)
     }
 
@@ -462,10 +499,8 @@ impl RagServer {
         &self,
         Parameters(_params): Parameters<ListWingsParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let wings = self.store.list_wings()?;
-            Self::json_result(&wings)
-        })
+        let wings = self.admin_use_case().wings().await.map_err(mcp_error)?;
+        Self::json_result(&wings)
     }
 
     #[tool(
@@ -476,15 +511,12 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ListRoomsParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let wing = params
-                .wing
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty());
-            let rooms = self.store.list_rooms(wing)?;
-            Self::json_result(&rooms)
-        })
+        let rooms = self
+            .admin_use_case()
+            .rooms(params.wing)
+            .await
+            .map_err(mcp_error)?;
+        Self::json_result(&rooms)
     }
 
     #[tool(
@@ -495,10 +527,8 @@ impl RagServer {
         &self,
         Parameters(_params): Parameters<GetTaxonomyParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let tax = self.store.get_taxonomy()?;
-            Self::json_result(&tax)
-        })
+        let tax = self.admin_use_case().taxonomy().await.map_err(mcp_error)?;
+        Self::json_result(&tax)
     }
 
     #[tool(
@@ -506,17 +536,19 @@ impl RagServer {
         description = "Return store counts (documents, chunks, graph nodes/edges) and db path."
     )]
     pub(super) async fn stats(&self) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let (document_count, chunk_count, node_count, edge_count) = self.store.stats()?;
+        self.blocking_tool("stats", move |store| {
+            let (document_count, chunk_count, node_count, edge_count) =
+                store.maintenance().stats().map_err(mcp_error)?;
             let body = Stats {
                 document_count,
                 chunk_count,
                 node_count,
                 edge_count,
-                db_path: self.store.path().display().to_string(),
+                db_path: store.path().display().to_string(),
             };
             Self::json_result(&body)
         })
+        .await
     }
 
     #[tool(
@@ -526,10 +558,14 @@ impl RagServer {
         snapshot footprint (count, bytes, retention, free disk) when configured."
     )]
     pub(super) async fn status(&self) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let body = DiagnosticsService::new(&self.store, &self.config).status()?;
+        let config = self.config.clone();
+        self.blocking_tool("status", move |store| {
+            let body = DiagnosticsService::new(store, &config)
+                .status()
+                .map_err(mcp_error)?;
             Self::json_result(&body)
         })
+        .await
     }
 
     #[tool(
@@ -537,10 +573,14 @@ impl RagServer {
         description = "Minimal integrity: schema_version vs expected, FTS ready, embed dims vs manifest, ingest_roots, ready_for_search."
     )]
     pub(super) async fn doctor(&self) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let body = DiagnosticsService::new(&self.store, &self.config).doctor()?;
+        let config = self.config.clone();
+        self.blocking_tool("doctor", move |store| {
+            let body = DiagnosticsService::new(store, &config)
+                .doctor()
+                .map_err(mcp_error)?;
             Self::json_result(&body)
         })
+        .await
     }
 
     #[tool(
@@ -549,7 +589,7 @@ impl RagServer {
         (short probe), embed provider/model/dims. Does not hang long when Ollama is down."
     )]
     pub(super) async fn llm_status(&self) -> Result<CallToolResult, McpError> {
-        let body = self.llm_status_report().await?;
+        let body = self.llm_status_report().await.map_err(mcp_error)?;
         Self::json_result(&body)
     }
 }

@@ -1,6 +1,6 @@
 # SQL secondary write qualification — 2026-10-25
 
-[Contract](../../SQL_OUTPUT_USAGE.md). Four new native regressions cover MERGE
+[Contract](../../code-intelligence/SQL_OUTPUT_USAGE.md). Four new native regressions cover MERGE
 OUTPUT target column lists; INSERT/UPDATE/DELETE sinks versus RETURNING;
 SELECT INTO with quoted names, CTE sources and excluded variable/multiple targets;
 and migration projection uncertainty propagating to schema/write_check.

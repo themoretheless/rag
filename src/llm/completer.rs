@@ -23,6 +23,11 @@ pub trait ChatCompleter: Send + Sync {
 
     /// Model identifier recorded in reports.
     fn model(&self) -> &str;
+
+    /// Cache-key identity for memoized completions (query transforms).
+    fn cache_identity(&self) -> String {
+        self.model().to_string()
+    }
 }
 
 #[async_trait]
@@ -41,6 +46,11 @@ impl ChatCompleter for ChatClient {
 
     fn model(&self) -> &str {
         ChatClient::model(self)
+    }
+
+    /// `provider/model`.
+    fn cache_identity(&self) -> String {
+        format!("{}/{}", self.provider().as_str(), ChatClient::model(self))
     }
 }
 

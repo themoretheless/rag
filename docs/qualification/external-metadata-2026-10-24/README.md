@@ -3,7 +3,7 @@
 The external PostgreSQL/MySQL snapshot block now includes structural indexes,
 constraints, view definitions and direct view-relation dependencies. The full
 RAGRAF transfer/improvement objective remains open. See the
-[contract](../../EXTERNAL_DATABASES.md), [matrix](../../RAGRAF_FEATURE_MATRIX.md)
+[contract](../../code-intelligence/EXTERNAL_DATABASES.md), [matrix](../../RAGRAF_FEATURE_MATRIX.md)
 and [earlier external DB qualification](../external-db-2026-10-24/README.md).
 
 ## Verified behavior

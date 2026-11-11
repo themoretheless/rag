@@ -87,6 +87,26 @@ fn gain(values: impl Iterator<Item = u32>) -> f64 {
 }
 
 /// Mean of the values, or 0 when empty.
+/// Recall and reciprocal rank of `ranked` hits against `expected` documents.
+///
+/// Each side is `(document_id, uri)`; a hit matches an expected document when
+/// either the id or the uri is equal (blank values never match).
+pub fn recall_and_mrr(expected: &[(&str, &str)], ranked: &[(&str, &str)]) -> (f64, f64) {
+    let matches = |hit: &(&str, &str), want: &(&str, &str)| {
+        (!want.0.is_empty() && hit.0 == want.0) || (!want.1.is_empty() && hit.1 == want.1)
+    };
+    let found = expected
+        .iter()
+        .filter(|want| ranked.iter().any(|hit| matches(hit, want)))
+        .count();
+    let rank = ranked
+        .iter()
+        .position(|hit| expected.iter().any(|want| matches(hit, want)));
+    let recall = found as f64 / expected.len().max(1) as f64;
+    let mrr = rank.map(|r| 1.0 / (r + 1) as f64).unwrap_or(0.0);
+    (recall, mrr)
+}
+
 pub fn macro_average(values: impl Iterator<Item = f64>) -> f64 {
     let mut sum = 0.0;
     let mut n = 0usize;

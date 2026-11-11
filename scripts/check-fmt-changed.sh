@@ -70,7 +70,7 @@ fi
 # intentionally word-split so CI can pin a toolchain (`rustup run stable rustfmt`).
 RUSTFMT_CMD=${RUSTFMT_CMD:-rustfmt}
 # shellcheck disable=SC2086
-xargs $RUSTFMT_CMD --edition 2021 --check <"$WORK/files.nul" >"$WORK/fmt.out" 2>&1 || true
+xargs -0 $RUSTFMT_CMD --edition 2021 --check <"$WORK/files.nul" >"$WORK/fmt.out" 2>&1 || true
 awk '
   /^Diff in / {
     p = $3

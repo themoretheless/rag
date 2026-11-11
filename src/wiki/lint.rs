@@ -6,16 +6,16 @@ use super::*;
 pub fn lint_wiki(store: &Store) -> Result<LintReport> {
     let mut issues = Vec::new();
     // Ids, URIs and layers only: lint never reads document bodies.
-    let documents = store.list_document_refs()?;
+    let documents = store.documents().list_document_refs()?;
     let wiki_docs: Vec<&crate::db::store::DocumentRef> = documents
         .iter()
         .filter(|doc| doc.layer == LAYER_WIKI)
         .collect();
-    let index = store.list_wiki_index()?;
+    let index = store.wiki_index().list_wiki_index()?;
     // Nodes and the raw edge list are each read once; everything else
     // (incident nodes, stub backlinks) is derived in memory.
-    let graph_nodes = store.list_graph_nodes()?;
-    let all_edges = store.list_graph_links()?;
+    let graph_nodes = store.graph().list_graph_nodes()?;
+    let all_edges = store.graph().list_graph_links()?;
     let node_by_id: HashMap<&str, &crate::models::GraphNode> = graph_nodes
         .iter()
         .map(|node| (node.id.as_str(), node))
@@ -246,12 +246,16 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
     // sample cannot pass itself off as the queue, and names the filter that pages one.
     const UNCOMPILED_SAMPLE_LIMIT: usize = 25;
     const UNCOMPILED_SHELF_LIMIT: usize = 8;
-    let layer_health = store.layer_health_counts()?;
+    let layer_health = store.maintenance().layer_health_counts()?;
     health.uncompiled_raw_count = layer_health.uncompiled_raw_count as usize;
     if health.uncompiled_raw_count > 0 {
-        let sample = store.list_uncompiled_raw_sample(UNCOMPILED_SAMPLE_LIMIT)?;
+        let sample = store
+            .maintenance()
+            .list_uncompiled_raw_sample(UNCOMPILED_SAMPLE_LIMIT)?;
         health.uncompiled_raw_sample_count = sample.len();
-        let queue = store.uncompiled_raw_shelves(UNCOMPILED_SHELF_LIMIT)?;
+        let queue = store
+            .maintenance()
+            .uncompiled_raw_shelves(UNCOMPILED_SHELF_LIMIT)?;
         let shelves: Vec<String> = queue
             .shelves
             .iter()

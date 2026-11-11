@@ -1,5 +1,6 @@
 //! Temporal knowledge-graph tools.
 
+use crate::mcp::error::mcp_error;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::{tool, tool_router, ErrorData as McpError};
@@ -22,21 +23,27 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<KgAddParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let valid_from = parse_optional_timestamp(params.valid_from.as_deref())?;
-            let valid_to = parse_optional_timestamp(params.valid_to.as_deref())?;
-            let fact = self.store.kg_add(crate::db::kg::KgFactInput {
-                subject: &params.subject,
-                predicate: &params.predicate,
-                object: &params.object,
-                valid_from,
-                valid_to,
-                source_document_id: params.source_document_id.as_deref(),
-                confidence: params.confidence,
-                metadata_json: params.metadata_json.as_deref(),
-            })?;
+        self.blocking_tool("kg_add", move |store| {
+            let valid_from =
+                parse_optional_timestamp(params.valid_from.as_deref()).map_err(mcp_error)?;
+            let valid_to =
+                parse_optional_timestamp(params.valid_to.as_deref()).map_err(mcp_error)?;
+            let fact = store
+                .kg()
+                .kg_add(crate::db::kg::KgFactInput {
+                    subject: &params.subject,
+                    predicate: &params.predicate,
+                    object: &params.object,
+                    valid_from,
+                    valid_to,
+                    source_document_id: params.source_document_id.as_deref(),
+                    confidence: params.confidence,
+                    metadata_json: params.metadata_json.as_deref(),
+                })
+                .map_err(mcp_error)?;
             Self::json_result(&fact)
         })
+        .await
     }
 
     #[tool(
@@ -48,16 +55,18 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<KgQueryParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let at_time = parse_optional_timestamp(params.at_time.as_deref())?;
-            let facts = self.store.kg_query(
-                params.subject.as_deref(),
-                params.predicate.as_deref(),
-                params.object.as_deref(),
-                at_time,
-            )?;
-            Self::json_result(&facts)
-        })
+        let page = self
+            .admin_use_case()
+            .kg_query(crate::app::KgQueryCommand {
+                subject: params.subject,
+                predicate: params.predicate,
+                object: params.object,
+                at_time: params.at_time,
+                limit: None,
+            })
+            .await
+            .map_err(mcp_error)?;
+        Self::json_result(&page.facts)
     }
 
     #[tool(
@@ -68,16 +77,15 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<KgInvalidateParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let ended = parse_optional_timestamp(params.ended.as_deref())?;
-            let facts = self.store.kg_invalidate(
-                &params.subject,
-                &params.predicate,
-                &params.object,
-                ended,
-            )?;
+        self.blocking_tool("kg_invalidate", move |store| {
+            let ended = parse_optional_timestamp(params.ended.as_deref()).map_err(mcp_error)?;
+            let facts = store
+                .kg()
+                .kg_invalidate(&params.subject, &params.predicate, &params.object, ended)
+                .map_err(mcp_error)?;
             Self::json_result(&facts)
         })
+        .await
     }
 
     #[tool(
@@ -89,19 +97,23 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<KgSupersedeParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let at = parse_optional_timestamp(params.at.as_deref())?;
-            let fact = self.store.kg_supersede(crate::db::kg::KgSupersedeInput {
-                subject: &params.subject,
-                predicate: &params.predicate,
-                old_object: &params.old_object,
-                new_object: &params.new_object,
-                at,
-                source_document_id: params.source_document_id.as_deref(),
-                confidence: params.confidence,
-            })?;
+        self.blocking_tool("kg_supersede", move |store| {
+            let at = parse_optional_timestamp(params.at.as_deref()).map_err(mcp_error)?;
+            let fact = store
+                .kg()
+                .kg_supersede(crate::db::kg::KgSupersedeInput {
+                    subject: &params.subject,
+                    predicate: &params.predicate,
+                    old_object: &params.old_object,
+                    new_object: &params.new_object,
+                    at,
+                    source_document_id: params.source_document_id.as_deref(),
+                    confidence: params.confidence,
+                })
+                .map_err(mcp_error)?;
             Self::json_result(&fact)
         })
+        .await
     }
 
     #[tool(
@@ -112,10 +124,12 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<KgTimelineParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let facts = self.store.kg_timeline(&params.subject)?;
-            Self::json_result(&facts)
-        })
+        let facts = self
+            .admin_use_case()
+            .kg_timeline(params.subject)
+            .await
+            .map_err(mcp_error)?;
+        Self::json_result(&facts)
     }
 
     #[tool(
@@ -123,9 +137,7 @@ impl RagServer {
         description = "Temporal KG aggregates: total/active/invalidated/superseded facts, distinct subjects/predicates, relationship_types."
     )]
     pub(super) async fn kg_stats(&self) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let body = self.store.kg_stats()?;
-            Self::json_result(&body)
-        })
+        let body = self.admin_use_case().kg_stats().await.map_err(mcp_error)?;
+        Self::json_result(&body)
     }
 }

@@ -4,17 +4,15 @@
 //! Tool methods live in the sibling domain modules, one `#[tool_router]`
 //! each; `server.rs` composes them into the public router.
 
+use crate::mcp::error::mcp_error;
 use crate::models::OpsLogEntry;
 use crate::source_sync::{
     sync_sources_nonblocking, SourceSyncCommand, SourceSyncControl, SourceSyncOutcome,
 };
-use chrono::Utc;
 use std::path::PathBuf;
 use std::sync::Arc;
-use uuid::Uuid;
 
 use rmcp::handler::server::tool::{ToolCallContext, ToolRouter};
-use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, Content, Implementation, ListToolsResult,
     PaginatedRequestParams, ServerCapabilities, ServerInfo,
@@ -47,16 +45,12 @@ pub struct RagServer {
     pub(super) embedder: Arc<dyn EmbeddingProvider>,
     /// OpenAI-compatible chat client for wiki compile / maintenance (Ollama default).
     pub(super) llm: Option<ChatClient>,
-    pub(super) config: Config,
-    tool_router: ToolRouter<Self>,
+    pub(super) config: Arc<Config>,
+    /// Built once per process and shared by every server clone.
+    tool_router: Arc<ToolRouter<Self>>,
     /// Transport label recorded in the call log (`stdio` | `http-mcp`).
     transport: &'static str,
     analysis_session: String,
-}
-
-pub(super) struct FtsFinalizationOutcome {
-    pub(super) guard: Option<CorpusMutationGuard>,
-    pub(super) error: Option<String>,
 }
 
 /// Keep the exclusive corpus lane owned by detached blocking work.
@@ -80,8 +74,31 @@ fn ensure_fts_for_finalization(store: &Store, stemmer: &str) -> Result<(), AppEr
     #[cfg(test)]
     crate::db::fts::test_fault::check("facade", stemmer)?;
 
-    store.ensure_fts(stemmer)?;
+    store.maintenance().ensure_fts(stemmer)?;
     Ok(())
+}
+
+/// Refresh the lexical index after a committed mutation, on the current
+/// (blocking) thread. Returns the recorded failure message, if any.
+fn finalize_fts_blocking(store: &Store, stemmer: &str, operation: &'static str) -> Option<String> {
+    let refresh_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ensure_fts_for_finalization(store, stemmer)
+    }))
+    .unwrap_or_else(|_| Err(AppError::fts("corpus FTS finalization panicked")));
+    refresh_result.err().map(|error| {
+        store
+            .corpus_lane()
+            .record_fts_finalization_failure(operation, true, &error.to_string())
+            .message
+    })
+}
+
+/// Result of [`RagServer::guarded_mutation`]: the mutation's value, the FTS
+/// finalization error (if a refresh ran and failed) and the guard handed back.
+pub(super) struct GuardedMutation<T> {
+    pub(super) value: T,
+    pub(super) fts_error: Option<String>,
+    pub(super) guard: CorpusMutationGuard,
 }
 
 impl RagServer {
@@ -112,7 +129,7 @@ impl RagServer {
     }
     /// Start optional incremental source synchronization. Disabled unless
     /// `RAG_AUTO_SYNC_ROOTS` contains one or more `;`-separated directories.
-    pub fn spawn_auto_sync(self) {
+    pub fn spawn_auto_sync(self, tasks: &crate::background::BackgroundTasks) {
         let roots = self.config.auto_sync_roots.clone();
         if roots.is_empty() {
             return;
@@ -120,11 +137,17 @@ impl RagServer {
         let interval = self.config.auto_sync_interval_secs;
         let interval_duration = std::time::Duration::from_secs(interval);
         crate::ops::configure_autosync(interval_duration);
-        tokio::spawn(async move {
+        let loop_tasks = tasks.clone();
+        tasks.spawn("auto-sync", async move {
             loop {
                 crate::ops::mark_autosync_running();
                 let mut cycle_error = None;
                 for path in &roots {
+                    // Stop between roots on shutdown; the control below also
+                    // lets a sync in progress stop at its next file boundary.
+                    if loop_tasks.is_cancelled() {
+                        break;
+                    }
                     let params = SyncSourcesParams {
                         path: path.clone(),
                         remove_deleted: Some(false),
@@ -132,7 +155,8 @@ impl RagServer {
                         room: None,
                         max_file_bytes: None,
                     };
-                    match self.sync_sources(Parameters(params)).await {
+                    let control = SourceSyncControl::new(loop_tasks.token(), |_| {});
+                    match self.sync_sources_with_control(params, control).await {
                         Ok(result) if tool_result_succeeded(&result) => {
                             tracing::info!(path, "automatic source sync completed")
                         }
@@ -147,12 +171,17 @@ impl RagServer {
                         }
                     }
                 }
+                if loop_tasks.is_cancelled() {
+                    break;
+                }
                 if let Some(error) = cycle_error {
                     crate::ops::mark_autosync_error(&error, interval_duration);
                 } else {
                     crate::ops::mark_autosync_success(interval_duration);
                 }
-                tokio::time::sleep(interval_duration).await;
+                if !loop_tasks.pause(interval_duration).await {
+                    break;
+                }
             }
         });
     }
@@ -174,14 +203,6 @@ impl RagServer {
             .collect()
     }
 
-    /// Build a server with an initialized tool router.
-    ///
-    /// Records `embedding_manifest` when the store has none (server start path).
-    /// Builds [`ChatClient`] from `RAG_LLM_*` when possible (warns and continues on failure).
-    pub fn new(store: Store, embedder: Arc<dyn EmbeddingProvider>, config: Config) -> Self {
-        Self::from_context(crate::context::AppContext::new(store, embedder, config))
-    }
-
     /// Build a server over an already-initialized [`crate::context::AppContext`].
     pub fn from_context(context: crate::context::AppContext) -> Self {
         let server = Self {
@@ -190,7 +211,7 @@ impl RagServer {
             embedder: context.embedder,
             llm: context.llm,
             config: context.config,
-            tool_router: Self::all_tools_router(),
+            tool_router: Self::shared_tool_router(),
             transport: "stdio",
         };
         let advertised_tool_count = match server.config.tool_surface {
@@ -204,6 +225,43 @@ impl RagServer {
             "MCP tool surface initialized"
         );
         server
+    }
+
+    /// Retrieval use cases over this server's store, embedder and config.
+    pub(super) fn search_use_case(&self) -> crate::app::SearchUseCase {
+        crate::app::SearchUseCase::new(
+            self.store.clone(),
+            self.embedder.clone(),
+            self.config.clone(),
+        )
+    }
+
+    /// Wiki write use case over this server's store, embedder and config.
+    pub(super) fn wiki_use_case(&self) -> crate::app::WikiUseCase {
+        crate::app::WikiUseCase::new(
+            self.store.clone(),
+            self.embedder.clone(),
+            self.config.clone(),
+        )
+    }
+
+    /// Graph read use cases over this server's store.
+    pub(super) fn graph_use_case(&self) -> crate::app::GraphUseCase {
+        crate::app::GraphUseCase::new(self.store.clone())
+    }
+
+    /// Ingest use cases over this server's store, embedder and config.
+    pub(super) fn ingest_use_case(&self) -> crate::app::IngestUseCase {
+        crate::app::IngestUseCase::new(
+            self.store.clone(),
+            self.embedder.clone(),
+            self.config.clone(),
+        )
+    }
+
+    /// Admin read use cases over this server's store and config.
+    pub(super) fn admin_use_case(&self) -> crate::app::AdminUseCase {
+        crate::app::AdminUseCase::new(self.store.clone(), self.config.clone())
     }
 
     /// Run DuckDB-bound tool work on the blocking pool with a shared store handle.
@@ -221,6 +279,24 @@ impl RagServer {
     {
         let store = self.store.clone();
         crate::util::run_blocking(operation, move || work(&store)).await
+    }
+
+    /// Run a whole tool body that only needs the store on the blocking pool.
+    ///
+    /// The body gets a shared store handle and builds the tool result there,
+    /// so DuckDB and filesystem work never runs on an async worker.
+    pub(super) async fn blocking_tool<F>(
+        &self,
+        operation: &'static str,
+        work: F,
+    ) -> Result<CallToolResult, McpError>
+    where
+        F: FnOnce(&Store) -> Result<CallToolResult, McpError> + Send + 'static,
+    {
+        let store = self.store.clone();
+        crate::util::run_blocking(operation, move || Ok(work(&store)))
+            .await
+            .map_err(mcp_error)?
     }
 
     /// The wired chat client as the domain LLM seam (None when unavailable).
@@ -245,8 +321,12 @@ impl RagServer {
     /// Ensure corpus manifest exists; refuse when its full identity differs.
     pub(super) fn require_vec_compatible(&self) -> Result<(), AppError> {
         crate::util::blocking_section(|| {
-            self.store.ensure_embedding_manifest(&self.config)?;
-            self.store.require_embedding_manifest_match(&self.config)
+            self.store
+                .embedding_manifest()
+                .ensure_embedding_manifest(self.config.as_ref())?;
+            self.store
+                .embedding_manifest()
+                .require_embedding_manifest_match(self.config.as_ref())
         })
     }
 
@@ -263,61 +343,51 @@ impl RagServer {
         &self,
         command: IngestCommand,
     ) -> Result<IngestResult, AppError> {
-        IngestService::new(&self.store, &self.embedder, &self.config)
-            .ingest(command)
-            .await
+        self.ingest_use_case().ingest(command).await
     }
 
-    /// Refresh the corpus-wide lexical index without blocking a Tokio worker.
+    /// Run a guarded corpus mutation and its FTS refresh in one blocking task.
     ///
-    /// The guard moves into the blocking task so cancellation of the request
-    /// waiter cannot release the corpus lane before detached DuckDB work ends.
-    pub(super) async fn refresh_fts_after_mutation(
+    /// The guard moves into the task, so dropping the request future neither
+    /// releases the corpus lane early nor splits the mutation from its index
+    /// refresh: both steps run (or neither) under one lease. `needs_refresh`
+    /// decides from the mutation's value whether the lexical index changed.
+    pub(super) async fn guarded_mutation<T, W, R>(
         &self,
         operation: &'static str,
         mutation_guard: CorpusMutationGuard,
-    ) -> FtsFinalizationOutcome {
+        work: W,
+        needs_refresh: R,
+    ) -> Result<GuardedMutation<T>, AppError>
+    where
+        T: Send + 'static,
+        W: FnOnce(&Store) -> Result<T, AppError> + Send + 'static,
+        R: FnOnce(&T) -> bool + Send + 'static,
+    {
         let store = self.store.clone();
         let stemmer = self.config.fts_stemmer.clone();
-        match retain_mutation_guard_while_blocking(mutation_guard, move || {
-            let refresh_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                ensure_fts_for_finalization(&store, &stemmer)
-            }))
-            .unwrap_or_else(|_| Err(AppError::fts("corpus FTS finalization panicked")));
-            refresh_result.map_err(|error| {
-                store
-                    .record_fts_finalization_failure(operation, true, &error.to_string())
-                    .message
-            })
+        let (guard, result) = retain_mutation_guard_while_blocking(mutation_guard, move || {
+            let value = work(&store)?;
+            let fts_error = if needs_refresh(&value) {
+                finalize_fts_blocking(&store, &stemmer, operation)
+            } else {
+                None
+            };
+            Ok::<_, AppError>((value, fts_error))
         })
         .await
-        {
-            Ok((guard, Ok(_))) => FtsFinalizationOutcome {
-                guard: Some(guard),
-                error: None,
-            },
-            Ok((guard, Err(error))) => FtsFinalizationOutcome {
-                guard: Some(guard),
-                error: Some(error),
-            },
-            Err(error) => FtsFinalizationOutcome {
-                guard: None,
-                error: Some(
-                    self.store
-                        .record_fts_finalization_failure(
-                            operation,
-                            true,
-                            &format!("FTS refresh task failed: {error}"),
-                        )
-                        .message,
-                ),
-            },
-        }
+        .map_err(|error| AppError::db(format!("{operation} task failed: {error}")))?;
+        let (value, fts_error) = result?;
+        Ok(GuardedMutation {
+            value,
+            fts_error,
+            guard,
+        })
     }
 
     /// Probe local chat LLM and report embedding config (no corpus mutation).
     pub(super) async fn llm_status_report(&self) -> Result<LlmStatusReport, AppError> {
-        Ok(crate::diagnostics::llm_status(&self.config, self.llm.as_ref()).await)
+        Ok(self.admin_use_case().llm_status(self.llm.as_ref()).await)
     }
 
     /// Refresh one document only when the live embedding identity already
@@ -493,7 +563,7 @@ impl ServerHandler for RagServer {
             };
             let session = explicit.and_then(|v| v.as_str()).unwrap_or(default);
             Some(
-                self.store
+                crate::analysis_tasks::AnalysisTasks::new(&self.store)
                     .analysis_call_start(session, &name)
                     .map_err(Self::map_err)?,
             )
@@ -502,18 +572,16 @@ impl ServerHandler for RagServer {
         };
         let tcc = ToolCallContext::new(self, request, context);
         let result = self.tool_router.call(tcc).await;
-        let operation_ok = match &result {
-            Ok(value) => tool_result_succeeded(value),
-            Err(_) => false,
-        };
+        let summary = result
+            .as_ref()
+            .ok()
+            .map(|value| summarize_tool_result(value, analysis_call.is_some()));
+        let operation_ok = summary.as_ref().is_some_and(|summary| summary.ok);
         if let Some(seq) = analysis_call {
-            let evidence = result
-                .as_ref()
-                .ok()
-                .and_then(|r| r.content.iter().find_map(|c| c.as_text()))
-                .and_then(|t| serde_json::from_str::<serde_json::Value>(&t.text).ok())
-                .and_then(|v| crate::analysis_tasks::evidence_count(&v));
-            if let Err(error) = self.store.analysis_call_finish(seq, operation_ok, evidence) {
+            let evidence = summary.as_ref().and_then(|summary| summary.evidence);
+            if let Err(error) = crate::analysis_tasks::AnalysisTasks::new(&self.store)
+                .analysis_call_finish(seq, operation_ok, evidence)
+            {
                 // Preserve the operation outcome; a failed telemetry finish remains visibly unfinished.
                 tracing::warn!(error=%error, "analysis call remains unfinished");
             }
@@ -524,10 +592,10 @@ impl ServerHandler for RagServer {
             started.elapsed().as_secs_f64() * 1000.0,
         );
         match &result {
-            Ok(value) => call.finish(
+            Ok(_) => call.finish(
                 operation_ok,
                 (!operation_ok).then(|| "tool reported failure".to_string()),
-                result_hint(value),
+                summary.and_then(|summary| summary.hint),
             ),
             // Error strings may echo paths or other user input. The transport-level
             // outcome is sufficient for the bounded operational call log.
@@ -562,17 +630,67 @@ fn mcp_audit_action(
     name.to_string()
 }
 
+/// What `call_tool` derives from a tool result for telemetry: success, the
+/// bounded count hint and (for analysis tools) the evidence count.
+struct ToolResultSummary {
+    ok: bool,
+    hint: Option<String>,
+    evidence: Option<i64>,
+}
+
+fn summarize_tool_result(result: &CallToolResult, analysis: bool) -> ToolResultSummary {
+    // The first text content is parsed once and shared by the success check,
+    // the count hint and the evidence count (it was parsed up to three times).
+    let parsed = result
+        .content
+        .first()
+        .and_then(|content| content.as_text())
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text.text).ok());
+    // Evidence reads the first *text* content, which differs from the first
+    // content only when a non-text item comes first.
+    let evidence = if !analysis {
+        None
+    } else if result
+        .content
+        .first()
+        .is_some_and(|c| c.as_text().is_some())
+    {
+        parsed
+            .as_ref()
+            .and_then(crate::analysis_tasks::evidence_count)
+    } else {
+        result
+            .content
+            .iter()
+            .find_map(|c| c.as_text())
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t.text).ok())
+            .and_then(|v| crate::analysis_tasks::evidence_count(&v))
+    };
+    ToolResultSummary {
+        ok: report_succeeded(result, parsed.as_ref()),
+        hint: parsed.as_ref().and_then(hint_from_value),
+        evidence,
+    }
+}
+
 /// Aggregate tool reports remain JSON-RPC successes so callers can inspect
 /// committed counters, but their explicit failure fields must still drive
 /// operational telemetry and activity status.
 fn tool_result_succeeded(result: &CallToolResult) -> bool {
+    let parsed = result
+        .content
+        .first()
+        .and_then(|content| content.as_text())
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text.text).ok());
+    report_succeeded(result, parsed.as_ref())
+}
+
+/// [`tool_result_succeeded`] over the already parsed first text content.
+fn report_succeeded(result: &CallToolResult, parsed: Option<&serde_json::Value>) -> bool {
     if result.is_error.unwrap_or(false) {
         return false;
     }
-    let Some(text) = result.content.first().and_then(|content| content.as_text()) else {
-        return true;
-    };
-    let Ok(serde_json::Value::Object(report)) = serde_json::from_str(&text.text) else {
+    let Some(serde_json::Value::Object(report)) = parsed else {
         return true;
     };
     if report.get("success").and_then(serde_json::Value::as_bool) == Some(false) {
@@ -622,9 +740,14 @@ fn tool_result_succeeded(result: &CallToolResult) -> bool {
 }
 
 /// Short human hint for the call log, derived from the first JSON content item.
+#[cfg(test)]
 fn result_hint(result: &CallToolResult) -> Option<String> {
     let text = result.content.first()?.as_text()?.text.as_str();
-    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    hint_from_value(&serde_json::from_str(text).ok()?)
+}
+
+/// Bounded count hint from a parsed tool result.
+fn hint_from_value(value: &serde_json::Value) -> Option<String> {
     match value {
         serde_json::Value::Array(items) => Some(format!("{} items", items.len())),
         serde_json::Value::Object(map) => ["count", "chunk_count", "hits", "total"]
@@ -654,8 +777,8 @@ impl RagServer {
 }
 
 impl RagServer {
-    pub fn spawn_file_watcher(self) {
-        let watch_config = match crate::watch::config_from_env() {
+    pub fn spawn_file_watcher(self, tasks: &crate::background::BackgroundTasks) {
+        let watch_config = match crate::watch::config_from(&self.config) {
             Ok(Some(config)) => config,
             Ok(None) => return,
             Err(error) => {
@@ -666,21 +789,20 @@ impl RagServer {
         let roots = watch_config.roots.clone();
         let debounce = watch_config.debounce;
         let min_sync_interval = watch_config.min_sync_interval;
-        if let Err(error) = std::thread::Builder::new()
-            .name("rag-file-watch".into())
-            .spawn(move || {
-                if let Err(error) = Self::run_file_watcher(
-                    self.store.clone(),
-                    self.embedder.clone(),
-                    self.config.clone(),
-                    roots,
-                    debounce,
-                    min_sync_interval,
-                ) {
-                    tracing::error!(error = %error, "file watcher stopped");
-                }
-            })
-        {
+        let token = tasks.token();
+        if let Err(error) = tasks.spawn_thread("rag-file-watch", move || {
+            if let Err(error) = Self::run_file_watcher(
+                self.store.clone(),
+                self.embedder.clone(),
+                Config::clone(&self.config),
+                roots,
+                debounce,
+                min_sync_interval,
+                token,
+            ) {
+                tracing::error!(error = %error, "file watcher stopped");
+            }
+        }) {
             tracing::error!(error = %error, "failed to spawn file watcher thread");
         }
     }
@@ -694,6 +816,7 @@ impl RagServer {
         roots: Vec<PathBuf>,
         debounce: std::time::Duration,
         min_sync_interval: std::time::Duration,
+        token: tokio_util::sync::CancellationToken,
     ) -> Result<(), AppError> {
         use crate::watch::{NotifyEventSource, SyncDebouncer};
 
@@ -722,7 +845,7 @@ impl RagServer {
                     embedder.clone(),
                     config.clone(),
                     SourceSyncCommand::new(root.to_path_buf()),
-                    SourceSyncControl::default(),
+                    SourceSyncControl::new(token.clone(), |_| {}),
                 ));
                 match outcome {
                     Ok(outcome) => {
@@ -731,13 +854,7 @@ impl RagServer {
                             SourceSyncOutcome::Cancelled(report) => (report, true),
                         };
                         let error_count = report.errors.len();
-                        let _ = store.append_ops_log(&OpsLogEntry {
-                            id: Uuid::new_v4().to_string(),
-                            seq: 0,
-                            ts: Utc::now(),
-                            op: "watch_sync".into(),
-                            prefix: Some("WATCH".into()),
-                            message: format!(
+                        store.ops_log().record(&OpsLogEntry::new("watch_sync", "WATCH", format!(
                                 "watcher sync {}: added={} updated={} skipped={} deleted={} errors={} cancelled={cancelled}",
                                 root.display(),
                                 report.added.len(),
@@ -745,10 +862,9 @@ impl RagServer {
                                 report.skipped.len(),
                                 report.deleted.len(),
                                 error_count,
-                            ),
-                            entity_id: Some(root.display().to_string()),
-                            entity_kind: Some("watch_root".into()),
-                            payload_json: serde_json::json!({
+                            ))
+.entity(Some(root.display().to_string()), "watch_root")
+.payload(serde_json::json!({
                                 "root": root.display().to_string(),
                                 "added": report.added.len(),
                                 "updated": report.updated.len(),
@@ -757,9 +873,7 @@ impl RagServer {
                                 "errors": error_count,
                                 "cancelled": cancelled,
                             })
-                            .to_string(),
-                            agent_name: None,
-                        });
+                            .to_string()));
                         if error_count > 0 {
                             tracing::warn!(root = %root.display(), error_count, "watcher sync completed with errors");
                         }
@@ -771,7 +885,7 @@ impl RagServer {
                     }
                 }
             },
-            || false,
+            || token.is_cancelled(),
             poll,
         );
         tracing::info!(
@@ -786,17 +900,96 @@ impl RagServer {
 
 impl RagServer {
     pub(super) fn map_err(error: AppError) -> McpError {
-        error.into()
+        mcp_error(error)
     }
 }
 
 #[cfg(test)]
 mod audit_tests {
     use super::{
-        mcp_audit_action, record_rejected_tool_call, result_hint, tool_result_succeeded,
-        unknown_tool_audit_action,
+        mcp_audit_action, record_rejected_tool_call, result_hint, summarize_tool_result,
+        tool_result_succeeded, unknown_tool_audit_action,
     };
     use rmcp::model::{CallToolResult, Content};
+
+    #[test]
+    fn one_parse_summary_matches_the_separate_checks() {
+        let results = [
+            CallToolResult::success(vec![Content::json(
+                serde_json::json!({"hits": [1, 2, 3], "count": 3}),
+            )
+            .unwrap()]),
+            CallToolResult::success(vec![Content::json(
+                serde_json::json!({"success": false, "errors": ["x"]}),
+            )
+            .unwrap()]),
+            CallToolResult::success(vec![Content::json(serde_json::json!([1, 2])).unwrap()]),
+            CallToolResult::success(vec![Content::text("not json")]),
+            CallToolResult::error(vec![Content::text("boom")]),
+        ];
+        for result in &results {
+            let summary = summarize_tool_result(result, true);
+            assert_eq!(summary.ok, tool_result_succeeded(result));
+            assert_eq!(summary.hint, result_hint(result));
+            let evidence = result
+                .content
+                .iter()
+                .find_map(|c| c.as_text())
+                .and_then(|t| serde_json::from_str::<serde_json::Value>(&t.text).ok())
+                .and_then(|v| crate::analysis_tasks::evidence_count(&v));
+            assert_eq!(summary.evidence, evidence);
+            assert_eq!(summarize_tool_result(result, false).evidence, None);
+        }
+    }
+
+    /// Telemetry post-processing cost of one `tools/call` search result
+    /// (10 hits of ~800 characters), with and without the analysis evidence
+    /// count. See docs/refactor/BASELINE.md, Stage 5 item 4.
+    ///
+    /// Run: `cargo test --release --lib -- --ignored timing_tool_result_summary --nocapture`
+    #[test]
+    #[ignore = "timing baseline; run explicitly"]
+    fn timing_tool_result_summary() {
+        let hits: Vec<serde_json::Value> = (0..10)
+            .map(|index| {
+                serde_json::json!({
+                    "chunk_id": format!("doc-{index}-c0"),
+                    "document_id": format!("doc-{index}"),
+                    "document_title": format!("Document {index}"),
+                    "document_uri": format!("file:///notes/{index}.md"),
+                    "chunk_index": 0,
+                    "content": "lorem ipsum dolor sit amet ".repeat(30),
+                    "score": 0.5,
+                    "score_vec": 0.4,
+                    "score_lex": 3.2,
+                    "explanation": {"reasons": ["uri_match_boost"], "total_ms": 12.5},
+                })
+            })
+            .collect();
+        let result = CallToolResult::success(vec![Content::json(serde_json::json!({
+            "hits": hits,
+            "count": 10,
+            "query": "lorem",
+        }))
+        .unwrap()]);
+        const CALLS: u32 = 20_000;
+        for analysis in [false, true] {
+            let mut samples = Vec::new();
+            for _ in 0..5 {
+                let started = std::time::Instant::now();
+                for _ in 0..CALLS {
+                    let summary = summarize_tool_result(std::hint::black_box(&result), analysis);
+                    std::hint::black_box((summary.ok, summary.hint, summary.evidence));
+                }
+                samples.push(started.elapsed().as_nanos() as f64 / f64::from(CALLS));
+            }
+            samples.sort_by(f64::total_cmp);
+            println!(
+                "TIMING tool_result_summary analysis={analysis} ns_per_call_median={:.0}",
+                samples[2]
+            );
+        }
+    }
 
     #[test]
     fn audit_action_keeps_lineage_and_omits_content() {
@@ -941,17 +1134,21 @@ mod task_scope_tests {
     #[test]
     fn task_context_is_unique_per_server_and_explicit_for_shared_http() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("scopes.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&dir.path().join("scopes.duckdb")).unwrap();
         let config = Config {
             embedding_dims: 8,
             ..Config::for_tests()
         };
-        let one = RagServer::new(
+        let one = RagServer::from_context(crate::context::AppContext::new(
             store.clone(),
             Arc::new(MockEmbedder::new(8)),
             config.clone(),
-        );
-        let two = RagServer::new(store, Arc::new(MockEmbedder::new(8)), config);
+        ));
+        let two = RagServer::from_context(crate::context::AppContext::new(
+            store,
+            Arc::new(MockEmbedder::new(8)),
+            config,
+        ));
         assert_ne!(
             one.analysis_scope(None).unwrap(),
             two.analysis_scope(None).unwrap()

@@ -12,4 +12,4 @@ Verification:
 
 The smoke script `scripts/smoke_search_multi.py` uses a temporary corpus/database and mock embeddings. It tests independent query limits, missing terms, conjunction/union, repeated occurrences, filename families, deterministic responses and path scope.
 
-This does not close full RAGRAF parity: evidence-backed activity ranking, original source encodings, richer reference grouping and representative performance gates remain. The current contract is documented in `docs/MULTI_SEARCH.md`.
+This does not close full RAGRAF parity: evidence-backed activity ranking, original source encodings, richer reference grouping and representative performance gates remain. The current contract is documented in `docs/code-intelligence/MULTI_SEARCH.md`.

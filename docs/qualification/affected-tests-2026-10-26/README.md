@@ -1,6 +1,6 @@
 # Related-test qualification
 
-Contract: [AFFECTED_TESTS.md](../../AFFECTED_TESTS.md). This qualifies requirement
+Contract: [AFFECTED_TESTS.md](../../code-intelligence/AFFECTED_TESTS.md). This qualifies requirement
 6 for supported captured static relationships, not safe CI test omission.
 
 The independently labelled Cargo fixture supplies seven related tests: ordinary

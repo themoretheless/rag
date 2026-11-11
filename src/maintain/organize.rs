@@ -16,6 +16,7 @@ use crate::error::{AppError, Result};
 use crate::llm::json::{parse_model_object, ERROR_EXCERPT_CHARS};
 use crate::llm::ChatMessage;
 use crate::maintain::plan::{validate_action, MaintenanceAction, MaintenancePlanItem};
+use crate::maintain::prompts::ORGANIZE_SYSTEM;
 use crate::models::{Document, DocumentMetaUpdate, Taxonomy};
 use crate::util::excerpt_chars as truncate_chars;
 
@@ -48,7 +49,7 @@ impl OrganizeMode {
             "heuristic" | "heuristics" | "rules" => Ok(Self::Heuristic),
             "llm" | "chat" => Ok(Self::Llm),
             "auto" | "hybrid" => Ok(Self::Auto),
-            other => Err(AppError::config(format!(
+            other => Err(AppError::invalid(format!(
                 "invalid organize mode '{other}': expected heuristic|llm|auto"
             ))),
         }
@@ -187,7 +188,11 @@ pub async fn maintain_organize(
     let _mutation_guard = if dry_run {
         None
     } else {
-        Some(store.try_corpus_mutation_guard("maintenance organize")?)
+        Some(
+            store
+                .corpus_lane()
+                .try_corpus_mutation_guard("maintenance organize")?,
+        )
     };
     let _search_guard = if dry_run {
         Some(crate::db::search::acquire_corpus_search_guard(
@@ -199,30 +204,136 @@ pub async fn maintain_organize(
     };
     let (taxonomy, (unscoped_total, considered)) = crate::util::blocking_section(|| {
         Ok::<_, AppError>((
-            store.get_taxonomy()?,
-            store.list_active_unscoped_documents(max_docs)?,
+            store.documents().get_taxonomy()?,
+            store.documents().list_active_unscoped_documents(max_docs)?,
         ))
     })?;
     let skipped_cap = unscoped_total.saturating_sub(considered.len());
     let unscoped_considered = considered.len();
 
+    let (suggestions, embedding_heuristics_enabled) = collect_suggestions(
+        store,
+        config,
+        llm,
+        opts,
+        min_confidence,
+        &taxonomy,
+        &considered,
+    )
+    .await?;
+
+    let actions = refile_actions(&suggestions, min_confidence, opts.rebuild_index)?;
+
+    let (applied, applied_ok, applied_failed) = apply_refiles(store, &actions, dry_run);
+    let mut rebuild_index_entries = None;
+
+    if opts.rebuild_index
+        && actions
+            .iter()
+            .any(|a| a.action == MaintenanceAction::RebuildIndex)
+    {
+        if dry_run {
+            let n = crate::util::blocking_section(|| {
+                store
+                    .documents()
+                    .count_documents_by_layer(crate::models::Layer::Wiki.as_str())
+            })?;
+            rebuild_index_entries = Some(n);
+        } else if applied_ok > 0 || suggestions.is_empty() {
+            let n = crate::util::blocking_section(|| {
+                store.wiki_index().rebuild_wiki_index_from_docs()
+            })?;
+            rebuild_index_entries = Some(n);
+        }
+    }
+
+    let notes = build_notes(
+        opts.mode,
+        unscoped_total,
+        &suggestions,
+        min_confidence,
+        dry_run,
+        llm.is_some() && config.llm_enabled,
+        embedding_heuristics_enabled,
+    );
+
+    let mut report = OrganizeReport {
+        dry_run,
+        mode: opts.mode.as_str().into(),
+        embedding_heuristics_enabled,
+        unscoped_total,
+        unscoped_considered,
+        skipped_cap,
+        suggestions,
+        actions,
+        applied,
+        applied_ok,
+        applied_failed,
+        rebuild_index_entries,
+        notes: Some(notes),
+        ops_log_id: None,
+        ops_log_seq: None,
+    };
+
+    let message = if dry_run {
+        format!(
+            "dry_run maintain_organize: {} suggestions, {} actions, {} unscoped",
+            report.suggestions.len(),
+            report.actions.len(),
+            unscoped_total
+        )
+    } else {
+        format!(
+            "maintain_organize: applied_ok={} failed={} suggestions={}",
+            applied_ok,
+            applied_failed,
+            report.suggestions.len()
+        )
+    };
+    let written = super::audit::record_run(
+        store,
+        "maintain_organize",
+        dry_run,
+        "maintenance",
+        message,
+        opts.agent.clone(),
+        &report,
+    )?;
+    report.ops_log_id = Some(written.id);
+    report.ops_log_seq = Some(written.seq);
+
+    Ok(report)
+}
+
+/// Suggestion phase: heuristic, LLM or auto (heuristic plus LLM fill-in),
+/// sorted by confidence desc, title asc. Also returns whether embedding
+/// heuristics ran.
+async fn collect_suggestions(
+    store: &Store,
+    config: &Config,
+    llm: Option<&dyn crate::llm::ChatCompleter>,
+    opts: &OrganizeOptions,
+    min_confidence: f64,
+    taxonomy: &Taxonomy,
+    considered: &[Document],
+) -> Result<(Vec<RefileSuggestion>, bool)> {
     let mut embedding_heuristics_enabled = false;
     let mut suggestions = match opts.mode {
         OrganizeMode::Heuristic => {
             let (suggestions, enabled) = crate::util::blocking_section(|| {
-                suggest_heuristic(store, config, &taxonomy, &considered)
+                suggest_heuristic(store, config, taxonomy, considered)
             })?;
             embedding_heuristics_enabled = enabled;
             suggestions
         }
         OrganizeMode::Llm => {
             if let Some(client) = llm.filter(|_| config.llm_enabled) {
-                match suggest_llm(client, &taxonomy, &considered).await {
+                match suggest_llm(client, taxonomy, considered).await {
                     Ok(s) => s,
                     Err(e) => {
                         tracing::warn!(error = %e, "organize LLM failed; falling back to heuristic");
                         let (mut s, enabled) = crate::util::blocking_section(|| {
-                            suggest_heuristic(store, config, &taxonomy, &considered)
+                            suggest_heuristic(store, config, taxonomy, considered)
                         })?;
                         embedding_heuristics_enabled = enabled;
                         for item in &mut s {
@@ -233,7 +344,7 @@ pub async fn maintain_organize(
                 }
             } else {
                 let (mut s, enabled) = crate::util::blocking_section(|| {
-                    suggest_heuristic(store, config, &taxonomy, &considered)
+                    suggest_heuristic(store, config, taxonomy, considered)
                 })?;
                 embedding_heuristics_enabled = enabled;
                 for item in &mut s {
@@ -249,7 +360,7 @@ pub async fn maintain_organize(
         }
         OrganizeMode::Auto => {
             let (mut s, enabled) = crate::util::blocking_section(|| {
-                suggest_heuristic(store, config, &taxonomy, &considered)
+                suggest_heuristic(store, config, taxonomy, considered)
             })?;
             embedding_heuristics_enabled = enabled;
             let need_llm: Vec<Document> = considered
@@ -262,7 +373,7 @@ pub async fn maintain_organize(
                 .collect();
             if !need_llm.is_empty() {
                 if let Some(client) = llm.filter(|_| config.llm_enabled) {
-                    match suggest_llm(client, &taxonomy, &need_llm).await {
+                    match suggest_llm(client, taxonomy, &need_llm).await {
                         Ok(llm_sugs) => {
                             let covered: HashSet<String> =
                                 s.iter().map(|x| x.document_id.clone()).collect();
@@ -299,9 +410,18 @@ pub async fn maintain_organize(
             .then_with(|| a.title.cmp(&b.title))
     });
 
-    // Build whitelist actions from suggestions above confidence floor.
+    Ok((suggestions, embedding_heuristics_enabled))
+}
+
+/// Whitelist `refile` actions for suggestions above the confidence floor,
+/// plus an optional trailing `rebuild_index`.
+fn refile_actions(
+    suggestions: &[RefileSuggestion],
+    min_confidence: f64,
+    rebuild_index: bool,
+) -> Result<Vec<MaintenancePlanItem>> {
     let mut actions = Vec::new();
-    for s in &suggestions {
+    for s in suggestions {
         if s.confidence < min_confidence {
             continue;
         }
@@ -323,7 +443,7 @@ pub async fn maintain_organize(
         };
         actions.push(validate_action(action)?);
     }
-    if opts.rebuild_index {
+    if rebuild_index {
         actions.push(validate_action(MaintenancePlanItem {
             action: MaintenanceAction::RebuildIndex,
             reason: Some("post-organize catalog refresh".into()),
@@ -332,12 +452,21 @@ pub async fn maintain_organize(
         })?);
     }
 
+    Ok(actions)
+}
+
+/// Apply (or preview) the refile actions; `rebuild_index` is handled later.
+/// Returns the per-document results and the ok / failed counts.
+fn apply_refiles(
+    store: &Store,
+    actions: &[MaintenancePlanItem],
+    dry_run: bool,
+) -> (Vec<RefileApplyResult>, usize, usize) {
     let mut applied = Vec::new();
     let mut applied_ok = 0usize;
     let mut applied_failed = 0usize;
-    let mut rebuild_index_entries = None;
 
-    for action in &actions {
+    for action in actions {
         if action.action == MaintenanceAction::RebuildIndex {
             continue; // handled after refiles
         }
@@ -411,7 +540,9 @@ pub async fn maintain_organize(
             room: room.clone(),
             ..Default::default()
         };
-        match crate::util::blocking_section(|| store.update_document_meta(doc_id, &update)) {
+        match crate::util::blocking_section(|| {
+            store.documents().update_document_meta(doc_id, &update)
+        }) {
             Ok(Some(_)) => {
                 applied_ok += 1;
                 applied.push(RefileApplyResult {
@@ -445,78 +576,7 @@ pub async fn maintain_organize(
         }
     }
 
-    if opts.rebuild_index
-        && actions
-            .iter()
-            .any(|a| a.action == MaintenanceAction::RebuildIndex)
-    {
-        if dry_run {
-            let n = crate::util::blocking_section(|| {
-                store.count_documents_by_layer(crate::models::Layer::Wiki.as_str())
-            })?;
-            rebuild_index_entries = Some(n);
-        } else if applied_ok > 0 || suggestions.is_empty() {
-            let n = crate::util::blocking_section(|| store.rebuild_wiki_index_from_docs())?;
-            rebuild_index_entries = Some(n);
-        }
-    }
-
-    let notes = build_notes(
-        opts.mode,
-        unscoped_total,
-        &suggestions,
-        min_confidence,
-        dry_run,
-        llm.is_some() && config.llm_enabled,
-        embedding_heuristics_enabled,
-    );
-
-    let mut report = OrganizeReport {
-        dry_run,
-        mode: opts.mode.as_str().into(),
-        embedding_heuristics_enabled,
-        unscoped_total,
-        unscoped_considered,
-        skipped_cap,
-        suggestions,
-        actions,
-        applied,
-        applied_ok,
-        applied_failed,
-        rebuild_index_entries,
-        notes: Some(notes),
-        ops_log_id: None,
-        ops_log_seq: None,
-    };
-
-    let message = if dry_run {
-        format!(
-            "dry_run maintain_organize: {} suggestions, {} actions, {} unscoped",
-            report.suggestions.len(),
-            report.actions.len(),
-            unscoped_total
-        )
-    } else {
-        format!(
-            "maintain_organize: applied_ok={} failed={} suggestions={}",
-            applied_ok,
-            applied_failed,
-            report.suggestions.len()
-        )
-    };
-    let written = super::audit::record_run(
-        store,
-        "maintain_organize",
-        dry_run,
-        "maintenance",
-        message,
-        opts.agent.clone(),
-        &report,
-    )?;
-    report.ops_log_id = Some(written.id);
-    report.ops_log_seq = Some(written.seq);
-
-    Ok(report)
+    (applied, applied_ok, applied_failed)
 }
 
 fn build_notes(
@@ -576,10 +636,13 @@ fn suggest_heuristic(
     // incomplete migration disables this heuristic explicitly; deterministic
     // path/title rules remain available and cannot mislabel mixed vectors as a
     // trustworthy kNN result.
-    let embedding_heuristics_enabled = store.embedding_manifest_matches_config(config)?;
+    let embedding_heuristics_enabled = store
+        .embedding_manifest()
+        .embedding_manifest_matches_config(config)?;
     let (first_emb, labeled_emb) = if embedding_heuristics_enabled {
         let first_emb = first_chunk_embeddings(store, unscoped)?;
         let labeled_emb = store
+            .chunks()
             .representative_document_embeddings(EMBED_LABEL_MAX_DOCS, true, true, true)?
             .into_iter()
             .filter_map(|sample| {
@@ -787,7 +850,7 @@ fn first_chunk_embeddings(
         .iter()
         .map(|document| document.id.as_str())
         .collect();
-    store.first_chunk_embeddings(&ids)
+    store.chunks().first_chunk_embeddings(&ids)
 }
 
 fn path_segments(path: &str) -> Vec<String> {
@@ -924,28 +987,6 @@ async fn suggest_llm(
         .collect();
     let sample_json = serde_json::to_string_pretty(&samples).unwrap_or_else(|_| "[]".into());
 
-    let system = r#"You organize a personal knowledge base into wings (top shelves) and rooms (sub-areas).
-Given taxonomy and unscoped documents (missing wing), propose refile targets.
-
-Rules:
-- Prefer existing wing/room names from the taxonomy when they fit.
-- You may propose a new wing only when nothing fits; use short kebab-case or single words.
-- Never invent document_ids; only use ids from the input list.
-- Return ONLY valid JSON (no markdown fences):
-{
-  "suggestions": [
-    {
-      "document_id": "...",
-      "wing": "...",
-      "room": "optional",
-      "reason": "short",
-      "confidence": 0.0
-    }
-  ],
-  "notes": "optional"
-}
-confidence is 0..1.
-"#;
     let user = format!(
         "## Taxonomy\n\n{tax}\n\n## Unscoped documents (missing wing)\n\n{docs}\n",
         tax = truncate_chars(&tax_json, 8000),
@@ -954,7 +995,7 @@ confidence is 0..1.
     let messages = [
         ChatMessage {
             role: "system".into(),
-            content: system.into(),
+            content: ORGANIZE_SYSTEM.into(),
         },
         ChatMessage {
             role: "user".into(),
@@ -1014,19 +1055,7 @@ fn parse_organize_json(raw: &str) -> Result<LlmOrganizePayload> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testkit::SeedDoc;
-
-    use std::path::PathBuf;
-
-    fn test_config(db_path: PathBuf) -> Config {
-        Config {
-            db_path,
-            embedding_model: "mock".into(),
-            embedding_dims: 8,
-            llm_enabled: false,
-            ..Config::for_tests()
-        }
-    }
+    use crate::testkit::{test_config, SeedDoc};
 
     /// Seed one document; `scope` is `(wing, room, source_file)`.
     fn seed_doc(
@@ -1069,8 +1098,8 @@ mod tests {
     async fn dry_run_suggests_path_refile() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("org.duckdb");
-        let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let store = crate::testkit::open_test_store(&path).unwrap();
+        let cfg = test_config(path, 8);
 
         seed_doc(
             &store,
@@ -1116,9 +1145,9 @@ mod tests {
             .all(|a| a.action == MaintenanceAction::Refile));
         assert_eq!(report.applied_ok, report.actions.len());
         // dry_run: wing still empty
-        let doc = store.get_document("loose").unwrap().unwrap();
+        let doc = store.documents().get_document("loose").unwrap().unwrap();
         assert!(doc.wing.is_none());
-        let ops = store.list_ops_log(5).unwrap();
+        let ops = store.ops_log().list_ops_log(5).unwrap();
         assert!(ops.iter().any(|o| o.op == "maintain_organize_dry_run"));
     }
 
@@ -1126,8 +1155,8 @@ mod tests {
     async fn apply_refiles_unscoped() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("org_apply.duckdb");
-        let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let store = crate::testkit::open_test_store(&path).unwrap();
+        let cfg = test_config(path, 8);
 
         seed_doc(
             &store,
@@ -1157,9 +1186,9 @@ mod tests {
         let report = maintain_organize(&store, &cfg, None, &opts).await.unwrap();
         assert!(!report.dry_run);
         assert!(report.applied_ok >= 1);
-        let doc = store.get_document("b").unwrap().unwrap();
+        let doc = store.documents().get_document("b").unwrap().unwrap();
         assert_eq!(doc.wing.as_deref(), Some("research"));
-        let ops = store.list_ops_log(5).unwrap();
+        let ops = store.ops_log().list_ops_log(5).unwrap();
         assert!(ops.iter().any(|o| o.op == "maintain_organize"));
     }
 
@@ -1167,8 +1196,8 @@ mod tests {
     async fn migration_disables_embedding_heuristics_without_false_suggestions() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("org-migration-incomplete.duckdb");
-        let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let store = crate::testkit::open_test_store(&path).unwrap();
+        let cfg = test_config(path, 8);
         seed_doc(
             &store,
             "placed",
@@ -1186,6 +1215,7 @@ mod tests {
             "text://raw/b",
         );
         store
+            .embedding_manifest()
             .set_embedding_manifest(&crate::db::store::embedding_migration_manifest(&cfg))
             .unwrap();
 
@@ -1200,15 +1230,21 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("embedding_heuristics_enabled=false"));
-        assert!(store.get_document("loose").unwrap().unwrap().wing.is_none());
+        assert!(store
+            .documents()
+            .get_document("loose")
+            .unwrap()
+            .unwrap()
+            .wing
+            .is_none());
     }
 
     #[tokio::test]
     async fn no_unscoped_is_empty_report() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("empty_org.duckdb");
-        let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let store = crate::testkit::open_test_store(&path).unwrap();
+        let cfg = test_config(path, 8);
         seed_doc(
             &store,
             "x",
@@ -1228,8 +1264,8 @@ mod tests {
     async fn respects_max_docs_cap() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cap_org.duckdb");
-        let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let store = crate::testkit::open_test_store(&path).unwrap();
+        let cfg = test_config(path, 8);
         seed_doc(
             &store,
             "seed",

@@ -15,7 +15,7 @@ case "$FILE" in
   *) exit 0 ;;
 esac
 case "$FILE" in
-  */target/*|*/.git/*|*/node_modules/*) exit 0 ;;
+  */target/*|*/.git/*|*/node_modules/*|*/.claude/worktrees/*) exit 0 ;;
 esac
 
 case "$FILE" in

@@ -77,7 +77,7 @@ pub fn load_snapshot_path(path: &Path) -> Result<LoadedGraph, String> {
 
 /// Parse bare `GraphView` or envelope `{ "graph": { ... } }`.
 ///
-/// Bare form matches `rag_mcp::models::GraphView` serde (MCP tool wire JSON).
+/// Bare form matches `rag_store_duckdb::models::GraphView` serde (MCP tool wire JSON).
 pub fn parse_graph_json(bytes: &[u8]) -> Result<GraphView, String> {
     if let Ok(view) = serde_json::from_slice::<GraphView>(bytes) {
         return Ok(view);
@@ -96,7 +96,7 @@ pub fn parse_graph_json(bytes: &[u8]) -> Result<GraphView, String> {
     Err("snapshot JSON missing graph / nodes+edges".into())
 }
 
-/// Serialize a `GraphView` to the same serde JSON format as `rag_mcp` models / MCP tools.
+/// Serialize a `GraphView` to the same serde JSON format as `rag_store_duckdb` models / MCP tools.
 #[cfg(any(test, feature = "direct-db"))]
 pub fn export_graph_view_json(view: &GraphView) -> Result<String, String> {
     serde_json::to_string_pretty(view).map_err(|e| format!("serialize GraphView: {e}"))

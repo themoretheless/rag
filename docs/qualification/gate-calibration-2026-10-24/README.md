@@ -83,5 +83,5 @@ prove an atomic cross-file state; target-project query relevance is not inferred
 from database-level use. Untrusted scores/labels do not establish production
 confidence, performance or savings. Optional tokenizer modes, every platform/hook
 client, retention and direct REST/CLI telemetry coverage remain unqualified.
-See [GATE_CALIBRATION.md](../../GATE_CALIBRATION.md) and
+See [GATE_CALIBRATION.md](../../code-intelligence/GATE_CALIBRATION.md) and
 [RAGRAF_FEATURE_MATRIX.md](../../RAGRAF_FEATURE_MATRIX.md).

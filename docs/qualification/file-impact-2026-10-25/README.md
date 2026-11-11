@@ -2,7 +2,7 @@
 
 This transfers the remaining file-target navigation scope from RAGRAF's impact
 contract (reference pinned at 075caf86dc2f6274b9c48487e521915bcdfeaf2c) into an
-explicit local target mode. [Contract](../../IMPACT_RELATIONS.md#file-targets).
+explicit local target mode. [Contract](../../code-intelligence/IMPACT_RELATIONS.md#file-targets).
 The graph uses captured bound occurrences, including ownerless module values,
 plus optional structural candidates. It does not claim complete import/resource
 or runtime dependency resolution, or measured reference accuracy superiority.

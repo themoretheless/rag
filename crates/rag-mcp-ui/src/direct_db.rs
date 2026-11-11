@@ -1,6 +1,6 @@
 //! Direct read-only DuckDB access for `--db` mode (feature `direct-db`).
 //!
-//! [`DbSource`] opens the database once through `rag_mcp::Store` and keeps that
+//! [`DbSource`] opens the database once through `rag_store_duckdb::Store` and keeps that
 //! read-only connection for every later call. Without the feature the UI
 //! builds without the server crate (no DuckDB, axum or rmcp).
 
@@ -8,8 +8,9 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use rag_mcp::db::store::WikiPageMetaFilter;
-use rag_mcp::{GraphFilter, GraphView, Store, UI_GRAPH_EXPORT_MAX_NODES};
+use rag_store_duckdb::db::store::WikiPageMetaFilter;
+use rag_store_duckdb::models::{GraphFilter, GraphView, UI_GRAPH_EXPORT_MAX_NODES};
+use rag_store_duckdb::Store;
 
 use crate::cli::ExportArgs;
 use crate::dto::{
@@ -172,7 +173,7 @@ fn fetch_document_db(
         id: doc.id,
         uri: doc.uri,
         title: doc.title,
-        layer: doc.layer,
+        layer: doc.layer.to_string(),
         kind: doc.kind.to_string(),
         content: doc.content,
         content_hash: doc.content_hash,
@@ -449,7 +450,7 @@ mod tests {
     use super::*;
     use crate::snapshot::load_snapshot_path;
     use crate::topology::test_support::{edge, node};
-    use rag_mcp::{Document, GraphEdge};
+    use rag_store_duckdb::models::{Document, GraphEdge};
     use std::collections::HashSet;
     use std::fs;
     use std::path::Path;

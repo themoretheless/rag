@@ -1,0 +1,453 @@
+//! Lean document catalog and project dashboard queries.
+
+use super::store::Documents;
+use chrono::{DateTime, Utc};
+use duckdb::types::ToSql;
+use serde::{Deserialize, Serialize};
+
+use super::store::compiled_link_exists;
+use crate::error::{AppError, Result};
+use crate::models::DrawerListItem;
+use crate::util::parse_db_timestamp;
+
+pub use rag_mcp_core::ProjectHome;
+
+pub const DEFAULT_CATALOG_PAGE_SIZE: usize = 50;
+pub const MAX_CATALOG_PAGE_SIZE: usize = 200;
+
+#[derive(Debug, Clone, Default)]
+pub struct DocumentCatalogFilter {
+    pub q: Option<String>,
+    pub wing: Option<String>,
+    pub room: Option<String>,
+    pub source_file: Option<String>,
+    pub layer: Option<String>,
+    pub kind: Option<String>,
+    pub status: Option<String>,
+    /// `Some(true)` keeps only documents a resolved wiki page links to, `Some(false)`
+    /// only those without that compile link - i.e. the raw-side compile queue.
+    pub compiled: Option<bool>,
+    pub include_archived: bool,
+    pub limit: usize,
+    pub offset: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentCatalogPage {
+    pub items: Vec<DrawerListItem>,
+    pub total: u64,
+}
+
+fn catalog_where(filter: &DocumentCatalogFilter, alias: &str) -> (String, Vec<String>) {
+    let mut clauses = Vec::new();
+    let mut binds = Vec::new();
+    for (column, value) in [
+        ("wing", filter.wing.as_deref()),
+        ("room", filter.room.as_deref()),
+        ("source_file", filter.source_file.as_deref()),
+        ("layer", filter.layer.as_deref()),
+        ("kind", filter.kind.as_deref()),
+        ("status", filter.status.as_deref()),
+    ] {
+        if let Some(value) = value.and_then(clean) {
+            clauses.push(format!("{alias}.{column} = ?"));
+            binds.push(value.to_string());
+        }
+    }
+    if let Some(compiled) = filter.compiled {
+        let link = compiled_link_exists(alias);
+        clauses.push(if compiled {
+            link
+        } else {
+            format!("NOT {link}")
+        });
+    }
+    if filter.status.as_deref().and_then(clean).is_none() && !filter.include_archived {
+        clauses.push(crate::db::sql::active_document_sql(alias));
+    }
+    if let Some(query) = filter.q.as_deref().and_then(clean) {
+        clauses.push(format!(
+            "LOWER(COALESCE({alias}.title, '') || '\n' || COALESCE({alias}.uri, '') || '\n' || COALESCE({alias}.source_file, '')) LIKE ?"
+        ));
+        binds.push(format!("%{}%", query.to_lowercase()));
+    }
+    let where_sql = if clauses.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", clauses.join(" AND "))
+    };
+    (where_sql, binds)
+}
+
+fn dynamic_params(values: &[String]) -> Vec<&dyn ToSql> {
+    values.iter().map(|value| value as &dyn ToSql).collect()
+}
+
+fn clean(value: &str) -> Option<&str> {
+    let value = value.trim();
+    (!value.is_empty()).then_some(value)
+}
+
+fn timestamp(raw: String) -> Result<DateTime<Utc>> {
+    parse_db_timestamp(&raw)
+        .ok_or_else(|| AppError::db(format!("invalid catalog timestamp: {raw}")))
+}
+
+fn count(value: i64) -> u64 {
+    value.max(0) as u64
+}
+
+impl Documents<'_> {
+    /// Return one lean catalog page without loading document bodies.
+    pub fn list_document_catalog(
+        &self,
+        filter: &DocumentCatalogFilter,
+    ) -> Result<DocumentCatalogPage> {
+        let (where_sql, binds) = catalog_where(filter, "d");
+        let conn = self.store.lock()?;
+        let count_sql = format!("SELECT COUNT(*)::BIGINT FROM documents d {where_sql}");
+        let total: i64 = conn.query_row(&count_sql, dynamic_params(&binds).as_slice(), |row| {
+            row.get(0)
+        })?;
+
+        let limit = filter.limit.clamp(1, MAX_CATALOG_PAGE_SIZE);
+        let sql = format!(
+            r#"
+            SELECT
+              d.id, d.uri, d.title, d.wing, d.room, d.source_file,
+              COALESCE(NULLIF(d.layer, ''), 'raw'),
+              COALESCE(NULLIF(d.kind, ''), 'document'),
+              d.content_hash, COALESCE(d.pinned, false),
+              COALESCE(d.boost, 1.0), COALESCE(NULLIF(d.status, ''), 'active'),
+              CAST(d.created_at AS VARCHAR), CAST(d.updated_at AS VARCHAR)
+            FROM documents d
+            {where_sql}
+            ORDER BY COALESCE(d.pinned, false) DESC,
+                     COALESCE(d.boost, 1.0) DESC,
+                     d.updated_at DESC, d.title ASC, d.id ASC
+            LIMIT {limit} OFFSET {}
+            "#,
+            filter.offset
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let items =
+            crate::db::rows::query_vec(&mut stmt, dynamic_params(&binds).as_slice(), |row| {
+                Ok(DrawerListItem {
+                    id: row.get(0)?,
+                    uri: row.get(1)?,
+                    title: row.get(2)?,
+                    wing: row.get(3)?,
+                    room: row.get(4)?,
+                    source_file: row.get(5)?,
+                    layer: row.get(6)?,
+                    kind: row.get(7)?,
+                    content_hash: row.get(8)?,
+                    pinned: row.get(9)?,
+                    boost: row.get(10)?,
+                    status: row.get(11)?,
+                    created_at: timestamp(row.get(12)?)?,
+                    updated_at: timestamp(row.get(13)?)?,
+                })
+            })?;
+        Ok(DocumentCatalogPage {
+            items,
+            total: total.max(0) as u64,
+        })
+    }
+
+    /// Aggregate the useful health/freshness inventory for one project.
+    pub fn project_home(&self, project_id: &str) -> Result<ProjectHome> {
+        let project_id = project_id.trim();
+        if project_id.is_empty() {
+            return Err(AppError::config("project must be non-empty"));
+        }
+        let conn = self.store.lock()?;
+        let row = conn.query_row(
+            r#"
+            SELECT
+              COUNT(*)::BIGINT,
+              COALESCE(SUM(CASE WHEN COALESCE(layer, 'raw') = 'raw' THEN 1 ELSE 0 END), 0)::BIGINT,
+              COALESCE(SUM(CASE WHEN COALESCE(layer, '') = 'wiki' THEN 1 ELSE 0 END), 0)::BIGINT,
+              COALESCE(SUM(CASE WHEN COALESCE(layer, '') = 'diary' OR COALESCE(kind, '') = 'diary' THEN 1 ELSE 0 END), 0)::BIGINT,
+              COALESCE(SUM(CASE WHEN COALESCE(status, 'active') IN ('archived', 'tombstone') THEN 1 ELSE 0 END), 0)::BIGINT,
+              COUNT(DISTINCT NULLIF(TRIM(room), ''))::BIGINT,
+              COUNT(DISTINCT NULLIF(TRIM(source_file), ''))::BIGINT,
+              CAST(MAX(updated_at) AS VARCHAR)
+            FROM documents
+            WHERE wing = ?
+            "#,
+            [project_id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                ))
+            },
+        )?;
+        let chunks: i64 = conn.query_row(
+            "SELECT COUNT(*)::BIGINT FROM chunks c JOIN documents d ON d.id = c.document_id WHERE d.wing = ?",
+            [project_id],
+            |row| row.get(0),
+        )?;
+        let graph_nodes: i64 = conn.query_row(
+            "SELECT COUNT(*)::BIGINT FROM graph_nodes n JOIN documents d ON d.id = n.document_id WHERE d.wing = ?",
+            [project_id],
+            |row| row.get(0),
+        )?;
+        let graph_edges: i64 = conn.query_row(
+            r#"
+            SELECT COUNT(*)::BIGINT
+            FROM graph_edges e
+            JOIN graph_nodes source ON source.id = e.source_id
+            JOIN documents d ON d.id = source.document_id
+            WHERE d.wing = ?
+            "#,
+            [project_id],
+            |row| row.get(0),
+        )?;
+        let unresolved_links: i64 = conn.query_row(
+            r#"
+            SELECT COUNT(DISTINCT target.id)::BIGINT
+            FROM graph_edges e
+            JOIN graph_nodes source ON source.id = e.source_id
+            JOIN documents d ON d.id = source.document_id
+            JOIN graph_nodes target ON target.id = e.target_id
+            WHERE d.wing = ? AND COALESCE(target.resolved, false) = false
+            "#,
+            [project_id],
+            |row| row.get(0),
+        )?;
+        drop(conn);
+        let source_roots = self
+            .store
+            .source_manifest()
+            .list_source_roots(Some(project_id))?;
+        Ok(ProjectHome {
+            project_id: project_id.to_string(),
+            documents: count(row.0),
+            chunks: count(chunks),
+            raw_documents: count(row.1),
+            wiki_documents: count(row.2),
+            diary_documents: count(row.3),
+            archived_documents: count(row.4),
+            rooms: count(row.5),
+            source_files: count(row.6),
+            graph_nodes: count(graph_nodes),
+            graph_edges: count(graph_edges),
+            unresolved_links: count(unresolved_links),
+            source_roots,
+            last_updated_at: row.7.map(timestamp).transpose()?,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Store;
+    use crate::models::{Chunk, Document, GraphEdge, GraphNode};
+
+    /// The compile queue: the catalog's `compiled` filter must agree with the
+    /// `uncompiled_raw_count` metric, page one shelf past the page cap, and rank shelves
+    /// by real debt instead of a fixed sample.
+    #[test]
+    fn catalog_compiled_filter_pages_the_compile_debt() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open(&root.path().join("compile-queue.duckdb")).unwrap();
+        for (id, room) in [("raw-a", "src"), ("raw-b", "src"), ("raw-c", "tests")] {
+            store
+                .documents()
+                .upsert_document(&Document {
+                    id: id.into(),
+                    uri: format!("file:///dodo/{id}.cs"),
+                    title: id.into(),
+                    content: "body".into(),
+                    wing: Some("dodo".into()),
+                    room: Some(room.into()),
+                    layer: "raw".into(),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+        store
+            .documents()
+            .upsert_document(&Document {
+                id: "page".into(),
+                uri: "wiki://dodo".into(),
+                title: "Dodo".into(),
+                content: "compiled page".into(),
+                layer: "wiki".into(),
+                kind: "wiki".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        for (id, document_id, uri) in [
+            ("node-page", "page", "wiki://dodo"),
+            ("node-raw-a", "raw-a", "file:///dodo/raw-a.cs"),
+        ] {
+            store
+                .graph()
+                .upsert_graph_node(&GraphNode {
+                    id: id.into(),
+                    kind: "document".into(),
+                    label: document_id.into(),
+                    document_id: Some(document_id.into()),
+                    uri: Some(uri.into()),
+                    resolved: true,
+                    metadata_json: "{}".into(),
+                })
+                .unwrap();
+        }
+        store
+            .graph()
+            .insert_graph_edges(&[GraphEdge {
+                id: "edge-page-raw-a".into(),
+                source_id: "node-page".into(),
+                target_id: "node-raw-a".into(),
+                rel_type: "related".into(),
+                weight: 1.0,
+                context: None,
+            }])
+            .unwrap();
+
+        let page = |room: Option<&str>, offset: usize| {
+            store
+                .documents()
+                .list_document_catalog(&DocumentCatalogFilter {
+                    layer: Some("raw".into()),
+                    room: room.map(str::to_string),
+                    compiled: Some(false),
+                    limit: 1,
+                    offset,
+                    ..Default::default()
+                })
+                .unwrap()
+        };
+        let debt = page(None, 0);
+        assert_eq!(debt.total, 2);
+        assert_eq!(debt.items.len(), 1);
+        assert_eq!(
+            store
+                .maintenance()
+                .layer_health_counts()
+                .unwrap()
+                .uncompiled_raw_count,
+            debt.total
+        );
+        // The second page names the other doc, so a 17 000-doc shelf is walkable.
+        assert_ne!(page(None, 1).items[0].id, debt.items[0].id);
+        assert_eq!(page(Some("tests"), 0).total, 1);
+        assert_eq!(page(Some("missing-room"), 0).total, 0);
+
+        let compiled = store
+            .documents()
+            .list_document_catalog(&DocumentCatalogFilter {
+                layer: Some("raw".into()),
+                compiled: Some(true),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            compiled
+                .items
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["raw-a"]
+        );
+
+        let queue = store.maintenance().uncompiled_raw_shelves(8).unwrap();
+        assert_eq!(queue.total_shelves, 2);
+        assert_eq!(
+            queue
+                .shelves
+                .iter()
+                .map(|shelf| {
+                    (
+                        shelf.wing.clone().unwrap_or_default(),
+                        shelf.room.clone().unwrap_or_default(),
+                        shelf.docs,
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec![
+                ("dodo".into(), "src".into(), 1),
+                ("dodo".into(), "tests".into(), 1)
+            ]
+        );
+    }
+
+    #[test]
+    fn catalog_is_lean_filtered_and_paginated_and_home_is_scoped() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open(&root.path().join("catalog.duckdb")).unwrap();
+        for (id, project, layer, status) in [
+            ("a", "alpha", "raw", "active"),
+            ("b", "alpha", "wiki", "active"),
+            ("c", "alpha", "raw", "archived"),
+            ("d", "beta", "raw", "active"),
+        ] {
+            let document = Document {
+                id: id.into(),
+                uri: format!("file:///{id}.md"),
+                title: format!("Document {id}"),
+                content: format!("private body {id}"),
+                wing: Some(project.into()),
+                room: Some("root".into()),
+                source_file: Some(format!("/{project}/{id}.md")),
+                layer: layer.into(),
+                status: status.into(),
+                ..Default::default()
+            };
+            store.documents().upsert_document(&document).unwrap();
+            store
+                .chunks()
+                .insert_chunks(&[Chunk {
+                    id: format!("chunk-{id}"),
+                    document_id: id.into(),
+                    chunk_index: 0,
+                    content: document.content,
+                    embedding: vec![1.0, 0.0],
+                    char_start: 0,
+                    char_end: 14,
+                    metadata_json: "{}".into(),
+                }])
+                .unwrap();
+        }
+
+        let first = store
+            .documents()
+            .list_document_catalog(&DocumentCatalogFilter {
+                wing: Some("alpha".into()),
+                limit: 1,
+                ..DocumentCatalogFilter::default()
+            })
+            .unwrap();
+        assert_eq!(first.total, 2);
+        assert_eq!(first.items.len(), 1);
+        let second = store
+            .documents()
+            .list_document_catalog(&DocumentCatalogFilter {
+                wing: Some("alpha".into()),
+                q: Some("b.md".into()),
+                limit: 50,
+                ..DocumentCatalogFilter::default()
+            })
+            .unwrap();
+        assert_eq!(second.total, 1);
+        assert_eq!(second.items[0].id, "b");
+        let home = store.documents().project_home("alpha").unwrap();
+        assert_eq!(home.documents, 3);
+        assert_eq!(home.chunks, 3);
+        assert_eq!(home.raw_documents, 2);
+        assert_eq!(home.wiki_documents, 1);
+        assert_eq!(home.archived_documents, 1);
+        assert_eq!(home.source_files, 3);
+    }
+}

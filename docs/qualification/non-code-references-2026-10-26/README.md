@@ -1,6 +1,6 @@
 # Non-code references — 2026-10-26
 
-Implemented [SQL table and URL targets](../../NON_CODE_REFERENCES.md) in the
+Implemented [SQL table and URL targets](../../code-intelligence/NON_CODE_REFERENCES.md) in the
 existing `references` MCP tool and native Store query. Pinned RAGRAF facade
 `075caf86dc2f6274b9c48487e521915bcdfeaf2c` explicitly includes `queries` and
 `routes` relation kinds; those contracts were inspected, not run as a complete

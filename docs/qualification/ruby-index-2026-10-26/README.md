@@ -2,7 +2,7 @@
 
 Transfers the Ruby grammar/profile gap from the pinned RAGRAF reference, extending
 it with distinct instance/singleton ownership and conservative local/constructor/
-namespace guards. See [contract](../../RUBY_CODE_ANALYSIS.md). Full Ruby semantic
+namespace guards. See [contract](../../code-intelligence/RUBY_CODE_ANALYSIS.md). Full Ruby semantic
 coverage, all reference languages and whole-product RAGRAF parity remain open.
 
 Ten native cases exercise class/module/ordinary/singleton/eigenclass/endless

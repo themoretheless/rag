@@ -10,7 +10,7 @@
     "docs/LOCAL_LLM_WIKI.md",
     "docs/ROADMAP.md",
     "docs/CONNECT.md",
-    "src/db/review.rs",
+    "crates/rag-store-duckdb/src/db/review.rs",
     "crates/rag-mcp-markup/src/extract.rs",
     "src/http_api/auth.rs",
     "src/revisions.rs",
