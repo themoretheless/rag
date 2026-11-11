@@ -149,8 +149,8 @@ parity) stay in [Limitations](#limitations-honest) and the parity doc.
 | `RAG_CHUNK_OVERLAP` | `120` | Overlap chars (must be &lt; chunk size) |
 | `RAG_CODE_CHUNKING` | `structural` | `structural` splits Rust/Python/JS/TS by top-level items with symbol metadata; `window` restores the legacy splitter |
 | `RAG_DEFAULT_TOP_K` | `5` | Default search limit |
-| `RAG_STORAGE_BACKEND` | `duckdb` | Full `rag-mcp` runtime accepts DuckDB; the backend-neutral library document factory also supports opt-in `markdown` vault CRUD |
-| `RAG_VAULT_PATH` | — | Explicit vault root required by the Markdown storage adapter; never inferred from `RAG_DB_PATH` |
+| `RAG_STORAGE_BACKEND` | `duckdb` | Only `duckdb` is implemented; `markdown`, `sqlite`, `postgres` and `memory` are recognized and refused at startup |
+| `RAG_VAULT_PATH` | — | Parsed but unused since the Markdown storage adapter was removed; `export_vault` takes its own `path` |
 | `RAG_STARTUP_WARN_MS` | `30000` | Warn when a measured startup phase exceeds this duration |
 | `RAG_PID_FILE` | `<RAG_DB_PATH with .pid>` | Optional PID metadata path used to flag stale crash metadata |
 | `RAG_DEFAULT_SEARCH_MODE` | `vec` | `vec` \| `lex` \| `hybrid` |
@@ -734,7 +734,7 @@ Tool tables above match the current MCP surface (see also Features and MemPalace
 - DuckDB is the only full application backend. The opt-in Markdown adapter implements document CRUD, frontmatter, sidecar rebuild and watching, but not search/graph/wiki/transaction parity; SQLite/Postgres/Memory still fail explicitly at startup
 - `reconnect` is an intentional no-op success on single-process DuckDB (no Chroma-style client cache)
 
-Architecture north star: [`docs/ARCHITECTURE_VISION.md`](docs/ARCHITECTURE_VISION.md), principles [`docs/PRODUCT_PRINCIPLES.md`](docs/PRODUCT_PRINCIPLES.md), map [`docs/SYSTEM_MAP.md`](docs/SYSTEM_MAP.md).
+Architecture north star: [`docs/ARCHITECTURE_VISION.md`](docs/ARCHITECTURE_VISION.md), principles [`docs/PRODUCT_PRINCIPLES.md`](docs/PRODUCT_PRINCIPLES.md), map [`docs/SYSTEM_MAP.md`](docs/SYSTEM_MAP.md). Code architecture (crates, layers, composition): [`docs/refactor/ARCHITECTURE.md`](docs/refactor/ARCHITECTURE.md); behaviour changes of the 2026-11 refactor, including the schema v26 upgrade (no downgrade): [`docs/refactor/CHANGES.md`](docs/refactor/CHANGES.md).
 
 Current release gate: [`docs/ROADMAP.md`](docs/ROADMAP.md). Historical contract
 and research: [`SPEC.md`](SPEC.md), [`FEATURES.md`](FEATURES.md),

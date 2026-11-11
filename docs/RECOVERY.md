@@ -36,6 +36,12 @@ the checksum, schema, relational-integrity, and embedding-contract checks before
 restoring that DuckDB backup. Do not split or hand-edit vectors merely to bypass
 the portable limit.
 
+The embedding-contract check requires every chunk vector to match the
+manifest's dimensions. Chunks the schema v26 migration quarantined
+(`chunk_embedding_quarantine`; NULL vector until re-embedded) are skipped and
+counted in the report's `quarantined_chunks`; any other NULL vector fails the
+check.
+
 ## Bundle versions and embedding identity
 
 Recovery bundle **v2** makes vector provenance part of the recovery contract.
