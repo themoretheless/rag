@@ -1,6 +1,16 @@
-//! Layering guard for the root crate (docs/refactor/ARCHITECTURE.md).
+//! Layering guard inside each crate (docs/refactor/ARCHITECTURE.md).
 //!
-//! Parses every `crate::<module>` path in production code under `src/`
+//! Since Stage 8 the crate graph enforces the coarse layering:
+//! `rag-store-duckdb` (domain + store) ← `rag-code-intel` (intel) ←
+//! `rag-mcp` (app, edge, composition); Cargo rejects any edge back up, and the
+//! orphan rule keeps `impl Store` blocks inside the store crate. This test
+//! keeps the rules that still live inside one crate: domain modules of the
+//! store crate do not reach `db`, and in the root crate app does not reach the
+//! edge, the edge does not reach composition, `mcp` and `http_api` do not
+//! reach each other.
+//!
+//! Parses every `crate::<module>` path in production code under each crate's
+//! `src/`
 //! (`use crate::…` statements, grouped `use crate::{…}` items and inline
 //! paths), maps it to an edge between top-level modules, and fails on an edge
 //! that points up the layering or sideways between the two edges:
@@ -13,16 +23,25 @@
 //! `tests.rs` files, `tests/` directories, `#[cfg(test)]` items and everything
 //! after the first `#[cfg(test)] mod …` in a file. Crate-root re-exports
 //! (`crate::{Store, AppError}`) are not resolved and so not checked; the
-//! binaries (`src/bin`, `main.rs`) and `lib.rs` are the composition root.
+//! binaries (`src/bin`, `main.rs`) and each `lib.rs` are composition roots.
+
+/// Source roots checked, relative to the workspace root.
+const CRATE_SOURCES: &[&str] = &[
+    "src",
+    "crates/rag-store-duckdb/src",
+    "crates/rag-code-intel/src",
+];
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-/// Layer rank of a top-level module; unlisted modules are `app`.
+/// Layer rank of a top-level module of any checked crate; unlisted modules
+/// are `app` (in the store crate that is only its `testkit`).
 fn layer(module: &str) -> u8 {
     match module {
+        // `finding_codes` is the store crate's exported macro (crate root).
         "models" | "error" | "config" | "util" | "chunking" | "graph" | "search_pack"
-        | "tool_spec" => 0,
+        | "finding_codes" | "tool_spec" => 0,
         "db" => 1,
         "code_index" | "external_db" | "gate" | "calibration" | "analysis_tasks" => 2,
         "mcp" | "http_api" => 4,
@@ -31,7 +50,8 @@ fn layer(module: &str) -> u8 {
     }
 }
 
-/// Edges that break the rule today and are scheduled for a later stage.
+/// Edges that break the rule today and are scheduled for a later stage
+/// (none since Stage 8 moved `decode_text` to `util::decode`).
 const ALLOWED: &[(&str, &str)] = &[];
 
 fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -131,43 +151,46 @@ fn referenced_modules(code: &str) -> Vec<String> {
 
 #[test]
 fn module_edges_follow_the_layering() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut files = Vec::new();
-    rs_files(&src, &mut files);
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let allowed: BTreeSet<(&str, &str)> = ALLOWED.iter().copied().collect();
     let mut seen_allowed = BTreeSet::new();
     let mut violations: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
-    for file in &files {
-        let rel = file.strip_prefix(&src).unwrap();
-        let first = rel
-            .components()
-            .next()
-            .unwrap()
-            .as_os_str()
-            .to_string_lossy();
-        if first == "bin" || first == "main.rs" || first == "lib.rs" {
-            continue;
-        }
-        let from = first.trim_end_matches(".rs").to_string();
-        let source = std::fs::read_to_string(file).unwrap();
-        for (n, line) in production_code(&source).lines().enumerate() {
-            for to in referenced_modules(line) {
-                if to == from || to == "self" || to == "super" {
-                    continue;
+    for crate_src in CRATE_SOURCES {
+        let src = root.join(crate_src);
+        let mut files = Vec::new();
+        rs_files(&src, &mut files);
+        for file in &files {
+            let rel = file.strip_prefix(&src).unwrap();
+            let first = rel
+                .components()
+                .next()
+                .unwrap()
+                .as_os_str()
+                .to_string_lossy();
+            if first == "bin" || first == "main.rs" || first == "lib.rs" {
+                continue;
+            }
+            let from = first.trim_end_matches(".rs").to_string();
+            let source = std::fs::read_to_string(file).unwrap();
+            for (n, line) in production_code(&source).lines().enumerate() {
+                for to in referenced_modules(line) {
+                    if to == from || to == "self" || to == "super" {
+                        continue;
+                    }
+                    let upward = layer(&to) > layer(&from);
+                    let sideways = layer(&from) == 4 && layer(&to) == 4;
+                    if !(upward || sideways) {
+                        continue;
+                    }
+                    if allowed.contains(&(from.as_str(), to.as_str())) {
+                        seen_allowed.insert((from.clone(), to.clone()));
+                        continue;
+                    }
+                    violations
+                        .entry((from.clone(), to.clone()))
+                        .or_default()
+                        .push(format!("{crate_src}/{}:{}", rel.display(), n + 1));
                 }
-                let upward = layer(&to) > layer(&from);
-                let sideways = layer(&from) == 4 && layer(&to) == 4;
-                if !(upward || sideways) {
-                    continue;
-                }
-                if allowed.contains(&(from.as_str(), to.as_str())) {
-                    seen_allowed.insert((from.clone(), to.clone()));
-                    continue;
-                }
-                violations
-                    .entry((from.clone(), to.clone()))
-                    .or_default()
-                    .push(format!("src/{}:{}", rel.display(), n + 1));
             }
         }
     }
@@ -194,30 +217,4 @@ fn edge_parser_reads_grouped_and_inline_paths() {
     assert_eq!(found, vec!["db", "error", "gate"]);
     let prod = production_code("use crate::a;\n#[cfg(test)]\nuse crate::b;\nfn f() {} // crate::c\n#[cfg(test)]\nmod tests {\nuse crate::d;\n}\n");
     assert_eq!(referenced_modules(&prod), vec!["a"]);
-}
-
-#[test]
-fn store_is_extended_only_inside_db() {
-    // Code outside `src/db` reaches the database through repository types and
-    // `Store::with_conn` / `with_tx`, never by adding methods to `Store`.
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut files = Vec::new();
-    rs_files(&src, &mut files);
-    let offenders: Vec<String> = files
-        .iter()
-        .filter(|f| !f.strip_prefix(&src).unwrap().starts_with("db"))
-        .filter(|f| {
-            std::fs::read_to_string(f).unwrap().lines().any(|l| {
-                let l = l.trim_start();
-                l.starts_with("impl Store {")
-                    || l.starts_with("impl crate::Store {")
-                    || l.starts_with("impl crate::db::Store {")
-            })
-        })
-        .map(|f| f.display().to_string())
-        .collect();
-    assert!(
-        offenders.is_empty(),
-        "impl Store outside src/db: {offenders:?}"
-    );
 }

@@ -1274,7 +1274,7 @@ fn subgraph_from_keep(full: &GraphView, keep: &HashSet<String>) -> GraphView {
 mod tests {
     use super::*;
     #[cfg(feature = "direct-db")]
-    use rag_mcp::{Document, Store};
+    use rag_store_duckdb::{models::Document, Store};
     use std::sync::Mutex;
 
     struct FakeGateway {

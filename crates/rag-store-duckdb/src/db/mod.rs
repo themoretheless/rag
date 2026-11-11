@@ -24,6 +24,8 @@ pub mod kg;
 pub mod knowledge;
 #[cfg(test)]
 mod n_plus_one_timing_tests;
+/// Payload key/value tables shared with the root crate; internal plumbing.
+#[doc(hidden)]
 pub mod payload_kv;
 pub mod recovery;
 pub mod review;
@@ -32,6 +34,8 @@ pub mod schema;
 pub mod search;
 mod source_dedupe;
 mod source_manifest;
+/// SQL helpers shared with the root crate; internal plumbing.
+#[doc(hidden)]
 pub mod sql;
 mod sql_types;
 pub mod store;
