@@ -21,7 +21,7 @@
 //! the rmcp schema surface are unchanged.
 
 mod collections;
-mod error;
+pub mod error;
 pub(crate) mod facade;
 mod graph;
 mod ingest;

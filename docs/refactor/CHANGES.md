@@ -165,7 +165,8 @@ For code that links the crate rather than talking to the server:
   `app::WikiUseCase::write` with `WikiWriteMode`), `storage::Storage`,
   `BackendMetadata`, `open_configured_storage`, the Markdown backend;
   `update_wiki_page_cas` is crate-internal.
-- `impl From<AppError> for rmcp::ErrorData` is now `mcp::error::mcp_error`;
+- `impl From<AppError> for rmcp::ErrorData` is now the public function
+  `rag_mcp::mcp::error::mcp_error(AppError) -> rmcp::ErrorData`;
   `Config::apply_process_limits` is the `bootstrap::ApplyProcessLimits`
   trait (import it).
 - `Store` methods moved to repository accessors (`store.documents()`,

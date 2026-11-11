@@ -13,7 +13,7 @@ use crate::error::AppError;
 /// Every error carries `data.code` from [`AppError::code`], so agents can
 /// tell a CAS `CONFLICT` from `INVALID_REQUEST` even though both use the
 /// JSON-RPC `invalid_params` class. `Busy` additionally carries retry hints.
-pub(crate) fn mcp_error(err: AppError) -> McpError {
+pub fn mcp_error(err: AppError) -> McpError {
     let code = err.code();
     let data = Some(serde_json::json!({ "code": code }));
     match err {
