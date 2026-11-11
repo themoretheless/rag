@@ -1,6 +1,7 @@
 //! Shared helpers (hashing, path allowlist, wiki URI slug, blocking work, text).
 
 pub mod blocking;
+pub mod decode;
 pub mod hash;
 pub mod path;
 pub mod slug;

@@ -5,6 +5,8 @@ use std::path::Path;
 use std::process::Command;
 
 use serde_json::{Map, Value};
+
+pub(crate) use crate::util::decode::{decode_text, DecodeError};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -35,6 +37,15 @@ pub enum FileIngestError {
         format: &'static str,
         message: String,
     },
+}
+
+impl From<DecodeError> for FileIngestError {
+    fn from(error: DecodeError) -> Self {
+        match error {
+            DecodeError::Encoding { path, message } => FileIngestError::Encoding { path, message },
+            DecodeError::Binary(path) => FileIngestError::Binary(path),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -300,81 +311,6 @@ pub fn html_to_text(html: &str) -> String {
 
 #[cfg(test)]
 mod tests;
-
-pub(crate) fn decode_text(
-    bytes: &[u8],
-    path: &Path,
-) -> Result<(String, &'static str, &'static str), FileIngestError> {
-    use encoding_rs::{UTF_16BE, UTF_16LE, UTF_8, WINDOWS_1251, WINDOWS_1252};
-    let fail = || FileIngestError::Encoding {
-        path: path.display().to_string(),
-        message: "malformed declared encoding; replacement characters are not inserted".into(),
-    };
-    let (text, encoding, basis) = if let Some(bytes) = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]) {
-        (
-            UTF_8
-                .decode_without_bom_handling_and_without_replacement(bytes)
-                .ok_or_else(fail)?
-                .into_owned(),
-            "utf-8-sig",
-            "bom",
-        )
-    } else if bytes.starts_with(&[0xff, 0xfe, 0, 0]) || bytes.starts_with(&[0, 0, 0xfe, 0xff]) {
-        return Err(FileIngestError::Encoding {
-            path: path.display().to_string(),
-            message: "UTF-32 is unsupported".into(),
-        });
-    } else if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
-        let little = bytes.starts_with(&[0xff, 0xfe]);
-        let decoder = if little { UTF_16LE } else { UTF_16BE };
-        (
-            decoder
-                .decode_without_bom_handling_and_without_replacement(&bytes[2..])
-                .ok_or_else(fail)?
-                .into_owned(),
-            if little { "utf-16le" } else { "utf-16be" },
-            "bom",
-        )
-    } else if let Ok(text) = std::str::from_utf8(bytes) {
-        (text.into(), "utf-8", "strict_utf8")
-    } else {
-        // Single-byte Cyrillic evidence, matching the reference's deterministic
-        // threshold. This is not proof of the author's intended encoding.
-        let cyr = bytes
-            .iter()
-            .filter(|b| matches!(**b, 0xc0..=0xff | 0xa8 | 0xb8))
-            .count();
-        let letters = cyr + bytes.iter().filter(|b| b.is_ascii_alphabetic()).count();
-        let russian = cyr >= 4 && cyr.saturating_mul(20) >= letters;
-        let decoder = if russian { WINDOWS_1251 } else { WINDOWS_1252 };
-        let text = decoder
-            .decode_without_bom_handling_and_without_replacement(bytes)
-            .ok_or_else(fail)?
-            .into_owned();
-        (
-            text,
-            if russian {
-                "windows-1251"
-            } else {
-                "windows-1252"
-            },
-            if russian {
-                "heuristic_cyrillic_share"
-            } else {
-                "heuristic_western_fallback"
-            },
-        )
-    };
-    if text.contains('\0')
-        || (basis.starts_with("heuristic")
-            && text
-                .chars()
-                .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t' | '\u{c}')))
-    {
-        return Err(FileIngestError::Binary(path.display().to_string()));
-    }
-    Ok((text, encoding, basis))
-}
 
 pub(crate) fn decoding_metadata_current(
     path: &Path,

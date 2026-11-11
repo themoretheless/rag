@@ -198,7 +198,7 @@ pub(crate) fn read_live_source(
             "live source exceeds byte budget (maximum 4 MiB); no partial checksum is reported",
         ));
     }
-    let (text, encoding, basis) = crate::file_ingest::decode_text(&bytes, &path)
+    let (text, encoding, basis) = crate::util::decode::decode_text(&bytes, &path)
         .map_err(|e| AppError::config(e.to_string()))?;
     Ok(Some(LiveSource {
         text,

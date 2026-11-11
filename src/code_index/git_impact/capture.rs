@@ -284,7 +284,7 @@ impl Git {
             }
             let bytes = &raw[cursor..end];
             let (text, encoding, basis) =
-                crate::file_ingest::decode_text(bytes, &self.root.join(&path))
+                crate::util::decode::decode_text(bytes, &self.root.join(&path))
                     .map_err(|e| AppError::config(e.to_string()))?;
             result.sources.insert(path,Source{text,evidence:serde_json::json!({"blob_oid":entry.oid,"mode":entry.mode,"bytes":size,"bytes_hash":blake3::hash(bytes).to_hex().to_string(),"encoding":encoding,"encoding_basis":basis})});
             cursor = end + 1;

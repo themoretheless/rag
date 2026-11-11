@@ -32,11 +32,7 @@ fn layer(module: &str) -> u8 {
 }
 
 /// Edges that break the rule today and are scheduled for a later stage.
-const ALLOWED: &[(&str, &str)] = &[
-    // Stage 4: code-index drift and git-impact capture decode files with
-    // `file_ingest::decode_text`; the text decoder moves to domain (`util`).
-    ("code_index", "file_ingest"),
-];
+const ALLOWED: &[(&str, &str)] = &[];
 
 fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(dir).expect("read src dir") {

@@ -29,6 +29,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # tokenizer.json via RAG_TOKENIZER_JSON; falls back to the calibrated
 # heuristic when unset.
 tokenizers = { version = "0.23.2", default-features = false, features = ["onig"] }
+encoding_rs = "=0.8.35"
 rag-mcp-core = { path = "crates/rag-mcp-core", version = "0.1.0" }
 rag-mcp-markup = { path = "crates/rag-mcp-markup", version = "0.1.0" }
 rag-store-duckdb = { path = "crates/rag-store-duckdb", version = "0.1.0" }
@@ -125,7 +126,6 @@ tree-sitter-c-sharp = "0.23.5"
 ts-parser-perl = "2.0.0"
 tree-sitter-pwsh = "0.38.1"
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-native-roots", "postgres", "mysql", "mysql-rsa"] }
-encoding_rs = "=0.8.35"
 
 # Only read by ops::free_space_bytes for the automatic snapshot disk guard.
 [target.'cfg(unix)'.dependencies]
@@ -141,6 +141,8 @@ tokenizers = ["rag-store-duckdb/tokenizers"]
 testkit = ["rag-store-duckdb/testkit"]
 
 [dev-dependencies]
+# Test fixtures encode legacy code pages (the decoder lives in the store crate).
+encoding_rs = { workspace = true }
 tokio = { version = "1", features = ["full", "test-util"] }
 # Self dev-dependency: turns the `testkit` feature on for test targets only
 # (`cargo test` then needs no `--features`, so no target is silently skipped).
