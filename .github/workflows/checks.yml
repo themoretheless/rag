@@ -73,13 +73,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install egui/winit system libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            pkg-config libxkbcommon-dev libwayland-dev libx11-dev \
-            libxcursor-dev libxrandr-dev libxi-dev \
-            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-            libgl1-mesa-dev
+        # winit/egui load X11, Wayland and xkbcommon at runtime, so the build
+        # and tests do not need these packages; an apt outage must not block CI.
+        continue-on-error: true
+        timeout-minutes: 6
+        run: scripts/ci-install-ui-deps.sh
       - name: Install stable Rust
         run: rustup toolchain install stable --profile minimal --component clippy
       - uses: Swatinem/rust-cache@v2
@@ -95,13 +93,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install egui/winit system libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            pkg-config libxkbcommon-dev libwayland-dev libx11-dev \
-            libxcursor-dev libxrandr-dev libxi-dev \
-            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-            libgl1-mesa-dev
+        # winit/egui load X11, Wayland and xkbcommon at runtime, so the build
+        # and tests do not need these packages; an apt outage must not block CI.
+        continue-on-error: true
+        timeout-minutes: 6
+        run: scripts/ci-install-ui-deps.sh
       - uses: dtolnay/rust-toolchain@1.95
       - uses: Swatinem/rust-cache@v2
       - name: Check workspace on the MSRV
