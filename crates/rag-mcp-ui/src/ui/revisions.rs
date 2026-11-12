@@ -1,6 +1,6 @@
 //! Paginated revision timeline, lazy snapshots, bounded line diff and CAS restore.
 
-use crate::load::DocumentBody;
+use crate::dto::DocumentBody;
 use crate::revisions::{RestoreRevisionResult, RevisionDiff, RevisionItem};
 use crate::ui::text::{short_timestamp, truncate};
 use rag_mcp_core::Layer;

@@ -1,12 +1,8 @@
 //! Native search workspace models and background HTTP loader.
 
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 
-use crate::gateway::{
-    execute_request, format_http_error, format_json_parse_error, GatewayClient, Method, Request,
-    ReqwestGatewayClient,
-};
+use crate::gateway::{client, GatewayApi, GatewayClient, Method};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct SearchRequest {
@@ -57,7 +53,7 @@ struct SearchEnvelope {
 
 /// Run a search request against the gateway.
 pub fn fetch_search_http(base: &str, request: &SearchRequest) -> Result<SearchResults, String> {
-    let client = ReqwestGatewayClient::new(Duration::from_secs(15))?;
+    let client = client(15)?;
     fetch_search_with_client(&client, base, request)
 }
 
@@ -69,38 +65,20 @@ fn fetch_search_with_client(
     if request.query.trim().is_empty() {
         return Err("enter a search query".to_string());
     }
-    let base = base.trim().trim_end_matches('/');
-    if base.is_empty() {
-        return Err("http base URL is empty".to_string());
-    }
-    let url = format!("{base}/v1/search");
-    let response = execute_request(
-        client,
-        Request {
-            method: Method::Post,
-            url: url.clone(),
-            body: Some(
-                serde_json::to_string(request)
-                    .map_err(|error| format!("serialize search request: {error}"))?,
-            ),
-            headers: Vec::new(),
-        },
-    )?;
-    if !response.is_success() {
-        return Err(format_http_error(&response, "Search"));
-    }
-    serde_json::from_str::<SearchEnvelope>(&response.body)
+    let body = serde_json::to_string(request)
+        .map_err(|error| format!("serialize search request: {error}"))?;
+    GatewayApi::new(client, base)
+        .send::<SearchEnvelope>(Method::Post, "v1/search", Some(body), "Search")
         .map(|envelope| SearchResults {
             items: envelope.items,
             request: request.clone(),
         })
-        .map_err(|error| format_json_parse_error("Search", &error))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gateway::Response;
+    use crate::gateway::{Request, Response};
     use std::sync::Mutex;
 
     struct FakeGateway {

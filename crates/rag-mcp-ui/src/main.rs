@@ -9,24 +9,30 @@
 
 mod adapter;
 mod app;
+#[cfg(test)]
+mod bench;
+mod cli;
 #[cfg(feature = "direct-db")]
 mod direct_db;
-#[cfg(not(feature = "direct-db"))]
-#[path = "direct_db_disabled.rs"]
-mod direct_db;
+mod dto;
 mod gateway;
+mod http;
 mod layout;
-mod load;
 mod operations;
 mod product;
 mod revisions;
 mod search;
+mod snapshot;
+mod source;
+mod topology;
 mod ui;
 mod worker;
 
+use crate::cli::{Cli, Commands};
+#[cfg(feature = "direct-db")]
+use crate::direct_db::export_graph_snapshot;
 use app::GraphApp;
 use clap::Parser;
-use load::{export_graph_snapshot, Cli, Commands};
 use tracing_subscriber::EnvFilter;
 
 fn main() {
@@ -77,7 +83,13 @@ fn main() {
     }
 }
 
-fn run_gui(open: load::OpenArgs) -> eframe::Result<()> {
+/// `export` needs DuckDB; a gateway-only build reports the missing feature.
+#[cfg(not(feature = "direct-db"))]
+fn export_graph_snapshot(_args: &cli::ExportArgs) -> Result<dto::ExportResult, String> {
+    Err(source::DIRECT_DB_DISABLED.into())
+}
+
+fn run_gui(open: cli::OpenArgs) -> eframe::Result<()> {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("RAG Console — Native")

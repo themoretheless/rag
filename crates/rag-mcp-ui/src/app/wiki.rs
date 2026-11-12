@@ -4,17 +4,17 @@ use super::*;
 
 impl GraphApp {
     pub(super) fn ensure_wiki_loaded(&mut self) {
-        if self.wiki_loaded || self.pending_catalog.is_some() {
+        if self.wiki.loaded || self.pending.catalog.is_some() {
             return;
         }
         self.reload_wiki_catalog();
     }
 
     pub(super) fn reload_wiki_catalog(&mut self) {
-        self.wiki_error = None;
+        self.wiki.a.error = None;
         let Some(source) = self.available_load_source() else {
-            self.wiki_loaded = true;
-            self.wiki_error = Some(if self.open.source.is_some() {
+            self.wiki.loaded = true;
+            self.wiki.a.error = Some(if self.open.source.is_some() {
                 "В snapshot-режиме нет каталога вики; используйте --http или --db".into()
             } else {
                 "Источник данных не выбран".into()
@@ -22,32 +22,33 @@ impl GraphApp {
             return;
         };
         let seq = self.next_seq();
-        self.pending_catalog = Some(seq);
+        self.pending.catalog.set(seq);
         self.worker.send(WorkerCmd::LoadWikiCatalog {
             seq,
             source,
-            project: nonempty(&self.filter_wing),
+            project: nonempty(&self.scope.wing),
         });
     }
 
     /// Default page after the catalog lands: seed title match, else overview/first.
     pub(super) fn auto_open_initial_page(&mut self) {
-        if self.wiki_selected_id.is_some() {
+        if self.wiki.a.selected_id.is_some() {
             return;
         }
-        if !self.seed_input.trim().is_empty() {
-            let q = self.seed_input.trim();
-            if let Some(p) = self.wiki_pages.iter().find(|p| {
+        if !self.graph.seed_input.trim().is_empty() {
+            let q = self.graph.seed_input.trim();
+            if let Some(p) = self.wiki.pages.iter().find(|p| {
                 p.title.eq_ignore_ascii_case(q) || p.slug.eq_ignore_ascii_case(q) || p.id == q
             }) {
                 let id = p.id.clone();
                 self.open_wiki_page_id(&id);
             }
         } else if let Some(p) = self
-            .wiki_pages
+            .wiki
+            .pages
             .iter()
             .find(|p| p.title.to_lowercase().contains("обзор") || p.slug.contains("overview"))
-            .or_else(|| self.wiki_pages.first())
+            .or_else(|| self.wiki.pages.first())
         {
             let id = p.id.clone();
             self.open_wiki_page_id(&id);
@@ -55,33 +56,33 @@ impl GraphApp {
     }
 
     pub(super) fn open_wiki_page_id(&mut self, id: &str) {
-        if self.wiki_dual_pane && self.wiki_focus == WikiPane::B {
+        if self.wiki.dual_pane && self.wiki.focus == WikiFocus::B {
             // Re-clicking the page already open in B must not refetch body+backlinks.
-            if self.wiki_selected_id_b.as_deref() == Some(id) && self.wiki_article_b.is_some() {
+            if self.wiki.b.selected_id.as_deref() == Some(id) && self.wiki.b.article.is_some() {
                 return;
             }
             self.open_wiki_page_in_b(id);
             return;
         }
-        if self.pending_save.is_some() {
-            self.wiki_error = Some(
+        if self.pending.save.is_some() {
+            self.wiki.a.error = Some(
                 "Идёт сохранение. Дождитесь результата перед открытием другой страницы.".into(),
             );
             return;
         }
         // Same for pane A.
-        if self.wiki_selected_id.as_deref() == Some(id) && self.wiki_article.is_some() {
+        if self.wiki.a.selected_id.as_deref() == Some(id) && self.wiki.a.article.is_some() {
             return;
         }
-        if self.wiki_edit.as_ref().is_some_and(|e| e.dirty) {
-            self.wiki_error = Some("Есть несохранённые правки: сохраните или отмените их".into());
+        if self.wiki.edit.as_ref().is_some_and(|e| e.dirty) {
+            self.wiki.a.error = Some("Есть несохранённые правки: сохраните или отмените их".into());
             return;
         }
-        if let Some(prev) = self.wiki_selected_id.clone() {
+        if let Some(prev) = self.wiki.a.selected_id.clone() {
             if prev != id {
-                self.wiki_history.push(prev);
-                if self.wiki_history.len() > 64 {
-                    self.wiki_history.remove(0);
+                self.wiki.history.push(prev);
+                if self.wiki.history.len() > 64 {
+                    self.wiki.history.remove(0);
                 }
             }
         }
@@ -89,21 +90,21 @@ impl GraphApp {
     }
 
     pub(super) fn open_wiki_page_id_no_history(&mut self, id: &str) {
-        self.wiki_selected_id = Some(id.to_string());
-        self.wiki_error = None;
-        self.wiki_edit = None;
-        self.wiki_save_note = None;
+        self.wiki.a.selected_id = Some(id.to_string());
+        self.wiki.a.error = None;
+        self.wiki.edit = None;
+        self.wiki.save_note = None;
         let Some(source) = self.available_load_source() else {
-            self.wiki_error = Some("Для статей вики требуется --http или --db".into());
+            self.wiki.a.error = Some("Для статей вики требуется --http или --db".into());
             return;
         };
-        let Some(meta) = self.wiki_pages.iter().find(|p| p.id == id).cloned() else {
-            self.wiki_error = Some(format!("Страница {id} отсутствует в каталоге"));
+        let Some(meta) = self.wiki.pages.iter().find(|p| p.id == id).cloned() else {
+            self.wiki.a.error = Some(format!("Страница {id} отсутствует в каталоге"));
             return;
         };
         // Keep the current article visible until the new body arrives.
         let seq = self.next_seq();
-        self.pending_page_a = Some(seq);
+        self.pending.page_a.set(seq);
         self.worker.send(WorkerCmd::OpenPage {
             seq,
             pane_b: false,
@@ -116,18 +117,18 @@ impl GraphApp {
 
     /// Load a page into the right (secondary) dual-pane column. No history / edit.
     pub(super) fn open_wiki_page_in_b(&mut self, id: &str) {
-        self.wiki_selected_id_b = Some(id.to_string());
-        self.wiki_error_b = None;
+        self.wiki.b.selected_id = Some(id.to_string());
+        self.wiki.b.error = None;
         let Some(source) = self.available_load_source() else {
-            self.wiki_error_b = Some("Для статей вики требуется --http или --db".into());
+            self.wiki.b.error = Some("Для статей вики требуется --http или --db".into());
             return;
         };
-        let Some(meta) = self.wiki_pages.iter().find(|p| p.id == id).cloned() else {
-            self.wiki_error_b = Some(format!("Страница {id} отсутствует в каталоге"));
+        let Some(meta) = self.wiki.pages.iter().find(|p| p.id == id).cloned() else {
+            self.wiki.b.error = Some(format!("Страница {id} отсутствует в каталоге"));
             return;
         };
         let seq = self.next_seq();
-        self.pending_page_b = Some(seq);
+        self.pending.page_b.set(seq);
         self.worker.send(WorkerCmd::OpenPage {
             seq,
             pane_b: true,
@@ -139,31 +140,31 @@ impl GraphApp {
     }
 
     pub(super) fn clear_wiki_pane_b(&mut self) {
-        self.wiki_selected_id_b = None;
-        self.wiki_article_b = None;
-        self.wiki_error_b = None;
-        self.pending_page_b = None;
+        self.wiki.b.selected_id = None;
+        self.wiki.b.article = None;
+        self.wiki.b.error = None;
+        self.pending.page_b.clear();
     }
 
     pub(super) fn reset_wiki_for_project(&mut self) {
         self.worker.cancel_wiki_reads();
-        self.pending_catalog = None;
-        self.pending_page_a = None;
-        self.pending_page_b = None;
-        self.pending_backlinks = None;
-        self.wiki_pages.clear();
-        self.wiki_pages_rev += 1;
-        self.wiki_selected_id = None;
-        self.wiki_article = None;
-        self.wiki_backlinks.clear();
-        self.wiki_backlinks_error = None;
-        self.wiki_history.clear();
-        self.wiki_error = None;
-        self.wiki_edit = None;
-        self.wiki_save_note = None;
-        self.wiki_open_after_catalog = None;
+        self.pending.catalog.clear();
+        self.pending.page_a.clear();
+        self.pending.page_b.clear();
+        self.pending.backlinks.clear();
+        self.wiki.pages.clear();
+        self.wiki.pages_rev += 1;
+        self.wiki.a.selected_id = None;
+        self.wiki.a.article = None;
+        self.wiki.backlinks.clear();
+        self.wiki.backlinks_error = None;
+        self.wiki.history.clear();
+        self.wiki.a.error = None;
+        self.wiki.edit = None;
+        self.wiki.save_note = None;
+        self.wiki.open_after_catalog = None;
         self.clear_wiki_pane_b();
-        self.wiki_loaded = false;
+        self.wiki.loaded = false;
         if self.mode == ViewMode::Wiki {
             self.reload_wiki_catalog();
         }
@@ -181,10 +182,10 @@ impl GraphApp {
             Ok(body) => {
                 // Unresolved-link fallback may open a page that is not in the
                 // catalog yet; add a row so the sidebar stays consistent.
-                if !self.wiki_pages.iter().any(|p| p.id == body.id) {
+                if !self.wiki.pages.iter().any(|p| p.id == body.id) {
                     let slug = slug_from_wiki_uri(&body.uri);
-                    self.wiki_pages_rev += 1;
-                    self.wiki_pages.push(WikiPageMeta {
+                    self.wiki.pages_rev += 1;
+                    self.wiki.pages.push(WikiPageMeta {
                         id: body.id.clone(),
                         uri: body.uri.clone(),
                         slug,
@@ -196,30 +197,30 @@ impl GraphApp {
                         etag: body.etag.clone(),
                         updated_at: body.updated_at.clone(),
                     });
-                    sort_wiki_pages(&mut self.wiki_pages);
+                    sort_wiki_pages(&mut self.wiki.pages);
                 }
                 if pane_b {
-                    self.wiki_selected_id_b = Some(body.id.clone());
-                    self.wiki_article_b = Some(body);
-                    self.wiki_error_b = None;
+                    self.wiki.b.selected_id = Some(body.id.clone());
+                    self.wiki.b.article = Some(body);
+                    self.wiki.b.error = None;
                 } else {
                     let body_id = body.id.clone();
                     if push_history {
-                        if let Some(prev) = self.wiki_selected_id.clone() {
+                        if let Some(prev) = self.wiki.a.selected_id.clone() {
                             if prev != body.id {
-                                self.wiki_history.push(prev);
-                                if self.wiki_history.len() > 64 {
-                                    self.wiki_history.remove(0);
+                                self.wiki.history.push(prev);
+                                if self.wiki.history.len() > 64 {
+                                    self.wiki.history.remove(0);
                                 }
                             }
                         }
                     }
-                    self.wiki_selected_id = Some(body.id.clone());
-                    self.wiki_article = Some(body);
-                    self.wiki_backlinks.clear();
-                    self.wiki_backlinks_error = None;
-                    self.wiki_error = None;
-                    self.wiki_save_note = None;
+                    self.wiki.a.selected_id = Some(body.id.clone());
+                    self.wiki.a.article = Some(body);
+                    self.wiki.backlinks.clear();
+                    self.wiki.backlinks_error = None;
+                    self.wiki.a.error = None;
+                    self.wiki.save_note = None;
                     self.refresh_backlinks(&body_id);
                 }
             }
@@ -231,13 +232,13 @@ impl GraphApp {
                     None => e,
                 };
                 if pane_b {
-                    self.wiki_article_b = None;
-                    self.wiki_error_b = Some(msg);
+                    self.wiki.b.article = None;
+                    self.wiki.b.error = Some(msg);
                 } else {
-                    self.wiki_article = None;
-                    self.wiki_backlinks.clear();
-                    self.wiki_backlinks_error = None;
-                    self.wiki_error = Some(msg);
+                    self.wiki.a.article = None;
+                    self.wiki.backlinks.clear();
+                    self.wiki.backlinks_error = None;
+                    self.wiki.a.error = Some(msg);
                 }
             }
         }
@@ -248,42 +249,44 @@ impl GraphApp {
     }
 
     pub(super) fn start_wiki_edit(&mut self) {
-        let Some(art) = self.wiki_article.as_ref() else {
+        let Some(art) = self.wiki.a.article.as_ref() else {
             return;
         };
         if !self.wiki_can_write() {
-            self.wiki_error = Some(
+            self.wiki.a.error = Some(
                 "Для редактирования нужен HTTP gateway; режим --db доступен только для чтения"
                     .into(),
             );
             return;
         }
-        self.wiki_save_note = None;
-        self.wiki_error = None;
-        self.wiki_edit = Some(WikiEditBuffers::from_article(art));
+        self.wiki.save_note = None;
+        self.wiki.a.error = None;
+        self.wiki.edit = Some(WikiEditBuffers::from_article(art));
     }
 
     pub(super) fn cancel_wiki_edit(&mut self) {
-        if self.pending_save.is_some() {
-            self.wiki_error =
+        if self.pending.save.is_some() {
+            self.wiki.a.error =
                 Some("Идёт сохранение. Дождитесь результата перед закрытием редактора.".into());
             return;
         }
-        self.wiki_edit = None;
-        self.wiki_error = None;
+        self.wiki.edit = None;
+        self.wiki.a.error = None;
     }
 
     /// Discard edits and refetch the current revision (409 CAS conflict path).
     pub(super) fn reload_wiki_page(&mut self) {
-        if self.pending_save.is_some() {
-            self.wiki_error =
+        if self.pending.save.is_some() {
+            self.wiki.a.error =
                 Some("Идёт сохранение. Дождитесь результата перед обновлением страницы.".into());
             return;
         }
         let id = self
-            .wiki_selected_id
+            .wiki
+            .a
+            .selected_id
             .clone()
-            .or_else(|| self.wiki_article.as_ref().map(|a| a.id.clone()));
+            .or_else(|| self.wiki.a.article.as_ref().map(|a| a.id.clone()));
         self.cancel_wiki_edit();
         if let Some(id) = id {
             self.open_wiki_page_id_no_history(&id);
@@ -295,22 +298,22 @@ impl GraphApp {
     /// conflict keeps the user's text; a repeated Save/Ctrl+S is ignored while
     /// a save is in flight.
     pub(super) fn save_wiki_edit(&mut self) {
-        if self.pending_save.is_some() {
+        if self.pending.save.is_some() {
             return;
         }
-        let Some(edit) = self.wiki_edit.as_ref() else {
+        let Some(edit) = self.wiki.edit.as_ref() else {
             return;
         };
-        let Some(art) = self.wiki_article.as_ref() else {
-            self.wiki_error = Some("Нет открытой страницы для сохранения".into());
+        let Some(art) = self.wiki.a.article.as_ref() else {
+            self.wiki.a.error = Some("Нет открытой страницы для сохранения".into());
             return;
         };
         let Some(source) = self.available_load_source() else {
-            self.wiki_error = Some("Для сохранения вики требуется HTTP gateway".into());
+            self.wiki.a.error = Some("Для сохранения вики требуется HTTP gateway".into());
             return;
         };
-        if !matches!(&source, LoadSource::Http(_)) {
-            self.wiki_error = Some(
+        if !source.is_writable() {
+            self.wiki.a.error = Some(
                 "Режим --db доступен только для чтения; переподключитесь через HTTP gateway".into(),
             );
             return;
@@ -325,7 +328,7 @@ impl GraphApp {
             if_match_etag: edit.base_etag.clone(),
         };
         let seq = self.next_seq();
-        self.pending_save = Some(seq);
+        self.pending.save.set(seq);
         self.worker.send(WorkerCmd::SavePage { seq, req, source });
     }
 
@@ -335,7 +338,7 @@ impl GraphApp {
         match result {
             Ok(body) => {
                 // Refresh catalog row for title/summary/revision.
-                if let Some(meta) = self.wiki_pages.iter_mut().find(|p| p.id == body.id) {
+                if let Some(meta) = self.wiki.pages.iter_mut().find(|p| p.id == body.id) {
                     meta.title = body.title.clone();
                     meta.revision = body.revision.unwrap_or(meta.revision);
                     meta.etag = body.etag.clone();
@@ -344,22 +347,22 @@ impl GraphApp {
                         meta.summary = Some(summary);
                     }
                 }
-                sort_wiki_pages(&mut self.wiki_pages);
+                sort_wiki_pages(&mut self.wiki.pages);
                 // Title/summary/order changed: invalidate the catalog caches.
-                self.wiki_pages_rev += 1;
+                self.wiki.pages_rev += 1;
                 self.refresh_backlinks(&body.id);
                 let rev_note = body
                     .revision
                     .map(|r| format!(" · версия r{r}"))
                     .unwrap_or_default();
-                self.wiki_save_note = Some(format!("Сохранено «{}»{rev_note}", body.title));
-                self.wiki_article = Some(body);
-                self.wiki_edit = None;
-                self.wiki_error = None;
+                self.wiki.save_note = Some(format!("Сохранено «{}»{rev_note}", body.title));
+                self.wiki.a.article = Some(body);
+                self.wiki.edit = None;
+                self.wiki.a.error = None;
             }
             Err(e) => {
-                self.wiki_error = Some(e);
-                self.wiki_save_note = None;
+                self.wiki.a.error = Some(e);
+                self.wiki.save_note = None;
             }
         }
     }
@@ -369,79 +372,80 @@ impl GraphApp {
             return;
         };
         let seq = self.next_seq();
-        self.pending_backlinks = Some(seq);
-        self.wiki_backlinks_error = None;
+        self.pending.backlinks.set(seq);
+        self.wiki.backlinks_error = None;
         self.worker.send(WorkerCmd::LoadBacklinks {
             seq,
             document_id: document_id.to_string(),
             source,
-            project: nonempty(&self.filter_wing),
+            project: nonempty(&self.scope.wing),
         });
     }
 
     /// Sidebar search/grouping index for the current catalog, rebuilt only
     /// when `wiki_pages` changed.
     pub(super) fn wiki_sidebar_index(&mut self) -> std::rc::Rc<WikiSidebarIndex> {
-        if let Some((rev, index)) = &self.wiki_sidebar_index_cache {
-            if *rev == self.wiki_pages_rev {
+        if let Some((rev, index)) = &self.wiki.sidebar_index_cache {
+            if *rev == self.wiki.pages_rev {
                 return index.clone();
             }
         }
-        let index = std::rc::Rc::new(WikiSidebarIndex::new(&self.wiki_pages));
-        self.wiki_sidebar_index_cache = Some((self.wiki_pages_rev, index.clone()));
+        let index = std::rc::Rc::new(WikiSidebarIndex::new(&self.wiki.pages));
+        self.wiki.sidebar_index_cache = Some((self.wiki.pages_rev, index.clone()));
         index
     }
 
     /// Link-resolution keys for the current catalog, rebuilt only when
     /// `wiki_pages` changed (the read view asks for them every frame).
     pub(super) fn wiki_known_keys(&mut self) -> std::rc::Rc<WikiKnownKeys> {
-        if let Some((rev, keys)) = &self.wiki_known_keys_cache {
-            if *rev == self.wiki_pages_rev {
+        if let Some((rev, keys)) = &self.wiki.known_keys_cache {
+            if *rev == self.wiki.pages_rev {
                 return keys.clone();
             }
         }
         let keys = std::rc::Rc::new(WikiKnownKeys::new(
-            self.wiki_pages
+            self.wiki
+                .pages
                 .iter()
                 .map(|page| (page.title.as_str(), page.slug.as_str())),
         ));
-        self.wiki_known_keys_cache = Some((self.wiki_pages_rev, keys.clone()));
+        self.wiki.known_keys_cache = Some((self.wiki.pages_rev, keys.clone()));
         keys
     }
 
     pub(super) fn wiki_go_back(&mut self) {
-        if self.pending_save.is_some() {
-            self.wiki_error =
+        if self.pending.save.is_some() {
+            self.wiki.a.error =
                 Some("Идёт сохранение. Дождитесь результата перед переходом назад.".into());
             return;
         }
-        if self.wiki_edit.as_ref().is_some_and(|e| e.dirty) {
-            self.wiki_error = Some("Есть несохранённые правки: сохраните или отмените их".into());
+        if self.wiki.edit.as_ref().is_some_and(|e| e.dirty) {
+            self.wiki.a.error = Some("Есть несохранённые правки: сохраните или отмените их".into());
             return;
         }
-        if let Some(prev) = self.wiki_history.pop() {
-            self.wiki_focus = WikiPane::A;
+        if let Some(prev) = self.wiki.history.pop() {
+            self.wiki.focus = WikiFocus::A;
             self.open_wiki_page_id_no_history(&prev);
         }
     }
 
     /// Resolve `[[link]]` text to a catalog page and open it (exact title/slug/id only).
     pub(super) fn open_wiki_link(&mut self, link: &str) {
-        let into_b = self.wiki_dual_pane && self.wiki_focus == WikiPane::B;
-        if !into_b && self.pending_save.is_some() {
-            self.wiki_error =
+        let into_b = self.wiki.dual_pane && self.wiki.focus == WikiFocus::B;
+        if !into_b && self.pending.save.is_some() {
+            self.wiki.a.error =
                 Some("Идёт сохранение. Дождитесь результата перед переходом по ссылке.".into());
             return;
         }
-        if !into_b && self.wiki_edit.as_ref().is_some_and(|e| e.dirty) {
-            self.wiki_error = Some("Есть несохранённые правки: сохраните или отмените их".into());
+        if !into_b && self.wiki.edit.as_ref().is_some_and(|e| e.dirty) {
+            self.wiki.a.error = Some("Есть несохранённые правки: сохраните или отмените их".into());
             return;
         }
         let q = link.trim();
         if q.is_empty() {
             return;
         }
-        if let Some(p) = self.wiki_pages.iter().find(|p| {
+        if let Some(p) = self.wiki.pages.iter().find(|p| {
             p.title == q
                 || p.title.eq_ignore_ascii_case(q)
                 || p.slug.eq_ignore_ascii_case(q)
@@ -453,15 +457,15 @@ impl GraphApp {
             self.open_wiki_page_id(&id);
             return;
         }
-        if !self.filter_wing.trim().is_empty() {
+        if !self.scope.wing.trim().is_empty() {
             let msg = format!(
                 "Ссылка [[{q}]] не найдена в проекте {}",
-                self.filter_wing.trim()
+                self.scope.wing.trim()
             );
             if into_b {
-                self.wiki_error_b = Some(msg);
+                self.wiki.b.error = Some(msg);
             } else {
-                self.wiki_error = Some(msg);
+                self.wiki.a.error = Some(msg);
             }
             return;
         }
@@ -469,17 +473,17 @@ impl GraphApp {
         let Some(source) = self.available_load_source() else {
             let msg = "Для wiki-ссылок требуется --http или --db".to_string();
             if into_b {
-                self.wiki_error_b = Some(msg);
+                self.wiki.b.error = Some(msg);
             } else {
-                self.wiki_error = Some(msg);
+                self.wiki.a.error = Some(msg);
             }
             return;
         };
         let seq = self.next_seq();
         if into_b {
-            self.pending_page_b = Some(seq);
+            self.pending.page_b.set(seq);
         } else {
-            self.pending_page_a = Some(seq);
+            self.pending.page_a.set(seq);
         }
         self.worker.send(WorkerCmd::OpenPage {
             seq,
@@ -492,8 +496,9 @@ impl GraphApp {
     }
 
     pub(super) fn selected_graph_wiki_target(&self) -> Option<GraphWikiTarget> {
-        let selected = self.selected.as_deref()?;
+        let selected = self.graph.selected.as_deref()?;
         let node = self
+            .graph
             .ui_graph
             .as_ref()?
             .nodes
@@ -501,18 +506,18 @@ impl GraphApp {
             .find(|node| node.id == selected)?;
         let document_id = node.document_id.as_deref();
         let uri = node.uri.as_deref();
-        let mut cache = self.graph_wiki_target_cache.borrow_mut();
+        let mut cache = self.graph.wiki_target_cache.borrow_mut();
         if let Some(memo) = cache.as_ref() {
-            if memo.wiki_pages_rev == self.wiki_pages_rev
+            if memo.wiki_pages_rev == self.wiki.pages_rev
                 && memo.document_id.as_deref() == document_id
                 && memo.uri.as_deref() == uri
             {
                 return memo.target.clone();
             }
         }
-        let target = graph_wiki_target(document_id, uri, &self.wiki_pages);
+        let target = graph_wiki_target(document_id, uri, &self.wiki.pages);
         *cache = Some(GraphWikiTargetMemo {
-            wiki_pages_rev: self.wiki_pages_rev,
+            wiki_pages_rev: self.wiki.pages_rev,
             document_id: document_id.map(str::to_string),
             uri: uri.map(str::to_string),
             target: target.clone(),
@@ -522,16 +527,16 @@ impl GraphApp {
 
     pub(super) fn open_selected_graph_node_in_wiki(&mut self) {
         if self.available_load_source().is_none() {
-            self.content_error = Some(
+            self.graph.content_error = Some(
                 "В snapshot-режиме доступна только топология; откройте HTTP или DB источник".into(),
             );
             return;
         }
-        let Some(sel) = self.selected.clone() else {
+        let Some(sel) = self.graph.selected.clone() else {
             return;
         };
         let (doc_id, target) = {
-            let Some(g) = self.ui_graph.as_ref() else {
+            let Some(g) = self.graph.ui_graph.as_ref() else {
                 return;
             };
             let Some(node) = g.nodes.iter().find(|n| n.id == sel) else {
@@ -540,36 +545,36 @@ impl GraphApp {
             let target = graph_wiki_target(
                 node.document_id.as_deref(),
                 node.uri.as_deref(),
-                &self.wiki_pages,
+                &self.wiki.pages,
             );
             (node.document_id.clone(), target)
         };
         let Some(target) = target else {
-            self.content_error = Some(
+            self.graph.content_error = Some(
                 "Выбранный узел не является wiki-страницей; используйте превью или корпус".into(),
             );
             return;
         };
         self.mode = ViewMode::Wiki;
-        self.wiki_focus = WikiPane::A;
+        self.wiki.focus = WikiFocus::A;
         match target {
             GraphWikiTarget::CatalogId(id) => self.open_wiki_page_id(&id),
             GraphWikiTarget::WikiUri(uri) => {
-                if !self.filter_wing.trim().is_empty() {
-                    if !self.wiki_loaded {
+                if !self.scope.wing.trim().is_empty() {
+                    if !self.wiki.loaded {
                         if let Some(id) = doc_id {
-                            self.wiki_open_after_catalog = Some(id);
+                            self.wiki.open_after_catalog = Some(id);
                             self.ensure_wiki_loaded();
                         } else {
-                            self.wiki_error = Some(format!(
+                            self.wiki.a.error = Some(format!(
                                 "Нельзя открыть {uri} в проекте {}, пока страница не появится в его wiki-каталоге",
-                                self.filter_wing.trim()
+                                self.scope.wing.trim()
                             ));
                         }
                     } else {
-                        self.wiki_error = Some(format!(
+                        self.wiki.a.error = Some(format!(
                             "Wiki-страницы {uri} нет в проекте {}",
-                            self.filter_wing.trim()
+                            self.scope.wing.trim()
                         ));
                     }
                 } else {

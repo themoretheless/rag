@@ -1,9 +1,9 @@
 //! One-writer HTTP operations: health, jobs, checkpoint and verified backup.
 
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::gateway::{GatewayClient, Method, ReqwestGatewayClient};
+use crate::gateway::{client, GatewayApi, GatewayClient, Method};
 
 const BACKUP_TIMEOUT_SECS: u64 = 30 * 60;
 
@@ -171,15 +171,21 @@ fn fetch_operations_with_client(
     client: &dyn GatewayClient,
     base: &str,
 ) -> Result<OperationsSnapshot, String> {
-    let status = get_json(client, base, "v1/status")?;
-    let doctor = get_json(client, base, "v1/doctor")?;
-    let sync = get_json::<DatabaseSyncEnvelope>(client, base, "v1/sync/status")
+    let status = GatewayApi::new(client, base).get("v1/status", operation_context("v1/status"))?;
+    let doctor = GatewayApi::new(client, base).get("v1/doctor", operation_context("v1/doctor"))?;
+    let sync = GatewayApi::new(client, base)
+        .get::<DatabaseSyncEnvelope>("v1/sync/status", operation_context("v1/sync/status"))
         .ok()
         .map(|envelope| envelope.sync);
-    let agents = get_json::<AgentsEnvelope>(client, base, "v1/agents")
+    let agents = GatewayApi::new(client, base)
+        .get::<AgentsEnvelope>("v1/agents", operation_context("v1/agents"))
         .map(|envelope| envelope.items)
         .unwrap_or_default();
-    let activity = get_json::<ActivityEnvelope>(client, base, "v1/activity?limit=80")
+    let activity = GatewayApi::new(client, base)
+        .get::<ActivityEnvelope>(
+            "v1/activity?limit=80",
+            operation_context("v1/activity?limit=80"),
+        )
         .map(|envelope| envelope.items)
         .unwrap_or_default();
     Ok(OperationsSnapshot {
@@ -201,7 +207,9 @@ fn fetch_jobs_with_client(
     client: &dyn GatewayClient,
     base: &str,
 ) -> Result<Vec<JobSnapshot>, String> {
-    get_json::<JobsEnvelope>(client, base, "v1/jobs").map(|envelope| envelope.items)
+    GatewayApi::new(client, base)
+        .get::<JobsEnvelope>("v1/jobs", operation_context("v1/jobs"))
+        .map(|envelope| envelope.items)
 }
 
 /// Start a source sync job via `POST /v1/jobs/sync`.
@@ -209,7 +217,13 @@ pub fn start_sync_job_http(base: &str, request: &SyncJobRequest) -> Result<JobSn
     let client = client(20)?;
     let body = serde_json::to_string(request)
         .map_err(|error| format!("serialize source sync request: {error}"))?;
-    send_json::<JobEnvelope>(&client, base, "v1/jobs/sync", Method::Post, Some(body))
+    GatewayApi::new(&client, base)
+        .send::<JobEnvelope>(
+            Method::Post,
+            "v1/jobs/sync",
+            Some(body),
+            operation_context("v1/jobs/sync"),
+        )
         .map(|envelope| envelope.job)
 }
 
@@ -217,24 +231,25 @@ pub fn start_sync_job_http(base: &str, request: &SyncJobRequest) -> Result<JobSn
 pub fn cancel_job_http(base: &str, id: &str) -> Result<JobSnapshot, String> {
     let client = client(15)?;
     let path = format!("v1/jobs/{}", encode_segment(id));
-    send_json::<JobEnvelope>(&client, base, &path, Method::Delete, None)
+    GatewayApi::new(&client, base)
+        .send::<JobEnvelope>(Method::Delete, &path, None, operation_context(&path))
         .map(|envelope| envelope.job)
 }
 
 /// Run a database checkpoint via `POST /v1/operations/checkpoint`.
 pub fn checkpoint_http(base: &str) -> Result<MaintenanceResult, String> {
     let client = client(60)?;
-    send_json::<ReportEnvelope>(
-        &client,
-        base,
-        "v1/operations/checkpoint",
-        Method::Post,
-        None,
-    )
-    .map(|envelope| MaintenanceResult {
-        operation: "Checkpoint".to_string(),
-        report: envelope.report,
-    })
+    GatewayApi::new(&client, base)
+        .send::<ReportEnvelope>(
+            Method::Post,
+            "v1/operations/checkpoint",
+            None,
+            operation_context("v1/operations/checkpoint"),
+        )
+        .map(|envelope| MaintenanceResult {
+            operation: "Checkpoint".to_string(),
+            report: envelope.report,
+        })
 }
 
 /// Create a database backup via `POST /v1/operations/backup`.
@@ -242,43 +257,21 @@ pub fn backup_http(base: &str, request: &BackupRequest) -> Result<MaintenanceRes
     let client = client(BACKUP_TIMEOUT_SECS)?;
     let body =
         serde_json::to_string(request).map_err(|error| format!("serialize backup: {error}"))?;
-    send_json::<ReportEnvelope>(
-        &client,
-        base,
-        "v1/operations/backup",
-        Method::Post,
-        Some(body),
-    )
-    .map(|envelope| MaintenanceResult {
-        operation: if request.dry_run {
-            "Backup dry run".to_string()
-        } else {
-            "Backup".to_string()
-        },
-        report: envelope.report,
-    })
-}
-
-fn client(timeout_secs: u64) -> Result<ReqwestGatewayClient, String> {
-    crate::gateway::client(timeout_secs)
-}
-
-fn get_json<T: DeserializeOwned>(
-    client: &dyn GatewayClient,
-    base: &str,
-    path: &str,
-) -> Result<T, String> {
-    send_json(client, base, path, Method::Get, None)
-}
-
-fn send_json<T: DeserializeOwned>(
-    client: &dyn GatewayClient,
-    base: &str,
-    path: &str,
-    method: Method,
-    body: Option<String>,
-) -> Result<T, String> {
-    crate::gateway::send_json(client, base, path, method, body, operation_context(path))
+    GatewayApi::new(&client, base)
+        .send::<ReportEnvelope>(
+            Method::Post,
+            "v1/operations/backup",
+            Some(body),
+            operation_context("v1/operations/backup"),
+        )
+        .map(|envelope| MaintenanceResult {
+            operation: if request.dry_run {
+                "Backup dry run".to_string()
+            } else {
+                "Backup".to_string()
+            },
+            report: envelope.report,
+        })
 }
 
 fn operation_context(path: &str) -> &'static str {
@@ -367,15 +360,15 @@ mod tests {
         ]);
         let jobs = fetch_jobs_with_client(&gateway, "http://gateway").unwrap();
         assert_eq!(jobs[0].progress.as_ref().unwrap().processed_files, 3);
-        let cancelled = send_json::<JobEnvelope>(
-            &gateway,
-            "http://gateway",
-            "v1/jobs/j1",
-            Method::Delete,
-            None,
-        )
-        .unwrap()
-        .job;
+        let cancelled = GatewayApi::new(&gateway, "http://gateway")
+            .send::<JobEnvelope>(
+                Method::Delete,
+                "v1/jobs/j1",
+                None,
+                operation_context("v1/jobs/j1"),
+            )
+            .unwrap()
+            .job;
         assert_eq!(cancelled.id, "j1");
         assert_eq!(gateway.requests.lock().unwrap()[1].method, Method::Delete);
     }
@@ -391,14 +384,14 @@ mod tests {
     #[test]
     fn malformed_job_success_does_not_echo_private_path() {
         let gateway = FakeGateway::new(vec![r#"{"job":"private-value""#.to_string()]);
-        let error = send_json::<JobEnvelope>(
-            &gateway,
-            "http://user:secret@gateway",
-            "v1/jobs/private-job?token=private-token",
-            Method::Get,
-            None,
-        )
-        .unwrap_err();
+        let error = GatewayApi::new(&gateway, "http://user:secret@gateway")
+            .send::<JobEnvelope>(
+                Method::Get,
+                "v1/jobs/private-job?token=private-token",
+                None,
+                operation_context("v1/jobs/private-job?token=private-token"),
+            )
+            .unwrap_err();
 
         assert!(error.starts_with("Could not parse Sync jobs response"));
         for secret in [

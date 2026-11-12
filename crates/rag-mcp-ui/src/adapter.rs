@@ -1,21 +1,20 @@
 //! Domain GraphView → UI graph: filter, multi-edge collapse, style helpers, hard caps.
 
-use rag_mcp_core::{GraphEdge, GraphNode, GraphView};
+use rag_mcp_core::{GraphEdge, GraphNode, GraphView, NodeKind, RelType};
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::load::{
+use crate::topology::{
     UI_HARD_MAX_NODES, UI_MAX_DRAW_EDGES, UI_OVERVIEW_MAX_EDGES, UI_OVERVIEW_MAX_NODES,
 };
-use crate::ui::theme;
 
 /// Display node after clamp + style derivation.
 #[derive(Debug, Clone)]
 pub struct UiNode {
     pub id: String,
     pub kind: String,
+    /// `kind` parsed once; `None` for kinds without dedicated styling.
+    pub node_kind: Option<NodeKind>,
     pub label: String,
-    /// Fill color derived from `kind` (EGUI_GRAPH_VIEW §7.2).
-    pub color: egui::Color32,
     pub document_id: Option<String>,
     pub uri: Option<String>,
     pub resolved: bool,
@@ -32,7 +31,13 @@ pub struct UiEdge {
     pub id: String,
     pub source_id: String,
     pub target_id: String,
+    /// Endpoints as indices into [`UiGraph::nodes`], set by [`adapt`] so
+    /// per-frame code never looks a node up by id.
+    pub source_idx: usize,
+    pub target_idx: usize,
     pub rel_type: String,
+    /// `rel_type` parsed once; `None` for relations without dedicated styling.
+    pub rel: Option<RelType>,
     pub weight: f64,
     pub multi_count: u32,
     /// Full provenance for detail panel only (not drawn).
@@ -46,11 +51,6 @@ pub struct UiGraph {
     pub edges: Vec<UiEdge>,
     pub truncated_nodes: bool,
     pub truncated_edges: bool,
-    /// Pre-cap counts, kept for status banners; read only by tests today.
-    #[allow(dead_code)]
-    pub raw_nodes: usize,
-    #[allow(dead_code)]
-    pub raw_edges: usize,
     /// Human-readable note when nodes/edges were dropped for caps.
     pub note: Option<String>,
 }
@@ -138,7 +138,6 @@ impl Default for AdaptOptions {
 /// - `UI_MAX_DRAW_EDGES` (2000): after multi-edge collapse; drop tagged / lowest-weight first.
 pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
     let raw_nodes = view.nodes.len();
-    let raw_edges = view.edges.len();
 
     let lens_edge_ids: HashSet<&str> = view
         .edges
@@ -155,10 +154,10 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
         .nodes
         .iter()
         .filter(|node| {
-            rag_mcp_core::NodeKind::Stub.is(&node.kind)
+            NodeKind::Stub.is(&node.kind)
                 || !node.resolved
                 || !all_edge_ids.contains(node.id.as_str())
-                || (rag_mcp_core::NodeKind::Tag.is(&node.kind) && suspicious_tag_label(&node.label))
+                || (NodeKind::Tag.is(&node.kind) && suspicious_tag_label(&node.label))
         })
         .map(|node| node.id.as_str())
         .collect();
@@ -175,12 +174,12 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
     let kind_visible: Vec<&GraphNode> = view
         .nodes
         .iter()
-        .filter(|n| match n.kind.as_str() {
-            "tag" => {
+        .filter(|n| match NodeKind::parse(&n.kind) {
+            Some(NodeKind::Tag) => {
                 opts.show_tags
                     || (opts.lens == GraphLens::Quality && suspicious_tag_label(&n.label))
             }
-            "stub" => opts.show_stubs,
+            Some(NodeKind::Stub) => opts.show_stubs,
             _ => true,
         })
         .filter(|node| node_visible_for_lens(node, opts.lens, &lens_edge_ids, &quality_context_ids))
@@ -190,14 +189,23 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
     // (unresolved stubs, entities and tags) often have no placement of their
     // own, so keep them only when they are directly connected to a matching
     // document. Explicitly mismatched placement is never allowed through.
+    // Placement metadata is JSON: parse it once per node and reuse it for the
+    // scope filter here and for the UI node below.
+    let placements: HashMap<&str, Placement> = kind_visible
+        .iter()
+        .map(|node| (node.id.as_str(), parse_placement_meta(&node.metadata_json)))
+        .collect();
     let scope: HashMap<&str, ScopeDisposition> = kind_visible
         .iter()
-        .map(|node| (node.id.as_str(), scope_disposition(node, opts)))
+        .map(|node| {
+            let id = node.id.as_str();
+            (id, scope_disposition(node, &placements[id], opts))
+        })
         .collect();
     let anchors: HashSet<&str> = kind_visible
         .iter()
         .filter(|node| {
-            rag_mcp_core::NodeKind::Document.is(&node.kind)
+            NodeKind::Document.is(&node.kind)
                 && scope.get(node.id.as_str()) == Some(&ScopeDisposition::Match)
         })
         .map(|node| node.id.as_str())
@@ -234,10 +242,17 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
         clamp_nodes(&filtered_nodes, view, opts.seed_id.as_deref())
     };
 
-    let keep: HashSet<String> = kept_nodes.iter().map(|n| n.id.clone()).collect();
+    // Where each kept node sits in the output; also the "is kept" test.
+    let node_index: HashMap<&str, usize> = kept_nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| (node.id.as_str(), index))
+        .collect();
 
     let pkb_rels: HashSet<String> = if opts.pkb_rels_only {
-        crate::load::pkb_default_rel_types().into_iter().collect()
+        crate::topology::pkb_default_rel_types()
+            .into_iter()
+            .collect()
     } else {
         HashSet::new()
     };
@@ -246,19 +261,21 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
         .edges
         .iter()
         .filter(|edge| edge_visible_for_lens(edge, opts.lens))
-        .filter(|e| keep.contains(&e.source_id) && keep.contains(&e.target_id))
+        .filter(|e| {
+            node_index.contains_key(e.source_id.as_str())
+                && node_index.contains_key(e.target_id.as_str())
+        })
         .filter(|e| {
             if !opts.pkb_rels_only {
                 return true;
             }
             // Same PKB default set the server reads with (GRAPH_DESIGN §7.1), so
             // a relation the gateway returns is never dropped here.
-            pkb_rels.contains(&e.rel_type) || (opts.show_tags && e.rel_type == "tagged")
+            pkb_rels.contains(&e.rel_type) || (opts.show_tags && RelType::Tagged.is(&e.rel_type))
         })
         .collect();
 
-    let edge_owned: Vec<GraphEdge> = candidate_edges.iter().map(|e| (*e).clone()).collect();
-    let mut ui_edges = collapse_edges(&edge_owned);
+    let mut ui_edges = collapse_edges(candidate_edges);
     let pre_cap_edge_count = ui_edges.len();
     let mut truncated_edges = false;
     let (node_cap, edge_cap) = if opts.show_all_nodes {
@@ -283,33 +300,33 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
         truncated_edges = true;
     }
 
+    // Every drawn edge joins two kept nodes; record where they sit in `nodes`.
+    for edge in &mut ui_edges {
+        edge.source_idx = node_index[edge.source_id.as_str()];
+        edge.target_idx = node_index[edge.target_id.as_str()];
+    }
+
     // Undirected adjacency for depth / degree (post-collapse, post-cap).
-    let mut adj: HashMap<String, Vec<String>> = HashMap::new();
+    let mut adjacency: Vec<Vec<usize>> = vec![Vec::new(); kept_nodes.len()];
+    let mut degree = vec![0_u32; kept_nodes.len()];
     for e in &ui_edges {
-        adj.entry(e.source_id.clone())
-            .or_default()
-            .push(e.target_id.clone());
-        adj.entry(e.target_id.clone())
-            .or_default()
-            .push(e.source_id.clone());
+        adjacency[e.source_idx].push(e.target_idx);
+        adjacency[e.target_idx].push(e.source_idx);
+        degree[e.source_idx] += 1;
+        degree[e.target_idx] += 1;
     }
-
-    let depth_map = bfs_depth(opts.seed_id.as_deref(), &keep, &adj);
-
-    let mut degree: HashMap<String, u32> = HashMap::new();
-    for e in &ui_edges {
-        *degree.entry(e.source_id.clone()).or_default() += 1;
-        *degree.entry(e.target_id.clone()).or_default() += 1;
-    }
+    let seed_index = opts
+        .seed_id
+        .as_deref()
+        .and_then(|seed| node_index.get(seed).copied());
+    let depth = bfs_depth(seed_index, &adjacency);
 
     let ui_nodes: Vec<UiNode> = kept_nodes
         .iter()
-        .map(|n| {
-            node_to_ui(
-                n,
-                depth_map.get(&n.id).copied().unwrap_or(0),
-                degree.get(&n.id).copied().unwrap_or(0),
-            )
+        .enumerate()
+        .map(|(index, n)| {
+            let placement = placements.get(n.id.as_str()).cloned().unwrap_or_default();
+            node_to_ui(n, placement, depth[index], degree[index])
         })
         .collect();
 
@@ -328,8 +345,6 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
         edges: ui_edges,
         truncated_nodes,
         truncated_edges,
-        raw_nodes,
-        raw_edges,
         note,
     }
 }
@@ -342,21 +357,30 @@ pub(crate) fn suspicious_tag_label(label: &str) -> bool {
 
 fn edge_visible_for_lens(edge: &GraphEdge, lens: GraphLens) -> bool {
     let context = edge.context.as_deref().unwrap_or_default();
+    let rel = RelType::parse(&edge.rel_type);
     match lens {
         GraphLens::Overview | GraphLens::Neighborhood | GraphLens::Quality => true,
         GraphLens::Architecture => {
             matches!(
-                edge.rel_type.as_str(),
-                "contains" | "imports" | "depends_on" | "mentions"
-            ) || (edge.rel_type == "related" && context.ends_with(" membership"))
+                rel,
+                Some(RelType::Contains | RelType::Imports | RelType::DependsOn | RelType::Mentions)
+            ) || (rel == Some(RelType::Related) && context.ends_with(" membership"))
         }
         GraphLens::Knowledge => {
-            matches!(edge.rel_type.as_str(), "wikilink" | "tagged" | "describes")
-                || (edge.rel_type == "related" && !context.ends_with(" membership"))
+            matches!(
+                rel,
+                Some(RelType::Wikilink | RelType::Tagged | RelType::Describes)
+            ) || (rel == Some(RelType::Related) && !context.ends_with(" membership"))
         }
         GraphLens::Provenance => matches!(
-            edge.rel_type.as_str(),
-            "derived_from" | "cites" | "supports" | "contradicts" | "supersedes"
+            rel,
+            Some(
+                RelType::DerivedFrom
+                    | RelType::Cites
+                    | RelType::Supports
+                    | RelType::Contradicts
+                    | RelType::Supersedes
+            )
         ),
     }
 }
@@ -372,7 +396,11 @@ fn node_visible_for_lens(
         GraphLens::Architecture | GraphLens::Provenance => lens_edge_ids.contains(node.id.as_str()),
         GraphLens::Knowledge => {
             lens_edge_ids.contains(node.id.as_str())
-                || matches!(node.kind.as_str(), "concept" | "tag" | "stub")
+                || node.kind == "concept"
+                || matches!(
+                    NodeKind::parse(&node.kind),
+                    Some(NodeKind::Tag | NodeKind::Stub)
+                )
                 || node_layer_is_wiki(&node.metadata_json)
         }
         GraphLens::Quality => quality_context_ids.contains(node.id.as_str()),
@@ -382,12 +410,12 @@ fn node_visible_for_lens(
 /// Prefer higher priority when keeping edges under the draw cap.
 /// tagged/tunnel/deps drop before wikilink/related of same weight.
 fn edge_keep_priority(e: &UiEdge) -> i32 {
-    match e.rel_type.as_str() {
-        "wikilink" => 40,
-        "related" => 30,
-        "depends_on" | "derived_from" | "supersedes" => 20,
-        "tunnel" => 15,
-        "tagged" | "mentions" => 5,
+    match e.rel {
+        Some(RelType::Wikilink) => 40,
+        Some(RelType::Related) => 30,
+        Some(RelType::DependsOn | RelType::DerivedFrom | RelType::Supersedes) => 20,
+        Some(RelType::Tunnel) => 15,
+        Some(RelType::Tagged | RelType::Mentions) => 5,
         _ => 10,
     }
 }
@@ -508,34 +536,26 @@ fn clamp_nodes<'a>(
     (nodes, true)
 }
 
-fn bfs_depth(
-    seed_id: Option<&str>,
-    keep: &HashSet<String>,
-    adj: &HashMap<String, Vec<String>>,
-) -> HashMap<String, u32> {
-    let mut depth_map: HashMap<String, u32> = HashMap::new();
-    let Some(seed) = seed_id else {
-        return depth_map;
+/// Hop count from the seed over `adjacency` (node indices); 0 for the seed,
+/// for unreachable nodes and when there is no seed.
+fn bfs_depth(seed: Option<usize>, adjacency: &[Vec<usize>]) -> Vec<u32> {
+    let mut depth = vec![0_u32; adjacency.len()];
+    let Some(seed) = seed else {
+        return depth;
     };
-    if !keep.contains(seed) {
-        return depth_map;
-    }
-    let mut q = VecDeque::new();
-    q.push_back((seed.to_string(), 0u32));
-    depth_map.insert(seed.to_string(), 0);
-    while let Some((id, d)) = q.pop_front() {
-        let Some(neis) = adj.get(&id) else {
-            continue;
-        };
-        for n in neis {
-            if depth_map.contains_key(n) {
-                continue;
+    let mut seen = vec![false; adjacency.len()];
+    seen[seed] = true;
+    let mut queue = VecDeque::from([seed]);
+    while let Some(node) = queue.pop_front() {
+        for &next in &adjacency[node] {
+            if !seen[next] {
+                seen[next] = true;
+                depth[next] = depth[node] + 1;
+                queue.push_back(next);
             }
-            depth_map.insert(n.clone(), d + 1);
-            q.push_back((n.clone(), d + 1));
         }
     }
-    depth_map
+    depth
 }
 
 fn truncation_note(
@@ -566,10 +586,16 @@ fn truncation_note(
 
 /// Collapse multi-edges for canvas by (source_id, target_id, rel_type).
 /// One stroke; multi_count > 1; weight = max among members; full members kept for detail.
-pub fn collapse_edges(edges: &[GraphEdge]) -> Vec<UiEdge> {
-    let mut map: HashMap<(String, String, String), UiEdge> = HashMap::new();
+/// Endpoint indices are left at 0 here; [`adapt`] fills them once the node set is final.
+pub fn collapse_edges<'a>(edges: impl IntoIterator<Item = &'a GraphEdge>) -> Vec<UiEdge> {
+    // Keyed by borrowed strings: no allocation per input edge.
+    let mut map: HashMap<(&'a str, &'a str, &'a str), UiEdge> = HashMap::new();
     for e in edges {
-        let key = (e.source_id.clone(), e.target_id.clone(), e.rel_type.clone());
+        let key = (
+            e.source_id.as_str(),
+            e.target_id.as_str(),
+            e.rel_type.as_str(),
+        );
         map.entry(key)
             .and_modify(|ui| {
                 ui.multi_count += 1;
@@ -583,7 +609,10 @@ pub fn collapse_edges(edges: &[GraphEdge]) -> Vec<UiEdge> {
                 id: e.id.clone(),
                 source_id: e.source_id.clone(),
                 target_id: e.target_id.clone(),
+                source_idx: 0,
+                target_idx: 0,
                 rel_type: e.rel_type.clone(),
+                rel: RelType::parse(&e.rel_type),
                 weight: e.weight,
                 multi_count: 1,
                 members: vec![e.clone()],
@@ -600,14 +629,13 @@ pub fn collapse_edges(edges: &[GraphEdge]) -> Vec<UiEdge> {
     out
 }
 
-fn node_to_ui(n: &GraphNode, depth: u32, degree: u32) -> UiNode {
-    let (layer, wing, room) = parse_placement_meta(&n.metadata_json);
-    let color = node_color(&n.kind, layer.as_deref());
+fn node_to_ui(n: &GraphNode, placement: Placement, depth: u32, degree: u32) -> UiNode {
+    let Placement { layer, wing, room } = placement;
     UiNode {
         id: n.id.clone(),
         kind: n.kind.clone(),
+        node_kind: NodeKind::parse(&n.kind),
         label: n.label.clone(),
-        color,
         document_id: n.document_id.clone(),
         uri: n.uri.clone(),
         resolved: n.resolved,
@@ -626,12 +654,15 @@ enum ScopeDisposition {
     Excluded,
 }
 
-fn scope_disposition(node: &GraphNode, opts: &AdaptOptions) -> ScopeDisposition {
-    let (_, wing, room) = parse_placement_meta(&node.metadata_json);
+fn scope_disposition(
+    node: &GraphNode,
+    placement: &Placement,
+    opts: &AdaptOptions,
+) -> ScopeDisposition {
     let mut missing_placement = false;
     for (wanted, actual) in [
-        (opts.wing.as_deref(), wing.as_deref()),
-        (opts.room.as_deref(), room.as_deref()),
+        (opts.wing.as_deref(), placement.wing.as_deref()),
+        (opts.room.as_deref(), placement.room.as_deref()),
     ] {
         let Some(wanted) = wanted else {
             continue;
@@ -644,7 +675,7 @@ fn scope_disposition(node: &GraphNode, opts: &AdaptOptions) -> ScopeDisposition 
     }
 
     if missing_placement {
-        if rag_mcp_core::NodeKind::Document.is(&node.kind) {
+        if NodeKind::Document.is(&node.kind) {
             ScopeDisposition::Excluded
         } else {
             ScopeDisposition::Companion
@@ -654,65 +685,24 @@ fn scope_disposition(node: &GraphNode, opts: &AdaptOptions) -> ScopeDisposition 
     }
 }
 
-fn parse_placement_meta(metadata_json: &str) -> (Option<String>, Option<String>, Option<String>) {
+/// Storage layer and project placement from a node's `metadata_json`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Placement {
+    layer: Option<String>,
+    wing: Option<String>,
+    room: Option<String>,
+}
+
+fn parse_placement_meta(metadata_json: &str) -> Placement {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(metadata_json) else {
-        return (None, None, None);
+        return Placement::default();
     };
     let s = |k: &str| v.get(k).and_then(|x| x.as_str()).map(|s| s.to_string());
-    (s("layer"), s("wing"), s("room"))
-}
-
-/// Kind → fill color (EGUI_GRAPH_VIEW §7.2).
-pub fn kind_color(kind: &str) -> egui::Color32 {
-    match kind {
-        "document" => theme::L0,
-        "tag" => theme::L1,
-        "stub" => egui::Color32::from_rgb(100, 116, 139),
-        "entity" => theme::L2,
-        _ => theme::MUTED,
+    Placement {
+        layer: s("layer"),
+        wing: s("wing"),
+        room: s("room"),
     }
-}
-
-fn node_color(kind: &str, layer: Option<&str>) -> egui::Color32 {
-    if kind == "document" {
-        match layer {
-            Some("wiki") => theme::L3,
-            Some("diary") => theme::L4,
-            _ => theme::L0,
-        }
-    } else {
-        kind_color(kind)
-    }
-}
-
-/// Rel type → edge stroke color.
-pub fn edge_color(rel_type: &str) -> egui::Color32 {
-    match rel_type {
-        "wikilink" => theme::rgba(theme::L3, 150),
-        "related" | "similar" => theme::rgba(theme::L0, 115),
-        "tagged" | "mentions" => theme::rgba(theme::L1, 130),
-        "contains" | "imports" | "describes" => theme::rgba(theme::L2, 145),
-        "tunnel" => theme::rgba(theme::DANGER, 175),
-        "contradicts" => theme::rgba(theme::DANGER, 180),
-        "depends_on" | "derived_from" | "supersedes" | "cites" | "supports" => {
-            theme::rgba(theme::OK, 150)
-        }
-        _ => theme::rgba(theme::MUTED, 120),
-    }
-}
-
-/// Stable topology fingerprint for anti-thrash.
-pub fn topology_generation(view: &GraphView) -> u64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut node_ids: Vec<&str> = view.nodes.iter().map(|n| n.id.as_str()).collect();
-    let mut edge_ids: Vec<&str> = view.edges.iter().map(|e| e.id.as_str()).collect();
-    node_ids.sort_unstable();
-    edge_ids.sort_unstable();
-    let mut h = DefaultHasher::new();
-    node_ids.hash(&mut h);
-    edge_ids.hash(&mut h);
-    h.finish()
 }
 
 /// True when a node's metadata names the wiki layer (any key order or spacing).
@@ -888,7 +878,7 @@ mod tests {
     }
 
     #[test]
-    fn nodes_carry_label_kind_color() {
+    fn nodes_carry_label_and_parsed_kind() {
         let view = GraphView {
             nodes: vec![node("d1", "document", "Doc"), node("t1", "tag", "Tag")],
             edges: vec![],
@@ -904,9 +894,9 @@ mod tests {
         let doc = g.nodes.iter().find(|n| n.id == "d1").unwrap();
         assert_eq!(doc.label, "Doc");
         assert_eq!(doc.kind, "document");
-        assert_eq!(doc.color, kind_color("document"));
+        assert_eq!(doc.node_kind, Some(NodeKind::Document));
         let tag = g.nodes.iter().find(|n| n.id == "t1").unwrap();
-        assert_eq!(tag.color, kind_color("tag"));
+        assert_eq!(tag.node_kind, Some(NodeKind::Tag));
     }
 
     #[test]
@@ -922,7 +912,6 @@ mod tests {
         let g = adapt(&view, &AdaptOptions::default());
         assert_eq!(g.nodes.len(), UI_HARD_MAX_NODES);
         assert!(g.truncated_nodes);
-        assert_eq!(g.raw_nodes, 350);
         let note = g.note.expect("truncation note");
         assert!(note.contains("300"));
         assert!(note.contains("350"));
@@ -1113,8 +1102,6 @@ mod tests {
         assert!(!g.truncated_nodes);
         assert!(!g.truncated_edges);
         assert!(g.note.is_none());
-        assert_eq!(g.raw_nodes, 2);
-        assert_eq!(g.raw_edges, 1);
     }
 
     #[test]
@@ -1352,8 +1339,8 @@ mod tests {
         assert_eq!(graph.edges.len(), 1);
         assert_eq!(graph.edges[0].rel_type, "tagged");
         let tag = graph.nodes.iter().find(|node| node.id == "tag").unwrap();
-        assert_eq!(tag.color, kind_color("tag"));
-        assert_eq!(edge_color(&graph.edges[0].rel_type), edge_color("tagged"));
+        assert_eq!(tag.node_kind, Some(NodeKind::Tag));
+        assert_eq!(graph.edges[0].rel, Some(RelType::Tagged));
     }
     #[test]
     fn overview_lenses_keep_the_most_connected_nodes_up_to_the_cap() {

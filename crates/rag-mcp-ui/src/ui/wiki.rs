@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use egui::{RichText, Sense, Ui};
 
-use crate::load::{BacklinkItem, DocumentBody, WikiPageMeta};
+use crate::dto::{BacklinkItem, DocumentBody, WikiPageMeta};
 
 use super::theme;
 
@@ -976,7 +976,7 @@ mod tests {
 
     #[test]
     fn sidebar_index_groups_by_category_and_filters() {
-        let page = |id: &str, title: &str, category: Option<&str>| crate::load::WikiPageMeta {
+        let page = |id: &str, title: &str, category: Option<&str>| crate::dto::WikiPageMeta {
             id: id.into(),
             title: title.into(),
             slug: id.into(),

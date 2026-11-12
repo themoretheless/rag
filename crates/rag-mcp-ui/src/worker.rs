@@ -9,20 +9,17 @@
 //! events whose `seq` no longer matches the pending slot.
 
 use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 use rag_mcp_core::GraphView;
 
-use crate::load::{
-    expand_neighbors_http, expand_neighbors_local, expand_neighbors_store, fetch_activity_http,
-    fetch_backlinks_http, fetch_document_db, fetch_document_http, fetch_project_catalog_http,
-    fetch_wiki_list_db, fetch_wiki_list_http, load_cli_source, put_wiki_http, ActivityEvent,
-    BacklinkItem, CliSource, DocumentBody, GraphSourceKind, LoadedGraph, WikiPageMeta,
-    WikiPutRequest,
+use crate::dto::{
+    ActivityEvent, BacklinkItem, DocumentBody, LoadedGraph, WikiPageMeta, WikiPutRequest,
 };
+use crate::http::{fetch_activity_http, fetch_document_http, fetch_project_catalog_http};
+
 use crate::operations::{
     backup_http, cancel_job_http, checkpoint_http, fetch_jobs_http, fetch_operations_http,
     start_sync_job_http, BackupRequest, JobSnapshot, MaintenanceResult, OperationsSnapshot,
@@ -36,69 +33,7 @@ use crate::revisions::{
     restore_revision_http, RestoreRevisionResult, RevisionDiff, RevisionPage,
 };
 use crate::search::{fetch_search_http, SearchRequest, SearchResults};
-
-/// Document/wiki source: writable HTTP gateway or strictly read-only direct DB.
-#[derive(Debug, Clone)]
-pub enum LoadSource {
-    Http(String),
-    Db(PathBuf),
-}
-
-impl LoadSource {
-    /// Derive from the loaded graph source; snapshots cannot serve documents/wiki.
-    pub fn from_graph_source(source: &GraphSourceKind) -> Option<Self> {
-        match source {
-            GraphSourceKind::HttpService { base } => Some(Self::Http(base.clone())),
-            GraphSourceKind::LiveStore { path } => Some(Self::Db(path.clone())),
-            GraphSourceKind::SnapshotFile { .. } | GraphSourceKind::VaultGraphJson { .. } => None,
-        }
-    }
-
-    /// Wiki catalog for the browser list.
-    pub fn wiki_catalog(&self, project: Option<&str>) -> Result<Vec<WikiPageMeta>, String> {
-        match self {
-            Self::Http(base) => fetch_wiki_list_http(base, project),
-            Self::Db(path) => fetch_wiki_list_db(path, project),
-        }
-    }
-
-    /// One document body by id and/or uri. `label` only helps the HTTP resolver.
-    pub fn document(
-        &self,
-        doc_id: Option<&str>,
-        uri: Option<&str>,
-        label: Option<&str>,
-    ) -> Result<DocumentBody, String> {
-        match self {
-            Self::Http(base) => fetch_document_http(base, doc_id, uri, label),
-            Self::Db(path) => fetch_document_db(path, doc_id, uri),
-        }
-    }
-
-    /// Backlinks for a document id. Transport/store errors remain explicit so the
-    /// UI cannot misreport an unavailable query as "No incoming links".
-    pub fn backlinks(
-        &self,
-        document_id: &str,
-        project: Option<&str>,
-    ) -> Result<Vec<BacklinkItem>, String> {
-        match self {
-            Self::Http(base) => fetch_backlinks_http(base, document_id, project),
-            Self::Db(path) => crate::direct_db::fetch_backlinks_db(path, document_id, project),
-        }
-    }
-
-    /// Save a wiki page. Direct `--db` mode is read-only by design.
-    pub fn save_wiki(&self, req: &WikiPutRequest) -> Result<DocumentBody, String> {
-        match self {
-            Self::Http(base) => put_wiki_http(base, req),
-            Self::Db(_) => Err(
-                "direct --db mode is read-only; use the HTTP gateway to rebuild derived state"
-                    .into(),
-            ),
-        }
-    }
-}
+use crate::source::{DocumentSource, ExpandRequest};
 
 /// Jobs dispatched from the UI thread to the worker.
 #[derive(Debug)]
@@ -106,7 +41,7 @@ pub enum WorkerCmd {
     /// Initial / retry topology load (snapshot, read-only db, or http export).
     LoadGraph {
         seq: u64,
-        source: CliSource,
+        source: Arc<dyn DocumentSource>,
         seed: Option<String>,
         depth: u32,
         project: Option<String>,
@@ -199,7 +134,7 @@ pub enum WorkerCmd {
     /// Wiki catalog list for the sidebar.
     LoadWikiCatalog {
         seq: u64,
-        source: LoadSource,
+        source: Arc<dyn DocumentSource>,
         project: Option<String>,
     },
     /// Open a wiki page body. Backlinks use their own replaceable command so a
@@ -214,13 +149,13 @@ pub enum WorkerCmd {
         push_history: bool,
         meta: Option<WikiPageMeta>,
         q: Option<String>,
-        source: LoadSource,
+        source: Arc<dyn DocumentSource>,
     },
     /// Backlinks only (e.g. refresh after save).
     LoadBacklinks {
         seq: u64,
         document_id: String,
-        source: LoadSource,
+        source: Arc<dyn DocumentSource>,
         project: Option<String>,
     },
     /// Full document body for a selected graph node ("Read content").
@@ -230,19 +165,18 @@ pub enum WorkerCmd {
         doc_id: Option<String>,
         uri: Option<String>,
         label: String,
-        source: LoadSource,
+        source: Arc<dyn DocumentSource>,
     },
     /// One-hop neighbor expansion of `selected`, merged into `current`.
     ///
-    /// Client-side BFS on `full` for snapshot/http; `Store::neighbors` when
-    /// `db_path` is set (brief read-only re-open; direct writes stay disabled).
+    /// The source decides how: gateway request, read-only store query, or a
+    /// client-side BFS over `full` for snapshots (the only case that sets it).
     ExpandNeighbors {
         seq: u64,
         selected: String,
-        current: GraphView,
-        full: Option<GraphView>,
-        db_path: Option<PathBuf>,
-        http_base: Option<String>,
+        current: Arc<GraphView>,
+        full: Option<Arc<GraphView>>,
+        source: Arc<dyn DocumentSource>,
         project: Option<String>,
         include_tags: bool,
         max_nodes: u32,
@@ -255,7 +189,7 @@ pub enum WorkerCmd {
     SavePage {
         seq: u64,
         req: WikiPutRequest,
-        source: LoadSource,
+        source: Arc<dyn DocumentSource>,
     },
     LoadActivity {
         seq: u64,
@@ -639,13 +573,7 @@ fn run(cmd: WorkerCmd) -> WorkerEvt {
             include_tags,
         } => WorkerEvt::GraphLoaded {
             seq,
-            result: load_cli_source(
-                &source,
-                seed.as_deref(),
-                depth,
-                project.as_deref(),
-                include_tags,
-            ),
+            result: source.load_graph(seed.as_deref(), depth, project.as_deref(), include_tags),
         },
         WorkerCmd::LoadProjectCatalog { seq, base } => WorkerEvt::ProjectCatalogLoaded {
             seq,
@@ -768,7 +696,7 @@ fn run(cmd: WorkerCmd) -> WorkerEvt {
             q,
             source,
         } => {
-            let result = fetch_page(meta.as_ref(), q.as_deref(), &source);
+            let result = fetch_page(meta.as_ref(), q.as_deref(), source.as_ref());
             WorkerEvt::PageOpened {
                 seq,
                 pane_b,
@@ -807,39 +735,19 @@ fn run(cmd: WorkerCmd) -> WorkerEvt {
             selected,
             current,
             full,
-            db_path,
-            http_base,
+            source,
             project,
             include_tags,
             max_nodes,
         } => {
-            let result = match (http_base, db_path) {
-                (Some(base), _) => expand_neighbors_http(
-                    &base,
-                    &current,
-                    &selected,
-                    max_nodes,
-                    project.as_deref(),
-                    include_tags,
-                ),
-                (None, Some(path)) => expand_neighbors_store(
-                    &path,
-                    &current,
-                    &selected,
-                    max_nodes,
-                    project.as_deref(),
-                    include_tags,
-                ),
-                (None, None) => match full {
-                    Some(full) => Ok(expand_neighbors_local(
-                        &full,
-                        &current,
-                        &selected,
-                        max_nodes as usize,
-                    )),
-                    None => Err("Expand requires a loaded graph".into()),
-                },
-            };
+            let result = source.expand(&ExpandRequest {
+                current: &current,
+                full: full.as_deref(),
+                selected: &selected,
+                max_nodes,
+                project: project.as_deref(),
+                include_tags,
+            });
             WorkerEvt::Expanded {
                 seq,
                 selected,
@@ -1009,7 +917,7 @@ fn clean_project(value: &str) -> Option<String> {
 fn fetch_page(
     meta: Option<&WikiPageMeta>,
     q: Option<&str>,
-    source: &LoadSource,
+    source: &dyn DocumentSource,
 ) -> Result<DocumentBody, String> {
     match meta {
         Some(m) => source.document(Some(&m.id), Some(&m.uri), Some(&m.title)),
@@ -1055,7 +963,7 @@ mod tests {
     fn product_reads_are_prioritized_over_wiki_catalog_warmup() {
         let wiki = WorkerCmd::LoadWikiCatalog {
             seq: 1,
-            source: LoadSource::Http("http://gateway".into()),
+            source: Arc::new(crate::source::HttpSource::new("http://gateway")),
             project: Some("alpha".into()),
         };
         assert!(library(2, "alpha").priority() < wiki.priority());
@@ -1082,9 +990,95 @@ mod tests {
     }
 
     #[test]
+    fn unresolved_wikilink_tries_the_wiki_uri_before_the_raw_target() {
+        use crate::source::testing::{body, FakeSource};
+        let source = FakeSource {
+            documents: vec![body("d1", "notes/plain")],
+            ..FakeSource::default()
+        };
+        let opened = fetch_page(None, Some("notes/plain"), &source).expect("raw uri fallback");
+        assert_eq!(opened.id, "d1");
+        assert_eq!(
+            source.calls(),
+            [
+                r#"document None Some("wiki://notes/plain") None"#,
+                r#"document None Some("notes/plain") None"#,
+            ]
+        );
+    }
+
+    #[test]
+    fn commands_reach_the_backend_only_through_the_source_trait() {
+        use crate::source::testing::{body, FakeSource};
+        let source = Arc::new(FakeSource {
+            documents: vec![body("d1", "wiki://page")],
+            in_memory: true,
+            ..FakeSource::default()
+        });
+        let view = || GraphView {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+        };
+
+        let expanded = run(WorkerCmd::ExpandNeighbors {
+            seq: 7,
+            selected: "n1".into(),
+            current: Arc::new(view()),
+            full: Some(Arc::new(view())),
+            source: source.clone(),
+            project: Some("alpha".into()),
+            include_tags: true,
+            max_nodes: 25,
+        });
+        assert!(matches!(
+            expanded,
+            WorkerEvt::Expanded { seq: 7, ref selected, result: Ok(_) } if selected == "n1"
+        ));
+
+        let content = run(WorkerCmd::ReadContent {
+            seq: 8,
+            node_id: "n1".into(),
+            doc_id: Some("d1".into()),
+            uri: None,
+            label: "Page".into(),
+            source: source.clone(),
+        });
+        assert!(matches!(
+            content,
+            WorkerEvt::Content { seq: 8, result: Ok(ref body), .. } if body.uri == "wiki://page"
+        ));
+
+        let graph = run(WorkerCmd::LoadGraph {
+            seq: 9,
+            source: source.clone(),
+            seed: Some("seed".into()),
+            depth: 2,
+            project: None,
+            include_tags: false,
+        });
+        assert!(matches!(
+            graph,
+            WorkerEvt::GraphLoaded {
+                seq: 9,
+                result: Err(_)
+            }
+        ));
+
+        assert_eq!(
+            source.calls(),
+            [
+                r#"expand n1 25 Some("alpha") true full=true"#,
+                r#"document Some("d1") None Some("Page")"#,
+                r#"load_graph Some("seed") 2 None false"#,
+            ]
+        );
+    }
+
+    #[test]
     fn backlink_store_errors_are_not_converted_to_empty_results() {
         let directory_is_not_a_database = std::env::temp_dir();
-        let error = LoadSource::Db(directory_is_not_a_database)
+        let error = crate::source::SourceRegistry::default()
+            .for_cli(&crate::cli::CliSource::Db(directory_is_not_a_database))
             .backlinks("document", Some("alpha"))
             .expect_err("opening a directory as DuckDB must stay visible");
         assert!(error.contains("backlinks"));

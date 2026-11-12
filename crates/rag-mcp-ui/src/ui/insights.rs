@@ -1,7 +1,7 @@
 //! Read-only observability workspaces built from data already loaded by the
 //! native client. They never synthesize benchmark or runtime values.
 
-use crate::load::ActivityEvent;
+use crate::dto::ActivityEvent;
 use crate::operations::OperationsSnapshot;
 use crate::search::SearchResults;
 

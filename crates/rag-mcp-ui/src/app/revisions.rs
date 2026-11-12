@@ -5,7 +5,7 @@ use rag_mcp_core::Layer;
 
 impl GraphApp {
     pub(super) fn open_revisions(&mut self, item: &LibraryItem) {
-        if self.pending_revision_restore.is_some() {
+        if self.pending.revision_restore.is_some() {
             self.mode = ViewMode::Revisions;
             self.revision.error = Some(
                 "Идёт восстановление. Дождитесь результата перед открытием другой истории.".into(),
@@ -18,7 +18,8 @@ impl GraphApp {
         self.revision.document_uri = item.uri.clone();
         self.revision.document_layer = item.layer.clone();
         self.revision.head = self
-            .library_document
+            .library
+            .document
             .as_ref()
             .filter(|body| body.id == item.id)
             .and_then(|body| body.revision);
@@ -48,8 +49,9 @@ impl GraphApp {
             self.revision.error = Some("Откройте историю из документа в корпусе".into());
             return;
         };
-        let Some(base) = self.activity_base() else {
-            self.revision.error = Some("Для истории версий требуется HTTP gateway".into());
+        let Some(base) = self.gateway("Для истории версий", |app, error| {
+            app.revision.error = Some(error)
+        }) else {
             return;
         };
         self.revision.error = None;
@@ -57,7 +59,7 @@ impl GraphApp {
             self.revision.next_cursor = None;
         }
         let seq = self.next_seq();
-        self.pending_revisions = Some(seq);
+        self.pending.revisions.set(seq);
         self.worker.send(WorkerCmd::LoadRevisions {
             seq,
             base,
@@ -71,8 +73,9 @@ impl GraphApp {
         let Some(document_id) = self.revision.document_id.clone() else {
             return;
         };
-        let Some(base) = self.activity_base() else {
-            self.revision.error = Some("Для деталей версии требуется HTTP gateway".into());
+        let Some(base) = self.gateway("Для деталей версии", |app, error| {
+            app.revision.error = Some(error)
+        }) else {
             return;
         };
         self.revision.selected = Some(from_revision);
@@ -81,7 +84,7 @@ impl GraphApp {
         self.revision.diff = None;
         self.revision.diff_error = None;
         let snapshot_seq = self.next_seq();
-        self.pending_revision_snapshot = Some(snapshot_seq);
+        self.pending.revision_snapshot.set(snapshot_seq);
         self.worker.send(WorkerCmd::LoadRevisionSnapshot {
             seq: snapshot_seq,
             base: base.clone(),
@@ -89,7 +92,7 @@ impl GraphApp {
             revision: from_revision,
         });
         let diff_seq = self.next_seq();
-        self.pending_revision_diff = Some(diff_seq);
+        self.pending.revision_diff.set(diff_seq);
         self.worker.send(WorkerCmd::LoadRevisionDiff {
             seq: diff_seq,
             base,
@@ -125,7 +128,7 @@ impl GraphApp {
         };
         self.revision.error = None;
         let seq = self.next_seq();
-        self.pending_revision_restore = Some(seq);
+        self.pending.revision_restore.set(seq);
         self.worker.send(WorkerCmd::RestoreRevision {
             seq,
             base,

@@ -303,10 +303,10 @@ fn stable_unit_angle(id: &str) -> f32 {
     (bits as f32 / u64::MAX as f32) * TAU
 }
 
-/// One-shot fit: pan/zoom so graph bounds fill `rect` (anti-thrash: call once after place).
-pub fn fit_transform(positions: &PosCache, rect: Rect) -> (Vec2, f32) {
+/// World-space bounding box `(min, max)` of every stored position.
+pub fn bounds(positions: &PosCache) -> Option<(Pos2, Pos2)> {
     if positions.is_empty() {
-        return (rect.center().to_vec2(), 1.0);
+        return None;
     }
     let mut min = Pos2::new(f32::MAX, f32::MAX);
     let mut max = Pos2::new(f32::MIN, f32::MIN);
@@ -316,6 +316,14 @@ pub fn fit_transform(positions: &PosCache, rect: Rect) -> (Vec2, f32) {
         max.x = max.x.max(p.x);
         max.y = max.y.max(p.y);
     }
+    Some((min, max))
+}
+
+/// One-shot fit: pan/zoom so graph `bounds` fill `rect` (anti-thrash: call once after place).
+pub fn fit_bounds(bounds: Option<(Pos2, Pos2)>, rect: Rect) -> (Vec2, f32) {
+    let Some((min, max)) = bounds else {
+        return (rect.center().to_vec2(), 1.0);
+    };
     let size = max - min;
     let pad = 48.0_f32;
     let avail = (rect.size() - Vec2::splat(pad * 2.0)).max(Vec2::splat(1.0));
@@ -337,8 +345,8 @@ mod tests {
         UiNode {
             id: id.into(),
             kind: "document".into(),
+            node_kind: Some(rag_mcp_core::NodeKind::Document),
             label: id.into(),
-            color: egui::Color32::from_rgb(70, 130, 200),
             document_id: None,
             uri: None,
             resolved: true,
@@ -355,7 +363,10 @@ mod tests {
             id: id.into(),
             source_id: s.into(),
             target_id: t.into(),
+            source_idx: 0,
+            target_idx: 0,
             rel_type: "wikilink".into(),
+            rel: Some(rag_mcp_core::RelType::Wikilink),
             weight: 1.0,
             multi_count: 1,
             members: vec![],
@@ -373,8 +384,6 @@ mod tests {
             ],
             truncated_nodes: false,
             truncated_edges: false,
-            raw_nodes: 4,
-            raw_edges: 3,
             note: None,
         };
         let mut cache = PosCache::default();
@@ -402,8 +411,6 @@ mod tests {
             edges: vec![edge("1", "z", "m"), edge("2", "z", "a")],
             truncated_nodes: false,
             truncated_edges: false,
-            raw_nodes: 3,
-            raw_edges: 2,
             note: None,
         };
         let mut c1 = PosCache::default();
@@ -423,8 +430,6 @@ mod tests {
             edges: vec![edge("e1", "a", "b")],
             truncated_nodes: false,
             truncated_edges: false,
-            raw_nodes: 2,
-            raw_edges: 1,
             note: None,
         };
         let mut cache = PosCache::default();
@@ -437,8 +442,6 @@ mod tests {
             edges: vec![edge("e1", "a", "b"), edge("e2", "b", "c")],
             truncated_nodes: false,
             truncated_edges: false,
-            raw_nodes: 3,
-            raw_edges: 2,
             note: None,
         };
         place_missing_near_neighbors(&g1, &mut cache);
@@ -458,8 +461,6 @@ mod tests {
             edges: vec![],
             truncated_nodes: false,
             truncated_edges: false,
-            raw_nodes: 0,
-            raw_edges: 0,
             note: None,
         };
         let mut cache = PosCache::default();
@@ -475,8 +476,6 @@ mod tests {
             edges: vec![],
             truncated_nodes: false,
             truncated_edges: false,
-            raw_nodes: 3,
-            raw_edges: 0,
             note: None,
         };
         let mut first = PosCache::default();
@@ -496,8 +495,6 @@ mod tests {
             edges: vec![edge("e1", "seed", "near")],
             truncated_nodes: false,
             truncated_edges: false,
-            raw_nodes: 3,
-            raw_edges: 1,
             note: None,
         };
         let mut cache = PosCache::default();
@@ -519,8 +516,6 @@ mod tests {
             edges: vec![edge("1", "a", "z"), edge("2", "a", "m")],
             truncated_nodes: false,
             truncated_edges: false,
-            raw_nodes: 3,
-            raw_edges: 2,
             note: None,
         };
         let mut cache = PosCache::default();
@@ -539,8 +534,6 @@ mod tests {
             ],
             truncated_nodes: false,
             truncated_edges: false,
-            raw_nodes: 3,
-            raw_edges: 3,
             note: None,
         };
         let mut cache = PosCache::default();
@@ -554,12 +547,12 @@ mod tests {
     }
 
     #[test]
-    fn fit_transform_centers_and_scales() {
+    fn fit_bounds_centers_and_scales() {
         let mut positions = PosCache::default();
         positions.insert("a".into(), Pos2::new(-100.0, 0.0));
         positions.insert("b".into(), Pos2::new(100.0, 0.0));
         let rect = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(400.0, 400.0));
-        let (pan, zoom) = fit_transform(&positions, rect);
+        let (pan, zoom) = fit_bounds(bounds(&positions), rect);
         assert!(zoom > 0.0 && zoom <= 8.0);
         // Graph center (0,0): screen = p * zoom + pan → pan ≈ rect.center.
         let center = rect.center();
@@ -574,8 +567,6 @@ mod tests {
             edges: vec![edge("e", "s", "n")],
             truncated_nodes: false,
             truncated_edges: false,
-            raw_nodes: 2,
-            raw_edges: 1,
             note: None,
         };
         let mut cache = PosCache::default();

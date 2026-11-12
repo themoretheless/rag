@@ -10,8 +10,11 @@ use std::f32::consts::TAU;
 
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 
-use crate::adapter::{edge_color, UiGraph, UiNode};
-use crate::layout::{fit_transform, PosCache};
+use rag_mcp_core::{NodeKind, RelType};
+
+use crate::adapter::{UiGraph, UiNode};
+use crate::layout::fit_bounds;
+use crate::ui::scene::GraphScene;
 use crate::ui::theme;
 
 pub struct CanvasOut {
@@ -23,15 +26,19 @@ pub struct CanvasOut {
 
 struct ScreenNode<'a> {
     node: &'a UiNode,
+    /// Position in `UiGraph::nodes` (and in every per-node scene table).
+    index: usize,
     center: Pos2,
     radius: f32,
 }
 
 /// Draw edges then nodes; pan via drag on background; zoom via scroll.
+///
+/// `scene` must have been built from this `graph` (same node order).
 pub fn draw_canvas(
     ui: &mut Ui,
     graph: &UiGraph,
-    positions: &PosCache,
+    scene: &GraphScene,
     selected: Option<&str>,
     pan: &mut Vec2,
     zoom: &mut f32,
@@ -47,8 +54,8 @@ pub fn draw_canvas(
     // Subtle canvas background so empty vs graph is obvious.
     painter.rect_filled(rect, 0.0, Color32::from_rgb(10, 14, 24));
 
-    if *need_fit && !positions.is_empty() {
-        let (offset, scale) = fit_transform(positions, rect);
+    if *need_fit && scene.bounds.is_some() {
+        let (offset, scale) = fit_bounds(scene.bounds, rect);
         *pan = offset;
         *zoom = overview_camera_zoom(scale, graph.nodes.len());
         *need_fit = false;
@@ -73,44 +80,38 @@ pub fn draw_canvas(
     let to_screen = |world: Pos2| -> Pos2 { Pos2::new(world.x * z + p.x, world.y * z + p.y) };
 
     // --- edges (under nodes) ---
+    // Collected in paint order and handed to the painter in one call.
+    let mut edge_shapes: Vec<egui::Shape> = Vec::with_capacity(graph.edges.len());
     for e in &graph.edges {
-        let Some(a) = positions.get(&e.source_id) else {
+        let (Some(a), Some(b)) = (scene.positions[e.source_idx], scene.positions[e.target_idx])
+        else {
             continue;
         };
-        let Some(b) = positions.get(&e.target_id) else {
-            continue;
-        };
-        let sa = to_screen(*a);
-        let sb = to_screen(*b);
+        let sa = to_screen(a);
+        let sb = to_screen(b);
         // Clip cheaply: skip if segment AABB misses expanded rect.
         if !segment_near_rect(sa, sb, rect) {
             continue;
         }
-        let base_w = match e.rel_type.as_str() {
-            "related" => 0.8,
-            "tunnel" => 2.2,
-            "tagged" | "mentions" => 1.0,
-            _ => 1.2,
-        };
+        let base_w = e
+            .rel
+            .map_or(RelType::DEFAULT_BASE_WIDTH, RelType::base_width);
         let width =
             (base_w + (e.weight as f32).ln_1p() * 0.45 + (e.multi_count as f32 - 1.0) * 0.25)
                 .clamp(0.6, 5.0);
-        let color = edge_color(&e.rel_type);
+        let color = theme::edge_color(e.rel);
         let stroke = Stroke::new(width, color);
-        match e.rel_type.as_str() {
-            "tagged" | "mentions" => dashed_line(&painter, sa, sb, stroke, 4.0, 4.0),
-            _ => {
-                painter.line_segment([sa, sb], stroke);
-                // Direction arrow for directed rel types (EGUI_GRAPH_VIEW §7.2).
-                if matches!(
-                    e.rel_type.as_str(),
-                    "wikilink" | "depends_on" | "derived_from" | "supersedes"
-                ) {
-                    draw_arrowhead(&painter, sa, sb, stroke);
-                }
+        if e.rel.is_some_and(RelType::is_dashed) {
+            dashed_line(&mut edge_shapes, sa, sb, stroke, 4.0, 4.0, rect);
+        } else {
+            edge_shapes.push(egui::Shape::line_segment([sa, sb], stroke));
+            // Direction arrow for directed rel types (EGUI_GRAPH_VIEW §7.2).
+            if e.rel.is_some_and(RelType::is_directed) {
+                push_arrowhead(&mut edge_shapes, sa, sb, stroke);
             }
         }
     }
+    painter.extend(edge_shapes);
 
     let n_nodes = graph.nodes.len();
     let overview_lod = n_nodes > 5_000 && z < 2.0;
@@ -122,20 +123,45 @@ pub fn draw_canvas(
         None
     };
 
+    // Largest node radius this frame; bounds how far outside the canvas a
+    // node can sit and still be drawn or hit.
+    let max_radius = node_radius(u32::MAX, z, overview_lod);
+    // Nodes worth visiting: those whose grid cell reaches the canvas plus the
+    // margin the exact tests below allow; the hit-test then runs over that
+    // same set. Not narrowed = walk every node.
+    let cull_margin = (max_radius + 48.0).max(max_radius * 3.0) + 1.0;
+    let pointers_inside = [pointer, click_pos]
+        .into_iter()
+        .flatten()
+        .all(|pos| rect.contains(pos));
+    let mut candidates = Vec::new();
+    let narrowed = pointers_inside && {
+        let reach = rect.expand(cull_margin);
+        let world = Rect::from_min_max(
+            ((reach.min.to_vec2() - p) / z).to_pos2(),
+            ((reach.max.to_vec2() - p) / z).to_pos2(),
+        );
+        scene.grid.query(world, &mut candidates)
+    };
+
     // Precompute screen centers + radii for hit test and paint.
-    let mut screen_nodes: Vec<ScreenNode<'_>> = Vec::with_capacity(graph.nodes.len());
-    for node in &graph.nodes {
-        let Some(world) = positions.get(&node.id) else {
+    let mut screen_nodes: Vec<ScreenNode<'_>> = Vec::with_capacity(if narrowed {
+        candidates.len()
+    } else {
+        graph.nodes.len()
+    });
+    let visit: Box<dyn Iterator<Item = usize>> = if narrowed {
+        Box::new(candidates.into_iter())
+    } else {
+        Box::new(0..graph.nodes.len())
+    };
+    for index in visit {
+        let node = &graph.nodes[index];
+        let Some(world) = scene.positions[index] else {
             continue;
         };
-        let center = to_screen(*world);
-        // Size: base + k * log1p(degree), scaled mildly with zoom (EGUI_GRAPH_VIEW §7.2).
-        let radius = if overview_lod {
-            2.5
-        } else {
-            (8.0 + (node.degree as f32 + 1.0).ln_1p() * 3.0).clamp(6.0, 22.0)
-                * z.sqrt().clamp(0.6, 1.6)
-        };
+        let center = to_screen(world);
+        let radius = node_radius(node.degree, z, overview_lod);
 
         // Skip fully off-screen nodes when neither pointer nor click is near.
         let expanded = rect.expand(radius + 48.0);
@@ -152,6 +178,7 @@ pub fn draw_canvas(
         }
         screen_nodes.push(ScreenNode {
             node,
+            index,
             center,
             radius,
         });
@@ -203,9 +230,11 @@ pub fn draw_canvas(
     }
 
     // Hit test: closest center among nodes whose hit radius contains the pointer.
-    let hover_id = pointer.and_then(|pos| pick_node(&screen_nodes, pos).map(|n| n.id.clone()));
+    let hover = pointer.and_then(|pos| pick_node(&screen_nodes, pos));
     let clicked_id = interaction_clicked_id.or_else(|| {
-        click_pos.and_then(|pos| pick_node(&screen_nodes, pos).map(|node| node.id.clone()))
+        click_pos.and_then(|pos| {
+            pick_node(&screen_nodes, pos).map(|index| graph.nodes[index].id.clone())
+        })
     });
     let clicked_empty = response.clicked() && clicked_id.is_none();
 
@@ -225,7 +254,7 @@ pub fn draw_canvas(
         for sn in others.iter().chain(&selected_draw) {
             mesh.add_colored_rect(
                 Rect::from_center_size(sn.center, Vec2::splat(sn.radius * 2.0)),
-                sn.node.color,
+                theme::node_color(sn.node.node_kind, sn.node.layer.as_deref()),
             );
         }
         painter.add(egui::Shape::mesh(mesh));
@@ -237,14 +266,19 @@ pub fn draw_canvas(
         .filter(|_| !overview_lod)
     {
         let node = sn.node;
+        let sn_index = sn.index;
         let center = sn.center;
         let radius = sn.radius;
         let selected_here = selected == Some(node.id.as_str());
         let focused_here = focused_id.as_deref() == Some(node.id.as_str());
-        let is_stub = rag_mcp_core::NodeKind::Stub.is(&node.kind) || !node.resolved;
+        let is_stub = node.node_kind == Some(NodeKind::Stub) || !node.resolved;
 
-        // Fill color comes from adapter kind_color (document/tag/stub/entity).
-        painter.circle_filled(center, radius, node.color);
+        // Fill color by kind, documents by layer (EGUI_GRAPH_VIEW §7.2).
+        painter.circle_filled(
+            center,
+            radius,
+            theme::node_color(node.node_kind, node.layer.as_deref()),
+        );
 
         if selected_here {
             painter.circle_stroke(center, radius, Stroke::new(2.5_f32, Color32::WHITE));
@@ -275,7 +309,7 @@ pub fn draw_canvas(
         }
 
         let show_label = selected_here
-            || hover_id.as_deref() == Some(node.id.as_str())
+            || hover == Some(sn_index)
             || (node.depth == 0 && n_nodes <= 5_000)
             || show_all_labels;
         if show_label {
@@ -329,31 +363,23 @@ pub fn draw_canvas(
         }
     });
 
-    draw_legend(&painter, rect, graph);
+    draw_legend(&painter, rect, scene);
 
-    if let Some(hid) = hover_id.as_deref() {
-        if let Some(node) = graph.nodes.iter().find(|n| n.id == hid) {
-            let multi = graph
-                .edges
-                .iter()
-                .filter(|e| e.source_id == hid || e.target_id == hid)
-                .filter(|e| e.multi_count > 1)
-                .map(|e| e.multi_count)
-                .max()
-                .unwrap_or(1);
-            let multi_note = if multi > 1 {
-                format!("\nмакс. кратность ребра x{multi}")
-            } else {
-                String::new()
-            };
-            response.on_hover_text(format!(
-                "{}\nтип={} · связей={}{}",
-                node.label,
-                localized_kind(&node.kind),
-                node.degree,
-                multi_note
-            ));
-        }
+    if let Some(index) = hover {
+        let node = &graph.nodes[index];
+        let multi = scene.max_multi[index];
+        let multi_note = if multi > 1 {
+            format!("\nмакс. кратность ребра x{multi}")
+        } else {
+            String::new()
+        };
+        response.on_hover_text(format!(
+            "{}\nтип={} · связей={}{}",
+            node.label,
+            localized_kind(&node.kind),
+            node.degree,
+            multi_note
+        ));
     }
 
     CanvasOut {
@@ -377,17 +403,17 @@ fn node_accessibility_label(node: &UiNode) -> String {
     )
 }
 
-fn localized_kind(kind: &str) -> &str {
-    match kind {
-        "document" => "документ",
-        "tag" => "тег",
-        "stub" => "заглушка",
-        "entity" => "сущность",
-        other => other,
+pub(crate) fn localized_kind(kind: &str) -> &str {
+    match NodeKind::parse(kind) {
+        Some(NodeKind::Document) => "документ",
+        Some(NodeKind::Tag) => "тег",
+        Some(NodeKind::Stub) => "заглушка",
+        Some(NodeKind::Entity) => "сущность",
+        None => kind,
     }
 }
 
-fn localized_layer(layer: &str) -> &str {
+pub(crate) fn localized_layer(layer: &str) -> &str {
     match layer {
         "raw" => "сырой корпус",
         "wiki" => "вики",
@@ -396,24 +422,34 @@ fn localized_layer(layer: &str) -> &str {
     }
 }
 
-fn localized_relation(relation: &str) -> &str {
-    match relation {
-        "wikilink" => "вики-ссылка",
-        "related" => "связано",
-        "similar" => "похоже на",
-        "contains" => "содержит",
-        "imports" => "импортирует",
-        "describes" => "описывает",
-        "tunnel" => "туннель",
-        "tagged" => "с тегом",
-        "mentions" => "упоминает",
-        "depends_on" => "зависит от",
-        "derived_from" => "производное от",
-        "cites" => "получено из",
-        "supports" => "подтверждает",
-        "contradicts" => "противоречит",
-        "supersedes" => "замещает",
-        other => other,
+pub(crate) fn localized_relation(relation: &str) -> &str {
+    match RelType::parse(relation) {
+        Some(RelType::Wikilink) => "вики-ссылка",
+        Some(RelType::Related) => "связано",
+        Some(RelType::Similar) => "похоже на",
+        Some(RelType::Contains) => "содержит",
+        Some(RelType::Imports) => "импортирует",
+        Some(RelType::Describes) => "описывает",
+        Some(RelType::Tunnel) => "туннель",
+        Some(RelType::Tagged) => "с тегом",
+        Some(RelType::Mentions) => "упоминает",
+        Some(RelType::DependsOn) => "зависит от",
+        Some(RelType::DerivedFrom) => "производное от",
+        Some(RelType::Cites) => "получено из",
+        Some(RelType::Supports) => "подтверждает",
+        Some(RelType::Contradicts) => "противоречит",
+        Some(RelType::Supersedes) => "замещает",
+        None => relation,
+    }
+}
+
+/// Node radius in screen pixels: base + k * log1p(degree), scaled mildly with
+/// zoom (EGUI_GRAPH_VIEW §7.2); a fixed dot in the dense-overview LOD.
+fn node_radius(degree: u32, zoom: f32, overview_lod: bool) -> f32 {
+    if overview_lod {
+        2.5
+    } else {
+        (8.0 + (degree as f32 + 1.0).ln_1p() * 3.0).clamp(6.0, 22.0) * zoom.sqrt().clamp(0.6, 1.6)
     }
 }
 
@@ -435,7 +471,7 @@ fn overview_camera_zoom(fit_zoom: f32, node_count: usize) -> f32 {
 }
 
 /// Small arrowhead just before the target node (direction of the relation).
-fn draw_arrowhead(painter: &egui::Painter, a: Pos2, b: Pos2, stroke: Stroke) {
+fn push_arrowhead(shapes: &mut Vec<egui::Shape>, a: Pos2, b: Pos2, stroke: Stroke) {
     let d = b - a;
     let len = d.length();
     if len < 24.0 {
@@ -444,24 +480,19 @@ fn draw_arrowhead(painter: &egui::Painter, a: Pos2, b: Pos2, stroke: Stroke) {
     let dir = d / len;
     let tip = b - dir * 14.0;
     let side = Vec2::new(-dir.y, dir.x);
-    painter.line_segment([tip, tip - dir * 8.0 + side * 3.5], stroke);
-    painter.line_segment([tip, tip - dir * 8.0 - side * 3.5], stroke);
+    shapes.push(egui::Shape::line_segment(
+        [tip, tip - dir * 8.0 + side * 3.5],
+        stroke,
+    ));
+    shapes.push(egui::Shape::line_segment(
+        [tip, tip - dir * 8.0 - side * 3.5],
+        stroke,
+    ));
 }
 
 /// Compact legend of kind / rel_type colors present in the view (bottom-left).
-fn draw_legend(painter: &egui::Painter, rect: Rect, graph: &UiGraph) {
-    use std::collections::{BTreeMap, BTreeSet};
-    let mut kinds = BTreeMap::new();
-    for node in &graph.nodes {
-        let label = if rag_mcp_core::NodeKind::Document.is(&node.kind) {
-            localized_layer(node.layer.as_deref().unwrap_or("document"))
-        } else {
-            localized_kind(&node.kind)
-        };
-        kinds.entry(label).or_insert(node.color);
-    }
-    let rels: BTreeSet<&str> = graph.edges.iter().map(|e| e.rel_type.as_str()).collect();
-    let rows = kinds.len() + rels.len();
+fn draw_legend(painter: &egui::Painter, rect: Rect, scene: &GraphScene) {
+    let rows = scene.legend_kinds.len() + scene.legend_rels.len();
     if rows == 0 {
         return;
     }
@@ -478,9 +509,9 @@ fn draw_legend(painter: &egui::Painter, rect: Rect, graph: &UiGraph) {
     );
     let font = egui::FontId::proportional(11.0);
     let text_color = Color32::from_gray(200);
-    for (kind, color) in kinds {
+    for (kind, color) in &scene.legend_kinds {
         let cy = y + line_h * 0.5;
-        painter.circle_filled(Pos2::new(x + 4.0, cy), 4.0, color);
+        painter.circle_filled(Pos2::new(x + 4.0, cy), 4.0, *color);
         painter.text(
             Pos2::new(x + 14.0, y),
             egui::Align2::LEFT_TOP,
@@ -490,16 +521,16 @@ fn draw_legend(painter: &egui::Painter, rect: Rect, graph: &UiGraph) {
         );
         y += line_h;
     }
-    for r in rels {
+    for (relation, color) in &scene.legend_rels {
         let cy = y + line_h * 0.5;
         painter.line_segment(
             [Pos2::new(x, cy), Pos2::new(x + 10.0, cy)],
-            Stroke::new(1.5_f32, edge_color(r)),
+            Stroke::new(1.5_f32, *color),
         );
         painter.text(
             Pos2::new(x + 14.0, y),
             egui::Align2::LEFT_TOP,
-            localized_relation(r),
+            relation,
             font.clone(),
             text_color,
         );
@@ -507,19 +538,21 @@ fn draw_legend(painter: &egui::Painter, rect: Rect, graph: &UiGraph) {
     }
 }
 
-fn pick_node<'a>(nodes: &'a [ScreenNode<'a>], pos: Pos2) -> Option<&'a UiNode> {
-    let mut best: Option<(&UiNode, f32)> = None;
+/// Index (in `UiGraph::nodes`) of the node under `pos`: the closest centre
+/// among nodes whose hit radius contains it.
+fn pick_node(nodes: &[ScreenNode<'_>], pos: Pos2) -> Option<usize> {
+    let mut best: Option<(usize, f32)> = None;
     for sn in nodes {
         let hit_r = sn.radius * 1.15;
         let d = (pos - sn.center).length();
         if d <= hit_r {
             match best {
                 Some((_, bd)) if bd <= d => {}
-                _ => best = Some((sn.node, d)),
+                _ => best = Some((sn.index, d)),
             }
         }
     }
-    best.map(|(n, _)| n)
+    best.map(|(index, _)| index)
 }
 
 /// True if segment AABB intersects expanded rect (cheap clip).
@@ -532,7 +565,42 @@ fn segment_near_rect(a: Pos2, b: Pos2, rect: Rect) -> bool {
     !(max_x < r.min.x || min_x > r.max.x || max_y < r.min.y || min_y > r.max.y)
 }
 
-fn dashed_line(painter: &egui::Painter, a: Pos2, b: Pos2, stroke: Stroke, dash: f32, gap: f32) {
+/// Range of distances from `a` along `a → b` (unit direction `unit`, length
+/// `len`) that lies inside `rect`, or `None` when the segment misses it.
+fn segment_span_in_rect(a: Pos2, unit: Vec2, len: f32, rect: Rect) -> Option<(f32, f32)> {
+    let (mut t0, mut t1) = (0.0_f32, len);
+    for (origin, direction, low, high) in [
+        (a.x, unit.x, rect.min.x, rect.max.x),
+        (a.y, unit.y, rect.min.y, rect.max.y),
+    ] {
+        if direction.abs() < f32::EPSILON {
+            if origin < low || origin > high {
+                return None;
+            }
+            continue;
+        }
+        let (near, far) = ((low - origin) / direction, (high - origin) / direction);
+        t0 = t0.max(near.min(far));
+        t1 = t1.min(near.max(far));
+        if t0 > t1 {
+            return None;
+        }
+    }
+    Some((t0, t1))
+}
+
+/// Dashes of length `dash` separated by `gap`, phased from `a`. Only dashes
+/// that can touch `clip` are emitted: a long edge that leaves the viewport
+/// costs what is visible, not its full on-screen length.
+fn dashed_line(
+    shapes: &mut Vec<egui::Shape>,
+    a: Pos2,
+    b: Pos2,
+    stroke: Stroke,
+    dash: f32,
+    gap: f32,
+    clip: Rect,
+) {
     let dir = b - a;
     let len = dir.length();
     if len < 0.5 {
@@ -540,25 +608,47 @@ fn dashed_line(painter: &egui::Painter, a: Pos2, b: Pos2, stroke: Stroke, dash: 
     }
     let unit = dir / len;
     let step = (dash + gap).max(1.0);
-    let mut t = 0.0;
-    while t < len {
+    let margin = stroke.width + 1.0;
+    let Some((from, to)) = segment_span_in_rect(a, unit, len, clip.expand(margin)) else {
+        return;
+    };
+    // Whole dashes only, on the same phase as an unclipped line.
+    let first = ((from - dash) / step).floor().max(0.0) as u32;
+    let mut index = first;
+    loop {
+        let t = index as f32 * step;
+        if t >= len || t > to {
+            break;
+        }
         let t1 = (t + dash).min(len);
-        painter.line_segment([a + unit * t, a + unit * t1], stroke);
-        t += step;
+        shapes.push(egui::Shape::line_segment(
+            [a + unit * t, a + unit * t1],
+            stroke,
+        ));
+        index += 1;
     }
 }
 
+/// Unit circle sampled every 15°, shared by every dashed stub outline.
+fn unit_circle() -> &'static [Vec2; DASHED_CIRCLE_SEGMENTS + 1] {
+    static TABLE: std::sync::OnceLock<[Vec2; DASHED_CIRCLE_SEGMENTS + 1]> =
+        std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        std::array::from_fn(|i| {
+            let angle = TAU * (i as f32) / (DASHED_CIRCLE_SEGMENTS as f32);
+            Vec2::new(angle.cos(), angle.sin())
+        })
+    })
+}
+
+const DASHED_CIRCLE_SEGMENTS: usize = 24;
+
 fn dashed_circle(painter: &egui::Painter, center: Pos2, radius: f32, stroke: Stroke) {
     // 24 segments; draw every other chord as a dash.
-    let n = 24i32;
-    for i in 0..n {
-        if i % 2 != 0 {
-            continue;
-        }
-        let a0 = TAU * (i as f32) / (n as f32);
-        let a1 = TAU * ((i + 1) as f32) / (n as f32);
-        let p0 = center + Vec2::new(a0.cos(), a0.sin()) * radius;
-        let p1 = center + Vec2::new(a1.cos(), a1.sin()) * radius;
+    let table = unit_circle();
+    for i in (0..DASHED_CIRCLE_SEGMENTS).step_by(2) {
+        let p0 = center + table[i] * radius;
+        let p1 = center + table[i + 1] * radius;
         painter.line_segment([p0, p1], stroke);
     }
 }
@@ -572,8 +662,8 @@ mod tests {
         let node = UiNode {
             id: "node-1".into(),
             kind: "document".into(),
+            node_kind: Some(NodeKind::Document),
             label: "Architecture".into(),
-            color: Color32::WHITE,
             document_id: Some("doc-1".into()),
             uri: Some("wiki://architecture".into()),
             resolved: true,
@@ -595,5 +685,83 @@ mod tests {
         assert!((overview_camera_zoom(0.1, 5_001) - 0.8).abs() < f32::EPSILON);
         assert!((overview_camera_zoom(0.01, 5_001) - 0.75).abs() < f32::EPSILON);
         assert!((overview_camera_zoom(0.1, 5_000) - 0.1).abs() < f32::EPSILON);
+    }
+
+    fn dash_segments(a: Pos2, b: Pos2, clip: Rect) -> Vec<[Pos2; 2]> {
+        let mut shapes = Vec::new();
+        dashed_line(
+            &mut shapes,
+            a,
+            b,
+            Stroke::new(1.0, Color32::WHITE),
+            4.0,
+            4.0,
+            clip,
+        );
+        shapes
+            .into_iter()
+            .map(|shape| match shape {
+                egui::Shape::LineSegment { points, .. } => points,
+                other => panic!("unexpected shape {other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn clipped_dashes_are_the_visible_subset_of_the_full_line() {
+        let everything = Rect::from_min_max(Pos2::new(-1e6, -1e6), Pos2::new(1e6, 1e6));
+        let view = Rect::from_min_max(Pos2::new(100.0, 100.0), Pos2::new(300.0, 250.0));
+        for (a, b) in [
+            (Pos2::new(-500.0, -400.0), Pos2::new(900.0, 700.0)),
+            (Pos2::new(900.0, 120.0), Pos2::new(-300.0, 240.0)),
+            (Pos2::new(150.0, -2_000.0), Pos2::new(150.0, 2_000.0)),
+            (Pos2::new(120.0, 120.0), Pos2::new(280.0, 230.0)),
+        ] {
+            let full = dash_segments(a, b, everything);
+            let clipped = dash_segments(a, b, view);
+            assert!(clipped.len() < full.len() || full.len() <= 40);
+            // Every clipped dash is one of the unclipped dashes (same phase)...
+            for dash in &clipped {
+                assert!(full.iter().any(|other| {
+                    (other[0] - dash[0]).length() < 0.01 && (other[1] - dash[1]).length() < 0.01
+                }));
+            }
+            // ...and no dash that reaches the viewport is dropped.
+            let visible = view.expand(1.0);
+            for dash in &full {
+                let touches = (0..=8).any(|step| {
+                    visible.contains(dash[0] + (dash[1] - dash[0]) * (step as f32 / 8.0))
+                });
+                if touches {
+                    assert!(clipped
+                        .iter()
+                        .any(|kept| (kept[0] - dash[0]).length() < 0.01));
+                }
+            }
+        }
+        // A line that misses the viewport costs nothing.
+        assert!(dash_segments(Pos2::new(0.0, 0.0), Pos2::new(50.0, 900.0), view).is_empty());
+    }
+
+    #[test]
+    fn unit_circle_table_closes_the_loop() {
+        let table = unit_circle();
+        assert!((table[0] - Vec2::new(1.0, 0.0)).length() < 1e-6);
+        assert!((table[DASHED_CIRCLE_SEGMENTS] - table[0]).length() < 1e-5);
+        assert!(table.iter().all(|p| (p.length() - 1.0).abs() < 1e-6));
+    }
+
+    #[test]
+    fn node_radius_is_monotonic_in_degree_and_bounded() {
+        for zoom in [0.05, 0.4, 1.0, 3.0, 12.0] {
+            let cap = node_radius(u32::MAX, zoom, false);
+            let mut previous = 0.0;
+            for degree in [0, 1, 5, 50, 5_000, 1_000_000] {
+                let radius = node_radius(degree, zoom, false);
+                assert!(radius >= previous && radius <= cap);
+                previous = radius;
+            }
+            assert_eq!(node_radius(7, zoom, true), 2.5);
+        }
     }
 }

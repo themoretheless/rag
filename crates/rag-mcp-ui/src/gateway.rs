@@ -65,7 +65,7 @@ pub fn client(timeout_secs: u64) -> Result<ReqwestGatewayClient, String> {
 }
 
 /// `base` + `path`, rejecting an empty base URL.
-pub fn join_url(base: &str, path: &str) -> Result<String, String> {
+fn join_url(base: &str, path: &str) -> Result<String, String> {
     let base = base.trim().trim_end_matches('/');
     if base.is_empty() {
         return Err("http base URL is empty".to_string());
@@ -73,25 +73,81 @@ pub fn join_url(base: &str, path: &str) -> Result<String, String> {
     Ok(format!("{base}/{}", path.trim_start_matches('/')))
 }
 
-/// Send a request and decode a JSON reply; `context` names the operation in
-/// error messages.
-pub fn send_json<T: serde::de::DeserializeOwned>(
-    client: &dyn GatewayClient,
-    base: &str,
-    path: &str,
-    method: Method,
-    body: Option<String>,
+/// One gateway endpoint: an injected transport plus the base URL every request
+/// is joined onto. All product HTTP loaders go through this type so status
+/// handling and JSON decoding have a single implementation.
+#[derive(Clone, Copy)]
+pub struct GatewayApi<'a> {
+    client: &'a dyn GatewayClient,
+    base: &'a str,
+}
+
+impl<'a> GatewayApi<'a> {
+    /// Bind a transport to a base URL (whitespace and trailing `/` are ignored).
+    pub fn new(client: &'a dyn GatewayClient, base: &'a str) -> Self {
+        Self {
+            client,
+            base: base.trim().trim_end_matches('/'),
+        }
+    }
+
+    /// Normalized base URL.
+    pub fn base(&self) -> &'a str {
+        self.base
+    }
+
+    /// Send one request and return the raw response (any HTTP status).
+    pub fn request(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<String>,
+        headers: Vec<(String, String)>,
+    ) -> Result<Response, String> {
+        execute_request(
+            self.client,
+            Request {
+                method,
+                url: join_url(self.base, path)?,
+                body,
+                headers,
+            },
+        )
+    }
+
+    /// `GET path` returning the raw response (any HTTP status).
+    pub fn get_response(&self, path: &str) -> Result<Response, String> {
+        self.request(Method::Get, path, None, Vec::new())
+    }
+
+    /// `GET path` and decode a JSON reply; `context` names the operation in
+    /// error messages.
+    pub fn get<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        context: &str,
+    ) -> Result<T, String> {
+        self.send(Method::Get, path, None, context)
+    }
+
+    /// Send a request and decode a JSON reply; `context` names the operation in
+    /// error messages.
+    pub fn send<T: serde::de::DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<String>,
+        context: &str,
+    ) -> Result<T, String> {
+        decode_json(self.request(method, path, body, Vec::new())?, context)
+    }
+}
+
+/// Decode a successful JSON response, or format the HTTP error for `context`.
+pub fn decode_json<T: serde::de::DeserializeOwned>(
+    response: Response,
     context: &str,
 ) -> Result<T, String> {
-    let response = execute_request(
-        client,
-        Request {
-            method,
-            url: join_url(base, path)?,
-            body,
-            headers: Vec::new(),
-        },
-    )?;
     if !response.is_success() {
         return Err(format_http_error(&response, context));
     }
