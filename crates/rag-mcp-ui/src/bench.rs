@@ -93,7 +93,7 @@ pub(crate) fn synthetic_view(nodes: usize, edges: usize) -> GraphView {
     let graph_edges = (0..edges)
         .map(|index| {
             // Every eighth edge attaches to one of 16 hubs.
-            let source = if index % 8 == 0 {
+            let source = if index.is_multiple_of(8) {
                 rng.next(16)
             } else {
                 rng.next(nodes)

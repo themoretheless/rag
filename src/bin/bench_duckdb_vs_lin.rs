@@ -2265,13 +2265,13 @@ fn main() -> Result<()> {
                 for step in 0..25usize {
                     let id = &ids[(tid * 97 + step) % ids.len()];
                     std::hint::black_box(st.get_document(id).unwrap());
-                    if step % 5 == 0 {
+                    if step.is_multiple_of(5) {
                         let q = hybrid_queries[(tid + step) % hybrid_queries.len()];
                         std::hint::black_box(
                             fts::search_bm25(&st, q, 10, &LexFilters::default()).unwrap(),
                         );
                     }
-                    if step % 10 == 0 {
+                    if step.is_multiple_of(10) {
                         let qv = &qvs[(tid * 3 + step) % qvs.len()];
                         std::hint::black_box(search::search_chunks(&st, qv, 10, None).unwrap());
                     }

@@ -793,7 +793,7 @@ fn run_migration(args: &CliArgs) -> Result<()> {
                 if batch.len() >= CHUNK_BATCH_SIZE {
                     w.insert_records("chunks", std::mem::take(&mut batch))?;
                 }
-                if processed % 100_000 == 0 {
+                if processed.is_multiple_of(100_000) {
                     println!(
                         "      ... chunks progress: {processed}/{src_rows} ({:.1}s)",
                         t_chunks.elapsed().as_secs_f64()

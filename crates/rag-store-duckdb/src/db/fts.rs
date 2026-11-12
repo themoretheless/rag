@@ -395,7 +395,7 @@ fn advance_chunks_generation(w: &mut impl LinWriter) -> Result<u64> {
         .checked_add(1)
         .ok_or_else(|| AppError::fts("FTS chunks generation overflow"))?;
     upsert_meta(w, META_CHUNKS_GENERATION, &next.to_string())?;
-    if next % 256 == 0 && next > CHANGE_LOG_WINDOW {
+    if next.is_multiple_of(256) && next > CHANGE_LOG_WINDOW {
         let cutoff = (next - CHANGE_LOG_WINDOW) as i64;
         w.delete_where(
             "chunk_change_log",
