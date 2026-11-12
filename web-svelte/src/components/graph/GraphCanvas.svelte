@@ -1,41 +1,77 @@
 <script lang="ts">
-  import { onDestroy, onMount, untrack } from 'svelte'
+  import { onDestroy, untrack } from 'svelte'
   import { select, type Selection } from 'd3-selection'
-  import { zoom, zoomIdentity, type ZoomBehavior, type ZoomTransform } from 'd3-zoom'
-  import { graph } from '@/lib/state/graph.svelte'
-  import { ui } from '@/lib/state/ui.svelte'
+  import { zoom, zoomIdentity, type D3ZoomEvent, type ZoomBehavior } from 'd3-zoom'
+  import type { GraphEdge, GraphNode } from '@/api/types'
+  import { debounce } from '@/lib/async'
   import {
-    buildSimulation,
+    GraphSimulation,
     createNodeDrag,
+    kindBucket,
     nodeColor,
+    type LayoutMode,
     type SimLink,
     type SimNode,
   } from '@/lib/forceLayout'
+  import { graph } from '@/lib/state/graph.svelte'
+  import { ui } from '@/lib/state/ui.svelte'
 
-  let host: HTMLDivElement | null = $state(null)
-  let cleanup: (() => void) | null = null
+  type SvgSelection = Selection<SVGSVGElement, unknown, null, undefined>
+  type LayerSelection = Selection<SVGGElement, unknown, null, undefined>
+  type NodeSelection = Selection<SVGGElement, SimNode, SVGGElement, unknown>
+  type LinkSelection = Selection<SVGLineElement, SimLink, SVGGElement, unknown>
 
-  /** Live zoom + layout state for fitView/minimap (rebuilt on each paint). */
-  let svgSel: Selection<SVGSVGElement, unknown, null, undefined> | null = null
-  let zoomBehavior: ZoomBehavior<SVGSVGElement, unknown> | null = null
-  let liveNodes: SimNode[] = []
+  /** The persistent SVG skeleton. Built once; graph loads only join data into it. */
+  interface Scene {
+    svg: SvgSelection
+    viewport: LayerSelection
+    links: LayerSelection
+    nodes: LayerSelection
+    empty: Selection<SVGTextElement, unknown, null, undefined>
+    zoom: ZoomBehavior<SVGSVGElement, unknown>
+  }
+
   /** Fallback viewport before the host element has been measured. */
   const DEFAULT_VIEW_WIDTH = 800
   const DEFAULT_VIEW_HEIGHT = 600
   /** Width reserved for the inspector panel; also the minimum usable canvas width. */
   const INSPECTOR_WIDTH = 360
   const MIN_USABLE_WIDTH = 360
-  let viewW = $state(DEFAULT_VIEW_WIDTH)
-  let viewH = $state(DEFAULT_VIEW_HEIGHT)
-  let nodeSel: Selection<SVGGElement, SimNode, SVGGElement, unknown> | null = null
-  let linkSel: Selection<SVGLineElement, SimLink, SVGGElement, unknown> | null = null
-  let currentTransform: ZoomTransform = zoomIdentity
+  /** Ticks after a graph load before the view is fitted to the settled layout. */
+  const FIT_AFTER_TICKS = 100
+  const RESIZE_DEBOUNCE_MS = 120
+  /** Node kinds that get their own halo gradient (see `kindBucket`). */
+  const HALO_BUCKETS = ['document', 'wiki', 'tag', 'entity', 'stub'] as const
+  /** How far the halo reaches beyond the node's radius. */
+  const HALO_SPREAD = 13
+  /** Hubs (by radius) keep their label in `hubs` label mode. */
+  const HUB_RADIUS = 11
+
+  let host: HTMLDivElement | null = $state(null)
+  let viewW = DEFAULT_VIEW_WIDTH
+  let viewH = DEFAULT_VIEW_HEIGHT
+
+  let scene: Scene | null = null
+  let nodeSel: NodeSelection | null = null
+  let linkSel: LinkSelection | null = null
+  /** Node elements by id, for updates that touch one or two nodes (hover). */
+  const nodeElements = new Map<string, SVGGElement>()
+  let renderedNodes: readonly GraphNode[] | null = null
+  let tickCount = 0
+
+  const simulation = new GraphSimulation()
+  const nodeDrag = createNodeDrag(simulation.sim)
+  simulation.sim.on('tick', () => {
+    renderPositions()
+    tickCount += 1
+    if (tickCount === FIT_AFTER_TICKS) fitView()
+  })
 
   export function fitView() {
-    if (!svgSel || !zoomBehavior) return
-    const nodes = liveNodes
+    if (!scene) return
+    const nodes = simulation.nodes
     if (!nodes.length) {
-      svgSel.call(zoomBehavior.transform as never, zoomIdentity)
+      scene.zoom.transform(scene.svg, zoomIdentity)
       return
     }
 
@@ -53,7 +89,7 @@
       if (y + r > maxY) maxY = y + r
     }
     if (!Number.isFinite(minX) || !Number.isFinite(minY)) {
-      svgSel.call(zoomBehavior.transform as never, zoomIdentity)
+      scene.zoom.transform(scene.svg, zoomIdentity)
       return
     }
 
@@ -61,240 +97,265 @@
     const bw = Math.max(1, maxX - minX)
     const bh = Math.max(1, maxY - minY)
     const usableW = Math.max(MIN_USABLE_WIDTH, viewW - (graph.selectedId ? INSPECTOR_WIDTH : 0))
-    const scale = Math.max(
-      0.35,
-      Math.min(1.8, Math.min(usableW / (bw + pad * 2), viewH / (bh + pad * 2))),
-    )
+    const scale = Math.max(0.35, Math.min(1.8, Math.min(usableW / (bw + pad * 2), viewH / (bh + pad * 2))))
     const tx = usableW / 2 - (scale * (minX + maxX)) / 2
     const ty = viewH / 2 - (scale * (minY + maxY)) / 2
-    svgSel.call(zoomBehavior.transform as never, zoomIdentity.translate(tx, ty).scale(scale))
+    scene.zoom.transform(scene.svg, zoomIdentity.translate(tx, ty).scale(scale))
   }
 
   function zoomBy(factor: number) {
-    if (!svgSel || !zoomBehavior) return
-    svgSel.call(zoomBehavior.scaleBy as never, factor)
+    if (scene) scene.zoom.scaleBy(scene.svg, factor)
   }
 
   export function zoomIn() { zoomBy(1.25) }
   export function zoomOut() { zoomBy(0.8) }
 
-  function paint() {
-    cleanup?.()
-    cleanup = null
-    svgSel = null
-    zoomBehavior = null
-    liveNodes = []
-    nodeSel = null
-    linkSel = null
-    const el = host
-    if (!el) return
+  function createScene(el: HTMLDivElement): Scene {
+    const svg: SvgSelection = select(el).append('svg').attr('width', '100%').attr('height', '100%')
 
-    const width = el.clientWidth || DEFAULT_VIEW_WIDTH
-    const height = el.clientHeight || DEFAULT_VIEW_HEIGHT
-    viewW = width
-    viewH = height
-    el.innerHTML = ''
-
-    const svg = select(el)
-      .append('svg')
-      .attr('width', '100%')
-      .attr('height', '100%')
-      .attr('viewBox', `0 0 ${width} ${height}`)
-
-    svgSel = svg as Selection<SVGSVGElement, unknown, null, undefined>
-
-    // soft vignette background
+    // Soft node halo as a radial gradient per kind: the look of the former per-node
+    // feGaussianBlur filter without a filter pass for every node on every frame.
     const defs = svg.append('defs')
-    const glow = defs
-      .append('filter')
-      .attr('id', 'glow')
-      .attr('x', '-50%')
-      .attr('y', '-50%')
-      .attr('width', '200%')
-      .attr('height', '200%')
-    glow.append('feGaussianBlur').attr('stdDeviation', '3.5').attr('result', 'coloredBlur')
-    const merge = glow.append('feMerge')
-    merge.append('feMergeNode').attr('in', 'coloredBlur')
-    merge.append('feMergeNode').attr('in', 'SourceGraphic')
-
-    const root = svg.append('g').attr('class', 'viewport')
-
-    const z = zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.3, 2.5])
-      .on('zoom', (event) => {
-        currentTransform = event.transform
-        root.attr('transform', event.transform)
-      })
-    zoomBehavior = z
-    currentTransform = zoomIdentity
-    svg.call(z as never)
-    svg.call(z.transform as never, zoomIdentity.translate(0, 0).scale(1))
-
-    if (!graph.nodes.length) {
-      root
-        .append('text')
-        .attr('x', width / 2)
-        .attr('y', height / 2)
-        .attr('text-anchor', 'middle')
-        .attr('fill', 'var(--graph-panel-muted)')
-        .attr('font-size', 14)
-        .text(graph.loading ? ui.t('graphLoading') : graph.error || ui.t('graphNoNodes'))
-      cleanup = () => {
-        el.innerHTML = ''
-        svgSel = null
-        zoomBehavior = null
-        liveNodes = []
+    for (const bucket of HALO_BUCKETS) {
+      const gradient = defs.append('radialGradient').attr('id', `graph-halo-${bucket}`)
+      for (const [offset, opacity] of [[0, 0.18], [0.45, 0.18], [0.72, 0.09], [1, 0]] as const) {
+        gradient
+          .append('stop')
+          .attr('offset', offset)
+          .style('stop-color', nodeColor(bucket))
+          .style('stop-opacity', opacity)
       }
-      return
     }
 
-    const { sim, simNodes, simLinks } = buildSimulation(graph.nodes, graph.edges, width, height, {
-      layout: graph.layout,
-      seedKey: graph.mode === 'local' ? graph.seed : null,
-    })
-    liveNodes = simNodes
-
-    const link = root
-      .append('g')
-      .attr('class', 'links')
-      .selectAll<SVGLineElement, SimLink>('line')
-      .data(simLinks)
-      .join('line')
-      .attr('stroke', (d) => d.rel_type === 'wikilink' ? 'var(--graph-edge-wikilink)' : d.rel_type === 'tagged' ? 'var(--graph-node-tag)' : d.rel_type === 'tunnel' ? 'var(--graph-node-entity)' : 'var(--graph-edge)')
-      .attr('stroke-width', (d) => d.rel_type === 'tunnel' ? 2 : d.rel_type === 'wikilink' ? 1.6 : 1)
-      .attr('stroke-dasharray', (d) => d.rel_type === 'tagged' ? '2 4' : d.rel_type === 'tunnel' ? '7 5' : null)
-      .attr('stroke-opacity', 0.85)
-    linkSel = link
-
-    const nodeG = root
-      .append('g')
-      .attr('class', 'nodes')
-      .selectAll<SVGGElement, SimNode>('g')
-      .data(simNodes)
-      .join('g')
-      .style('cursor', 'grab')
-      .call(createNodeDrag(sim) as never)
-      .on('click', (event, d) => {
-        // d3-drag marks the click as defaultPrevented after a real drag.
-        if (event.defaultPrevented) return
-        graph.select(d.id)
-      })
-      .on('mouseenter', (_event, d) => { graph.hoveredId = d.id; applySelection() })
-      .on('mouseleave', () => { graph.hoveredId = null; applySelection() })
-    nodeSel = nodeG
-
-    nodeG
-      .append('circle')
-      .attr('r', (d) => d.radius + 6)
-      .attr('fill', (d) => nodeColor(d.kind))
-      .attr('opacity', 0.18)
-      .attr('filter', 'url(#glow)')
-
-    nodeG
-      .append('circle')
-      .attr('class', 'core')
-      .attr('r', (d) => d.radius)
-      .attr('fill', (d) => nodeColor(d.kind))
-      .attr('stroke', 'var(--graph-node-stroke)')
-      .attr('stroke-width', 1)
-
-    const labels = nodeG
+    const viewport = svg.append('g').attr('class', 'viewport')
+    const empty = viewport
       .append('text')
-      .text((d) => (d.label.length > 28 ? d.label.slice(0, 26) + '…' : d.label))
-      .attr('x', (d) => d.radius + 6)
-      .attr('y', 4)
-      .attr('fill', 'var(--graph-label)')
-      .attr('font-size', 11)
-      .attr('font-family', 'Golos Text, system-ui, sans-serif')
-      .attr('paint-order', 'stroke')
-      .attr('stroke', 'var(--graph-label-stroke)')
-      .attr('stroke-width', 3)
+      .attr('class', 'empty')
+      .attr('text-anchor', 'middle')
+      .attr('fill', 'var(--graph-panel-muted)')
+      .attr('font-size', 14)
+    const links = viewport.append('g').attr('class', 'links')
+    const nodes = viewport.append('g').attr('class', 'nodes')
 
-    labels.attr('display', (d) => graph.labelMode === 'all' || (graph.labelMode === 'hubs' && d.radius >= 11) ? null : 'none')
+    const zoomBehavior = zoom<SVGSVGElement, unknown>()
+      .scaleExtent([0.3, 2.5])
+      // Explicit extent: the default one reads SVG `viewBox.baseVal`, which is layout-dependent.
+      .extent((): [[number, number], [number, number]] => [[0, 0], [viewW, viewH]])
+      .on('zoom', (event: D3ZoomEvent<SVGSVGElement, unknown>) => {
+        viewport.attr('transform', event.transform.toString())
+      })
+    svg.call(zoomBehavior)
 
-    let tickCount = 0
-    function tick() {
-      link
-        .attr('x1', (d) => (d.source as SimNode).x ?? 0)
-        .attr('y1', (d) => (d.source as SimNode).y ?? 0)
-        .attr('x2', (d) => (d.target as SimNode).x ?? 0)
-        .attr('y2', (d) => (d.target as SimNode).y ?? 0)
-      nodeG.attr('transform', (d) => `translate(${d.x ?? 0},${d.y ?? 0})`)
-      tickCount += 1
-      if (tickCount === 100) fitView()
-    }
-
-    sim.on('tick', tick)
-    // Radial layout's sim is stopped: paint one frame manually.
-    tick()
-    applySelection()
-
-    cleanup = () => {
-      sim.stop()
-      el.innerHTML = ''
-      svgSel = null
-      zoomBehavior = null
-      liveNodes = []
-      nodeSel = null
-      linkSel = null
-    }
+    return { svg, viewport, links, nodes, empty, zoom: zoomBehavior }
   }
 
-  /** Highlight selected node + dim non-neighbors when focus mode is on. */
+  /** Read the host size; returns whether it changed. */
+  function measure(el: HTMLDivElement): boolean {
+    const width = el.clientWidth || DEFAULT_VIEW_WIDTH
+    const height = el.clientHeight || DEFAULT_VIEW_HEIGHT
+    if (width === viewW && height === viewH) return false
+    viewW = width
+    viewH = height
+    return true
+  }
+
+  const linkKey = (d: SimLink) => `${d.source.id}\u0000${d.target.id}\u0000${d.rel_type}`
+  const linkStroke = (d: SimLink) =>
+    d.rel_type === 'wikilink' ? 'var(--graph-edge-wikilink)' : d.rel_type === 'tagged' ? 'var(--graph-node-tag)' : d.rel_type === 'tunnel' ? 'var(--graph-node-entity)' : 'var(--graph-edge)'
+  const linkWidth = (d: SimLink) => (d.rel_type === 'tunnel' ? 2 : d.rel_type === 'wikilink' ? 1.6 : 1)
+  const linkDash = (d: SimLink) => (d.rel_type === 'tagged' ? '2 4' : d.rel_type === 'tunnel' ? '7 5' : null)
+  const nodeLabel = (d: SimNode) => (d.label.length > 28 ? d.label.slice(0, 26) + '…' : d.label)
+
+  /** Keyed data join: elements of nodes / links that stay on screen are reused. */
+  function joinData(target: Scene) {
+    linkSel = target.links
+      .selectAll<SVGLineElement, SimLink>('line')
+      .data(simulation.links, linkKey)
+      .join('line')
+      .attr('stroke', linkStroke)
+      .attr('stroke-width', linkWidth)
+      .attr('stroke-dasharray', linkDash)
+
+    nodeSel = target.nodes
+      .selectAll<SVGGElement, SimNode>('g.node')
+      .data(simulation.nodes, (d) => d.id)
+      .join(
+        (enter) => {
+          const group = enter
+            .append('g')
+            .attr('class', 'node')
+            .style('cursor', 'grab')
+            .call(nodeDrag)
+            .on('click', (event: MouseEvent, d) => {
+              // d3-drag marks the click as defaultPrevented after a real drag.
+              if (event.defaultPrevented) return
+              graph.select(d.id)
+            })
+            .on('mouseenter', (_event, d) => { graph.hoveredId = d.id })
+            .on('mouseleave', () => { graph.hoveredId = null })
+          group.append('circle').attr('class', 'halo')
+          group
+            .append('circle')
+            .attr('class', 'core')
+            .attr('stroke', 'var(--graph-node-stroke)')
+            .attr('stroke-width', 1)
+          group
+            .append('text')
+            .attr('y', 4)
+            .attr('fill', 'var(--graph-label)')
+            .attr('font-size', 11)
+            .attr('font-family', 'Golos Text, system-ui, sans-serif')
+            .attr('paint-order', 'stroke')
+            .attr('stroke', 'var(--graph-label-stroke)')
+            .attr('stroke-width', 3)
+          return group
+        },
+        (update) => update,
+        (exit) => exit.remove(),
+      )
+
+    // Kind, label and degree-based radius can change for a node that stays on screen.
+    nodeSel
+      .select<SVGCircleElement>('circle.halo')
+      .attr('r', (d) => d.radius + HALO_SPREAD)
+      .attr('fill', (d) => `url(#graph-halo-${kindBucket(d.kind)})`)
+    nodeSel
+      .select<SVGCircleElement>('circle.core')
+      .attr('r', (d) => d.radius)
+      .attr('fill', (d) => nodeColor(d.kind))
+    nodeSel
+      .select<SVGTextElement>('text')
+      .text(nodeLabel)
+      .attr('x', (d) => d.radius + 6)
+
+    nodeElements.clear()
+    nodeSel.each(function (d) {
+      nodeElements.set(d.id, this)
+    })
+  }
+
+  function renderPositions() {
+    linkSel
+      ?.attr('x1', (d) => d.source.x ?? 0)
+      .attr('y1', (d) => d.source.y ?? 0)
+      .attr('x2', (d) => d.target.x ?? 0)
+      .attr('y2', (d) => d.target.y ?? 0)
+    nodeSel?.attr('transform', (d) => `translate(${d.x ?? 0},${d.y ?? 0})`)
+  }
+
+  function labelDisplay(d: SimNode): string | null {
+    const visible =
+      graph.labelMode === 'all' ||
+      (graph.labelMode === 'hubs' && (d.radius >= HUB_RADIUS || d.id === graph.hoveredId || d.id === graph.selectedId))
+    return visible ? null : 'none'
+  }
+
+  /** Highlight the selected node, dim non-neighbours in focus mode, refresh label visibility. */
   function applySelection() {
     const id = graph.selectedId
     const focus = graph.focusNodeIds
     if (nodeSel) {
       nodeSel
-        .select('circle.core')
-        .attr('stroke-width', (d: SimNode) => (d.id === id ? 2.5 : 1))
-        .attr('stroke', (d: SimNode) =>
-          d.id === id ? 'var(--graph-node-stroke-selected)' : 'var(--graph-node-stroke)',
-        )
-      nodeSel.attr('opacity', (d: SimNode) => (focus && !focus.has(d.id) ? 0.25 : 1))
-      nodeSel.select('text').attr('display', (d: SimNode) => graph.labelMode === 'all' || (graph.labelMode === 'hubs' && (d.radius >= 11 || d.id === graph.hoveredId || d.id === id)) ? null : 'none')
+        .select<SVGCircleElement>('circle.core')
+        .attr('stroke-width', (d) => (d.id === id ? 2.5 : 1))
+        .attr('stroke', (d) => (d.id === id ? 'var(--graph-node-stroke-selected)' : 'var(--graph-node-stroke)'))
+      nodeSel.attr('opacity', (d) => (focus && !focus.has(d.id) ? 0.25 : 1))
+      nodeSel.select<SVGTextElement>('text').attr('display', labelDisplay)
     }
-    if (linkSel) {
-      linkSel.attr('stroke-opacity', (d) =>
-        focus && !graph.isFocusEdge((d.source as SimNode).id, (d.target as SimNode).id)
-          ? 0.12
-          : 0.85,
-      )
-    }
+    linkSel?.attr('stroke-opacity', (d) => (focus && !graph.isFocusEdge(d.source.id, d.target.id) ? 0.12 : 0.85))
   }
 
+  /** Hover only decides whether one node shows its label: touch that node, not the graph. */
+  function applyHoverLabel(id: string | null) {
+    const element = id === null ? undefined : nodeElements.get(id)
+    if (element) select<SVGGElement, SimNode>(element).select<SVGTextElement>('text').attr('display', labelDisplay)
+  }
+
+  function layoutOptions(layout: LayoutMode, seedKey: string | null) {
+    return { width: viewW, height: viewH, layout, seedKey }
+  }
+
+  function applyViewBox(target: Scene) {
+    target.svg.attr('viewBox', `0 0 ${viewW} ${viewH}`)
+    target.empty.attr('x', viewW / 2).attr('y', viewH / 2)
+  }
+
+  function renderGraph(el: HTMLDivElement, nodes: readonly GraphNode[], edges: readonly GraphEdge[], layout: LayoutMode, seedKey: string | null) {
+    scene ??= createScene(el)
+    measure(el)
+    applyViewBox(scene)
+    simulation.setData(nodes, edges, layoutOptions(layout, seedKey))
+    joinData(scene)
+    tickCount = 0
+    // A different node set is a new view: start from the unzoomed frame, fit once settled.
+    if (nodes !== renderedNodes) scene.zoom.transform(scene.svg, zoomIdentity)
+    renderedNodes = nodes
+    renderPositions()
+    applySelection()
+  }
+
+  // Graph data and layout. Only these re-run the join; selection and hover never do.
   $effect(() => {
-    // Keep the previous graph stable while a replacement request is loading.
-    // Loading text only needs a repaint when there is no graph yet.
-    void graph.nodes
-    void graph.edges
-    void graph.layout
-    void graph.mode
-    if (graph.layout === 'radial') void graph.seed
-    if (!graph.nodes.length) void graph.loading
-    untrack(paint)
+    const el = host
+    if (!el) return
+    const nodes = graph.nodes
+    const edges = graph.edges
+    const layout = graph.layout
+    // The radial centre is the seed of the *loaded* neighbourhood. The editable seed
+    // input follows the selection and must not re-lay-out the canvas.
+    const seedKey = layout === 'radial' && graph.mode === 'local' ? graph.loadedSeed : null
+    untrack(() => { renderGraph(el, nodes, edges, layout, seedKey) })
   })
 
+  // Placeholder while there is nothing to draw.
   $effect(() => {
-    // Cheap attr updates only; no repaint.
+    if (!host) return
+    const message = graph.nodes.length ? null : graph.loading ? ui.t('graphLoading') : graph.error || ui.t('graphNoNodes')
+    scene?.empty.attr('display', message === null ? 'none' : null).text(message ?? '')
+  })
+
+  // Selection, focus and label mode: attribute updates only.
+  $effect(() => {
     void graph.selectedId
     void graph.focusNodeIds
-    void graph.hoveredId
     void graph.labelMode
-    applySelection()
+    untrack(applySelection)
   })
 
-  let ro: ResizeObserver | null = null
+  let hoveredBefore: string | null = null
+  $effect(() => {
+    const hovered = graph.hoveredId
+    untrack(() => {
+      applyHoverLabel(hoveredBefore)
+      applyHoverLabel(hovered)
+      hoveredBefore = hovered
+    })
+  })
 
-  onMount(() => {
-    paint()
-    ro = new ResizeObserver(() => paint())
-    if (host) ro.observe(host)
+  // A resize re-lays-out the current data; bursts of observer callbacks collapse into one.
+  const onResize = debounce(() => {
+    if (!host || !scene || !measure(host)) return
+    applyViewBox(scene)
+    const layout = graph.layout
+    simulation.relayout(layoutOptions(layout, layout === 'radial' && graph.mode === 'local' ? graph.loadedSeed : null))
+    tickCount = 0
+    renderPositions()
+  }, RESIZE_DEBOUNCE_MS)
+
+  $effect(() => {
+    const el = host
+    if (!el) return
+    const observer = new ResizeObserver(() => { onResize() })
+    observer.observe(el)
+    return () => { observer.disconnect() }
   })
 
   onDestroy(() => {
-    ro?.disconnect()
-    cleanup?.()
+    onResize.cancel()
+    simulation.stop()
+    simulation.sim.on('tick', null)
+    scene?.svg.remove()
+    scene = null
   })
 </script>
 

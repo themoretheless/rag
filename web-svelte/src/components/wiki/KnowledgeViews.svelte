@@ -1,11 +1,8 @@
 <script lang="ts">
   import { api } from '@/api/client'
+  import type { KnowledgeFilter as Filter, KnowledgeProps as Props, KnowledgeRow as Row, KnowledgeView as View } from '@/api/types'
   import { goWiki } from '@/lib/router.svelte'
   import { wiki } from '@/lib/state/wiki.svelte'
-  type Props = {document_type:string;review_status:string;owner:string;review_due:string}
-  type Filter = {q:string;wing:string;document_type:string;review_status:string;owner:string;due_before:string;offset:number}
-  type Row = {id:string;uri:string;title:string;wing:string|null;revision:number;properties:Partial<Props>}
-  type View = {id:string;name:string;revision:number;filters:Filter}
   const DOCUMENT_TYPE_OPTIONS = [['note','Заметка'],['decision','Решение'],['guide','Инструкция'],['service','Сервис'],['research','Исследование']] as const
   const REVIEW_STATUS_OPTIONS = [['draft','Черновик'],['needs_review','Нужна проверка'],['verified','Проверено']] as const
   const blankProps:Props={document_type:'',review_status:'',owner:'',review_due:''}
@@ -28,22 +25,22 @@
     busy=true;message=''
     const next = more?{...applied,offset:rows.length}:{...filter,offset:0}
     try {
-      const qs=new URLSearchParams(Object.entries(next).map(([k,v])=>[k,String(v)]))
-      const result=await api.get<{items:Row[];total:number}>(`/v1/knowledge?${qs}`)
+
+      const result=await api.knowledge(next)
       rows=more?[...rows,...result.items]:result.items;total=result.total;applied=next;loaded=true;selected=null
     } catch(e){message=String(e)} finally{busy=false}
   }
   async function loadViews() {
     if(busy || dirty)return
     busy=true;message=''
-    try{views=(await api.get<{items:View[]}>('/v1/knowledge/views')).items}catch(e){message=String(e)}finally{busy=false}
+    try{views=await api.knowledgeViews()}catch(e){message=String(e)}finally{busy=false}
   }
   function choose(v:View) {view=v;name=v.name;filter={...v.filters};void refresh()}
   async function saveView(copy=false) {
     if(busy)return
     busy=true;message=''
     try {
-      const result=await api.post<View>('/v1/knowledge/views',{id:copy?undefined:view?.id,revision:copy?undefined:view?.revision,name,filters:{...filter,offset:0}})
+      const result=await api.saveKnowledgeView({id:copy?undefined:view?.id,revision:copy?undefined:view?.revision,name,filters:{...filter,offset:0}})
       views=[result,...views.filter(v=>v.id!==result.id)];view=result;message='Представление сохранено.'
     }catch(e){message=String(e)}finally{busy=false}
   }
@@ -52,9 +49,10 @@
     if(!selected || busy)return
     busy=true;message=''
     try {
-      const result=await api.put<{revision:number}>('/v1/knowledge',{id:selected.id,revision:selected.revision,properties})
+      const result=await api.saveKnowledgeProperties({id:selected.id,revision:selected.revision,properties})
       selected={...selected,revision:result.revision,properties:{...properties}}
-      rows=rows.map(row=>row.id===selected?.id?selected:row) as Row[]
+      const saved=selected
+      rows=rows.map(row=>row.id===saved.id?saved:row)
       wiki.pages=wiki.pages.map(page=>page.id===selected?.id?{...page,revision:result.revision}:page)
       message='Свойства сохранены. Примените фильтры повторно, чтобы обновить состав представления.'
     }catch(e){message=String(e).includes('HTTP 409')?'Статья изменилась. Ваши правки остаются в форме; скопируйте их, отмените форму и загрузите свежую версию.':String(e)}finally{busy=false}

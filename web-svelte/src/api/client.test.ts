@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, api, hasGatewayToken, loadPanels, parseJsonBody, parseOptionalJsonBody, setGatewayToken } from './client'
+import { ApiError, api, hasGatewayToken, http, loadPanels, parseJsonBody, parseOptionalJsonBody, setGatewayToken } from './client'
 import { t } from '@/lib/i18n'
 
 const secret = 'test-access-token'
@@ -25,7 +25,7 @@ describe('gateway Bearer authentication', () => {
 
   it('allows an unauthenticated loopback server without a token', async () => {
     await api.health()
-    const [, init] = vi.mocked(fetch).mock.calls[0]
+    const init = vi.mocked(fetch).mock.calls[0]?.[1]
     expect(new Headers(init?.headers).has('Authorization')).toBe(false)
     expect(hasGatewayToken()).toBe(false)
   })
@@ -35,29 +35,29 @@ describe('gateway Bearer authentication', () => {
     await api.createWiki(body)
     await api.putWiki({ ...body, if_match_revision: 1 })
     const calls = vi.mocked(fetch).mock.calls
-    expect(calls[0][0]).toBe('/v1/wiki')
-    expect(calls[0][1]?.method).toBe('POST')
-    expect(calls[1][1]?.method).toBe('PUT')
+    expect(calls[0]?.[0]).toBe('/v1/wiki')
+    expect(calls[0]?.[1]?.method).toBe('POST')
+    expect(calls[1]?.[1]?.method).toBe('PUT')
   })
 
   it('authenticates reads, writes, and source downloads without putting the token in URLs', async () => {
     setGatewayToken(secret)
     await api.health()
-    await api.get('/v1/status')
-    await api.post('/v1/search', { query: 'example' })
+    await http.get('/v1/status')
+    await http.post('/v1/search', { query: 'example' })
     await api.sourceFile('document with spaces')
 
     expect(fetch).toHaveBeenCalledTimes(4)
     for (const [url, init] of vi.mocked(fetch).mock.calls) {
       const headers = new Headers(init?.headers)
       expect(headers.get('Authorization')).toBe(`Bearer ${secret}`)
-      expect(String(url)).not.toContain(secret)
+      expect(url instanceof Request ? url.url : url.toString()).not.toContain(secret)
       expect(init?.redirect).toBe('error')
     }
-    const [, post] = vi.mocked(fetch).mock.calls[2]
+    const post = vi.mocked(fetch).mock.calls[2]?.[1]
     expect(new Headers(post?.headers).get('Content-Type')).toBe('application/json')
     expect(post?.body).toBe('{"query":"example"}')
-    expect(vi.mocked(fetch).mock.calls[3][0]).toBe('/v1/source-file?document_id=document%20with%20spaces')
+    expect(vi.mocked(fetch).mock.calls[3]?.[0]).toBe('/v1/source-file?document_id=document%20with%20spaces')
   })
 
   it('stores the token only in tab session storage and restores it after module reload', async () => {
@@ -68,7 +68,7 @@ describe('gateway Bearer authentication', () => {
     const reloaded = await import('./client')
     expect(reloaded.hasGatewayToken()).toBe(true)
     await reloaded.api.health()
-    expect(new Headers(vi.mocked(fetch).mock.calls[0][1]?.headers).get('Authorization')).toBe(`Bearer ${secret}`)
+    expect(new Headers(vi.mocked(fetch).mock.calls[0]?.[1]?.headers).get('Authorization')).toBe(`Bearer ${secret}`)
   })
 
   it('clears credentials and stops sending them on subsequent requests', async () => {
@@ -77,7 +77,7 @@ describe('gateway Bearer authentication', () => {
     expect(sessionStorage.length).toBe(0)
     expect(hasGatewayToken()).toBe(false)
     await api.health()
-    expect(new Headers(vi.mocked(fetch).mock.calls[0][1]?.headers).has('Authorization')).toBe(false)
+    expect(new Headers(vi.mocked(fetch).mock.calls[0]?.[1]?.headers).has('Authorization')).toBe(false)
   })
 
   it('does not reuse a token when the configured API base changes', async () => {
@@ -85,7 +85,7 @@ describe('gateway Bearer authentication', () => {
     vi.stubEnv('VITE_API_BASE', 'https://another-gateway.example')
     await api.health()
     expect(hasGatewayToken()).toBe(false)
-    expect(new Headers(vi.mocked(fetch).mock.calls[0][1]?.headers).has('Authorization')).toBe(false)
+    expect(new Headers(vi.mocked(fetch).mock.calls[0]?.[1]?.headers).has('Authorization')).toBe(false)
   })
 
   it('rejects malformed credentials without exposing or saving them', () => {
@@ -98,7 +98,7 @@ describe('gateway Bearer authentication', () => {
   it('rejects external or protocol-relative request paths before sending credentials', async () => {
     setGatewayToken(secret)
     for (const path of ['https://external.example/data', '//external.example/data', '/\\external.example/data', '/\t/external.example/data']) {
-      await expect(api.get(path)).rejects.toThrow(t('apiInvalidPath'))
+      await expect(http.get(path)).rejects.toThrow(t('apiInvalidPath'))
     }
     expect(fetch).not.toHaveBeenCalled()
   })
@@ -106,7 +106,7 @@ describe('gateway Bearer authentication', () => {
   it.each([401, 403])('reports HTTP %i without echoing an authentication response', async (status) => {
     setGatewayToken(secret)
     vi.mocked(fetch).mockResolvedValueOnce(new Response(`Rejected ${secret}`, { status }))
-    const error = await api.health().catch((cause: Error) => cause)
+    const error: unknown = await api.health().catch((cause: unknown) => cause)
     expect(String(error)).toContain(`HTTP ${status}`)
     expect(String(error)).not.toContain(secret)
   })
@@ -125,7 +125,7 @@ describe('JSON response handling', () => {
 
   it('resolves 204 No Content to undefined without parsing', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 204 })))
-    await expect(api.postOptional('/v1/operations/checkpoint')).resolves.toBeUndefined()
+    await expect(http.postOptional('/v1/operations/checkpoint')).resolves.toBeUndefined()
   })
 
   it('resolves an empty 200 body to undefined for optional endpoints', async () => {
@@ -140,12 +140,12 @@ describe('JSON response handling', () => {
       expect((error as ApiError).status).toBe(res.status)
     }
     vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 204 })))
-    await expect(api.post('/v1/search')).rejects.toBeInstanceOf(ApiError)
+    await expect(http.post('/v1/search')).rejects.toBeInstanceOf(ApiError)
   })
 
   it('throws a typed ApiError carrying the status for non-JSON bodies', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('<html>proxy</html>', { status: 200 })))
-    const error = await api.get('/v1/status').catch((cause: unknown) => cause)
+    const error = await http.get('/v1/status').catch((cause: unknown) => cause)
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).status).toBe(200)
     expect(String(error)).toContain('HTTP 200')
@@ -153,7 +153,7 @@ describe('JSON response handling', () => {
 
   it('throws ApiError with status for HTTP failures', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('bad things', { status: 500 })))
-    const error = await api.get('/v1/status').catch((cause: unknown) => cause)
+    const error = await http.get('/v1/status').catch((cause: unknown) => cause)
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).status).toBe(500)
     expect((error as Error).message).toBe('HTTP 500: bad things')
@@ -170,6 +170,7 @@ describe('loadPanels', () => {
       ['ok', async () => {}],
       ['status', async () => { throw new Error('HTTP 500: boom') }],
       ['bare', async () => { throw new Error('') }],
+      // eslint-disable-next-line @typescript-eslint/only-throw-error -- loadPanels must also report non-Error throwables
       ['string', async () => { throw 'nope' }],
     ])
     expect(failures).toEqual(['status: HTTP 500: boom', 'bare', 'string: nope'])

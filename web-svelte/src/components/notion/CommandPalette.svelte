@@ -1,8 +1,10 @@
 <script lang="ts">
+  import { createRequestGate, debounce, type RequestTicket } from '@/lib/async'
   import { ui } from '@/lib/state/ui.svelte'
   import { wiki } from '@/lib/state/wiki.svelte'
   import { route, goWiki, goGraph, goSearch, go, navigate } from '@/lib/router.svelte'
   import { api } from '@/api/client'
+  import type { DocumentRow } from '@/api/types'
   import { graph } from '@/lib/state/graph.svelte'
 
   interface ActionItem {
@@ -21,25 +23,22 @@
     hint: string
     pageId: string
   }
-  interface CatalogDocument {
-    id: string
-    title?: string | null
-    uri: string
-    kind?: string | null
-    layer?: string | null
-    wing?: string | null
-    room?: string | null
-    source_file?: string | null
-  }
   type Item = ActionItem | PageItem
 
   let q = $state('')
   let active = $state(0)
   let inputEl: HTMLInputElement | null = $state(null)
-  let documents = $state<CatalogDocument[]>([])
-  let documentSearchId = 0
+  let documents = $state<DocumentRow[]>([])
+  const documentGate = createRequestGate()
+  const searchDocuments = debounce((query: string, ticket: RequestTicket) => {
+    void api.documents({ limit: 20, layer: 'raw', q: query }, { signal: ticket.signal }).then((response) => {
+      if (ticket.current && ui.commandOpen && q.trim() === query) documents = response.items ?? []
+    }).catch(() => {
+      if (ticket.current) documents = []
+    })
+  }, 140)
 
-  function openCorpusDocument(item: CatalogDocument) {
+  function openCorpusDocument(item: DocumentRow) {
     const params = new URLSearchParams({
       document_id: item.id,
       q: item.title || item.uri,
@@ -128,20 +127,13 @@
   $effect(() => {
     const open = ui.commandOpen
     const query = q.trim()
-    const requestId = ++documentSearchId
+    const ticket = documentGate.next()
     if (!open || query.length < 2) {
       documents = []
       return
     }
-    const timer = window.setTimeout(() => {
-      const params = new URLSearchParams({ limit: '20', layer: 'raw', q: query })
-      void api.get<{ items?: CatalogDocument[] }>(`/v1/documents?${params}`).then((response) => {
-        if (requestId === documentSearchId && ui.commandOpen && q.trim() === query) documents = response.items ?? []
-      }).catch(() => {
-        if (requestId === documentSearchId) documents = []
-      })
-    }, 140)
-    return () => window.clearTimeout(timer)
+    searchDocuments(query, ticket)
+    return () => searchDocuments.cancel()
   })
 
   // Keep the active row in range when results shrink.

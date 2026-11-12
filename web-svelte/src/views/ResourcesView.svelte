@@ -1,4 +1,8 @@
 <script lang="ts">
+  import { usePoll } from '@/lib/poll'
+  import { fmtBytes, fmtMs } from '@/lib/format'
+  import { sparkPolyline } from '@/lib/stats'
+  import { errorMessage } from '@/lib/async'
   import { onMount } from 'svelte'
   import { api } from '@/api/client'
   import type { ResourcesResponse } from '@/api/types'
@@ -12,13 +16,6 @@
   let rssHistory = $state<number[]>([])
   let embedHistory = $state<number[]>([])
 
-  function fmtBytes(bytes: number): string {
-    if (!bytes) return '0'
-    const units = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ']
-    const i = Math.min(units.length - 1, Math.floor(Math.log2(bytes) / 10))
-    const v = bytes / 2 ** (10 * i)
-    return `${v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2)} ${units[i]}`
-  }
 
   function fmtUptime(seconds: number): string {
     const d = Math.floor(seconds / 86400)
@@ -29,20 +26,7 @@
     return `${m} мин ${Math.floor(seconds % 60)} с`
   }
 
-  function fmtMs(ms: number): string {
-    if (ms >= 1000) return `${(ms / 1000).toFixed(1)} с`
-    return `${ms} мс`
-  }
 
-  /** SVG polyline points для спарклайна значений 0..max. */
-  function spark(values: number[], width: number, height: number, max: number): string {
-    if (!values.length) return ''
-    const cap = max > 0 ? max : 1
-    const step = values.length > 1 ? width / (values.length - 1) : width
-    return values
-      .map((v, i) => `${(i * step).toFixed(1)},${(height - (Math.min(v, cap) / cap) * (height - 2) - 1).toFixed(1)}`)
-      .join(' ')
-  }
 
   async function tick() {
     try {
@@ -53,15 +37,14 @@
       rssHistory = [...rssHistory, next.process.rss_bytes / 2 ** 30].slice(-HISTORY)
       embedHistory = [...embedHistory, next.embedder.in_flight].slice(-HISTORY)
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : 'Не удалось получить /v1/resources'
+      error = errorMessage(cause, 'Не удалось получить /v1/resources')
     }
   }
 
   onMount(() => {
     void tick()
-    const timer = setInterval(() => void tick(), POLL_MS)
-    return () => clearInterval(timer)
   })
+  usePoll(() => void tick(), POLL_MS)
 
   const cpuMax = $derived(Math.max(100, ...cpuHistory) * 1.1)
   const rssMax = $derived(Math.max(1, ...rssHistory) * 1.1)
@@ -83,7 +66,7 @@
           <small>из ~{data.process.logical_cpus * 100}% · потоков tokio: {data.process.tokio_worker_threads}</small>
         </div>
         <svg class="spark" viewBox="0 0 300 48" preserveAspectRatio="none">
-          <polyline points={spark(cpuHistory, 300, 48, cpuMax)} />
+          <polyline points={sparkPolyline(cpuHistory, 300, 48, cpuMax)} />
         </svg>
         <footer>load avg: {data.process.load_avg_1m.toFixed(2)} / {data.process.load_avg_5m.toFixed(2)} / {data.process.load_avg_15m.toFixed(2)}</footer>
       </section>
@@ -94,7 +77,7 @@
           <small>virtual {fmtBytes(data.process.virtual_bytes)} · система занята на {memUsedPct.toFixed(0)}%</small>
         </div>
         <svg class="spark" viewBox="0 0 300 48" preserveAspectRatio="none">
-          <polyline points={spark(rssHistory, 300, 48, rssMax)} />
+          <polyline points={sparkPolyline(rssHistory, 300, 48, rssMax)} />
         </svg>
         <footer>система: {fmtBytes(data.process.system_memory_used)} / {fmtBytes(data.process.system_memory_total)}</footer>
       </section>
@@ -105,7 +88,7 @@
           <small>активных батчей · всего вызовов {data.embedder.calls_total} · текстов {data.embedder.texts_total}</small>
         </div>
         <svg class="spark" viewBox="0 0 300 48" preserveAspectRatio="none">
-          <polyline points={spark(embedHistory, 300, 48, embedMax)} />
+          <polyline points={sparkPolyline(embedHistory, 300, 48, embedMax)} />
         </svg>
         <footer>
           последний батч {fmtMs(data.embedder.last_batch_ms)} · макс {fmtMs(data.embedder.max_batch_ms)}

@@ -1,16 +1,19 @@
 <script lang="ts">
+  import { agentsResource, statusResource } from '@/api/resources.svelte'
+  import { megabytes, time } from '@/lib/format'
+  import { errorMessage } from '@/lib/async'
   import { onMount } from 'svelte'
   import { api, loadPanels } from '@/api/client'
   import { go } from '@/lib/router.svelte'
   import { ui } from '@/lib/state/ui.svelte'
-  import type { AgentSummary, DoctorReport, ItemsResponse, KgStats, OpsLogItem, RuntimeInfo, StorageStatus, TaxonomySummary } from '@/api/types'
+  import type { AgentInfo, DoctorReport, KgStats, OpsLogItem, RuntimeInfo, StorageStatus, TaxonomySummary } from '@/api/types'
 
   let status = $state<StorageStatus>({})
   let doctor = $state<DoctorReport>({})
   let runtime = $state<RuntimeInfo>({})
   let taxonomy = $state<TaxonomySummary>({ wings: [] })
   let operations = $state<OpsLogItem[]>([])
-  let agents = $state<AgentSummary[]>([])
+  let agents = $state<AgentInfo[]>([])
   let kg = $state<KgStats>({})
   let busy = $state(false)
   let error = $state('')
@@ -22,38 +25,36 @@
     busy = true
     error = ''
     const failures = await loadPanels([
-      ['status', async () => { status = (await api.get<StorageStatus>('/v1/status')) ?? {} }],
-      ['doctor', async () => { doctor = (await api.get<DoctorReport>('/v1/doctor')) ?? {} }],
-      ['runtime', async () => { runtime = (await api.get<{ runtime?: RuntimeInfo }>('/v1/runtime'))?.runtime ?? {} }],
-      ['taxonomy', async () => { taxonomy = (await api.get<{ taxonomy?: TaxonomySummary }>('/v1/taxonomy'))?.taxonomy ?? taxonomy }],
-      ['ops_log', async () => { operations = (await api.get<ItemsResponse<OpsLogItem>>('/v1/ops-log?limit=8'))?.items ?? [] }],
-      ['agents', async () => { agents = (await api.get<ItemsResponse<AgentSummary>>('/v1/agents'))?.items ?? [] }],
-      ['KG', async () => { kg = (await api.get<{ stats?: KgStats }>('/v1/kg/stats'))?.stats ?? {} }],
+      ['status', async () => { status = await statusResource.refresh() }],
+      ['doctor', async () => { doctor = await api.doctor() }],
+      ['runtime', async () => { runtime = await api.runtime() }],
+      ['taxonomy', async () => { taxonomy = (await api.taxonomy()) ?? taxonomy }],
+      ['ops_log', async () => { operations = await api.opsLog(8) }],
+      ['agents', async () => { agents = await agentsResource.refresh() }],
+      ['KG', async () => { kg = await api.kgStats() }],
     ])
     error = failures.length ? `Не обновлены панели: ${failures.join(', ')}` : ''
     busy = false
   }
 
   async function checkpoint() {
-    try { await api.postOptional('/v1/operations/checkpoint'); ui.toast('Checkpoint завершён', 'ok'); await load() }
-    catch (cause) { ui.toast(cause instanceof Error ? cause.message : String(cause), 'error') }
+    try { await api.checkpoint(); ui.toast('Checkpoint завершён', 'ok'); await load() }
+    catch (cause) { ui.toast(errorMessage(cause), 'error') }
   }
 
   async function backup() {
     if (!backupPath.trim()) return
     backupBusy = true
     try {
-      await api.postOptional('/v1/operations/backup', { path: backupPath.trim(), dry_run: false, overwrite: false })
+      await api.backup(backupPath.trim())
       ui.toast('Резервная копия создана', 'ok')
       backupOpen = false
-    } catch (cause) { ui.toast(cause instanceof Error ? cause.message : String(cause), 'error') }
+    } catch (cause) { ui.toast(errorMessage(cause), 'error') }
     finally { backupBusy = false }
   }
 
   function count(value?: number) { return value == null ? '—' : new Intl.NumberFormat('ru-RU').format(value) }
-  function bytes(value?: number) { if (value == null) return '—'; return value > 1024 ** 3 ? `${(value / 1024 ** 3).toFixed(1)} ГБ` : `${Math.round(value / 1024 ** 2)} МБ` }
   function uptime(seconds?: number) { if (seconds == null) return '—'; return `${Math.floor(seconds / 3600)} ч ${Math.floor((seconds % 3600) / 60)} мин` }
-  function time(value?: string) { return value ? new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : '—' }
   function triState(value: unknown): boolean | undefined {
     return typeof value === 'boolean' ? value : undefined
   }
@@ -87,7 +88,7 @@
     { label: `FTS ${stateLabel(doctor.fts_ready, 'готов · read-your-writes', 'не готов')}`, ok: triState(doctor.fts_ready), action: '' },
     { label: `Манифест эмбеддингов ${doctor.embed_dims ?? '—'}d`, ok: triState(doctor.embed_ok), action: '' },
     { label: `${count(doctor.orphan_chunks)} orphan chunks · ${count(doctor.orphan_edges)} orphan edges`, ok: triState(doctor.relational_integrity_ok), action: '' },
-    { label: `WAL ${bytes(doctor.wal_bytes)} из ${bytes(doctor.wal_warn_bytes)}`, ok: typeof doctor.wal_too_large === 'boolean' ? !doctor.wal_too_large : undefined, action: doctor.wal_too_large === true ? 'checkpoint' : '' },
+    { label: `WAL ${megabytes(doctor.wal_bytes)} из ${megabytes(doctor.wal_warn_bytes)}`, ok: typeof doctor.wal_too_large === 'boolean' ? !doctor.wal_too_large : undefined, action: doctor.wal_too_large === true ? 'checkpoint' : '' },
     { label: `${count(doctor.documents_without_chunks)} документов без чанков`, ok: zeroState(doctor.documents_without_chunks), action: 'reingest' },
     { label: `${count(doctor.unscoped_documents)} документов без крыла`, ok: zeroState(doctor.unscoped_documents), action: 'refile' },
   ])
@@ -119,7 +120,7 @@
       <button style="--layer:var(--l2)" onclick={() => go('graph')}><b>L2</b><span><strong>Граф объектов</strong><small>{count(status.node_count)} узлов · {count(status.edge_count)} рёбер</small></span><em>{integrityState}</em><i>›</i></button>
       <button style="--layer:var(--l1)" onclick={() => go('search')}><b>L1</b><span><strong>Извлечение</strong><small>{count(status.chunk_count)} чанков · FTS {stateLabel(status.fts_ready, 'готов', 'не готов')} · {status.embed_provider ?? '—'}/{status.embed_model ?? '—'}</small></span><em>{stateLabel(status.ready_for_search, 'ready_for_search', 'not ready')}</em><i>›</i></button>
       <button style="--layer:var(--l0)" onclick={() => go('corpus')}><b>L0</b><span><strong>Сырой корпус</strong><small>{count(status.raw_count)} документов · {(taxonomy.wings ?? []).length} крыльев · {count(doctor.unscoped_documents)} без крыла</small></span><em>immutable</em><i>›</i></button>
-      <footer><span>Хранилище: {status.backend ?? '—'} · {bytes(status.db_file_bytes)} · WAL {bytes(status.wal_bytes)} из {bytes(status.wal_warn_bytes)}</span><code>caps: {(status.storage_capabilities ?? []).join(' · ') || '—'}</code></footer>
+      <footer><span>Хранилище: {status.backend ?? '—'} · {megabytes(status.db_file_bytes)} · WAL {megabytes(status.wal_bytes)} из {megabytes(status.wal_warn_bytes)}</span><code>caps: {(status.storage_capabilities ?? []).join(' · ') || '—'}</code></footer>
     </article>
 
     <aside>

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { formatMessage, getActiveLocale, messages, setActiveLocale, t, type MessageKey } from './i18n'
+import { formatMessage, messages, setActiveLocale, t, type MessageKey } from './i18n'
 
 /** Keys whose ru text legitimately equals en; any other equal pair is an untranslated string. */
 const SAME_IN_BOTH_LOCALES: MessageKey[] = ['apiHttpError', 'graphSeedHint']
@@ -45,10 +45,8 @@ describe('active locale', () => {
   afterEach(() => setActiveLocale('ru'))
 
   it('defaults to ru and is switchable for non-component modules', () => {
-    expect(getActiveLocale()).toBe('ru')
     expect(t('retry')).toBe('Повторить')
     setActiveLocale('en')
-    expect(getActiveLocale()).toBe('en')
     expect(t('apiHttpError', { status: 500, detail: 'boom' })).toBe('HTTP 500: boom')
   })
 })

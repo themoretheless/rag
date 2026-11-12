@@ -1,9 +1,13 @@
 <script lang="ts">
+  import { copyText } from '@/lib/clipboard'
+  import { statusResource } from '@/api/resources.svelte'
+  import { milliseconds } from '@/lib/format'
+  import { errorMessage } from '@/lib/async'
   import RealQuestionEvaluation from '@/components/RealQuestionEvaluation.svelte'
   import { onMount } from 'svelte'
   import { api } from '@/api/client'
   import { ui } from '@/lib/state/ui.svelte'
-  import type { EvalHistoryResponse, EvalModeReport, EvalQueryReport, EvalRun, EvalScaleRecommendation, StorageStatus } from '@/api/types'
+  import type { EvalModeReport, EvalQueryReport, EvalRun, EvalScaleRecommendation } from '@/api/types'
 
   type MetricKey = 'recall_at_k' | 'mrr' | 'ndcg_at_k' | 'p95_search_ms' | 'reciprocal_rank' | 'search_ms'
   type MetricSource = Partial<Record<MetricKey, unknown>>
@@ -98,11 +102,11 @@
     busy = true
     error = ''
     const [historyResult, statusResult] = await Promise.allSettled([
-      api.get<EvalHistoryResponse>('/v1/eval/history?limit=30'),
-      api.get<StorageStatus>('/v1/status'),
+      api.evalHistory(30),
+      statusResource.refresh(),
     ])
     if (historyResult.status === 'fulfilled') {
-      const response = historyResult.value ?? {}
+      const response = historyResult.value
       // The backend preserves append-only JSONL order (oldest -> newest).
       // Keep the screen state newest-first for latest, tables and the run list.
       history = [...(response.items ?? [])].reverse()
@@ -110,9 +114,9 @@
       path = response.path ?? ''
     } else {
       const cause = historyResult.reason
-      error = cause instanceof Error ? cause.message : String(cause)
+      error = errorMessage(cause)
     }
-    if (statusResult.status === 'fulfilled') liveChunks = statusResult.value?.chunk_count ?? null
+    if (statusResult.status === 'fulfilled') liveChunks = statusResult.value.chunk_count ?? null
     busy = false
   }
 
@@ -122,7 +126,6 @@
   }
 
   function fixed(value: number | null, digits = 2) { return value === null ? '—' : value.toFixed(digits) }
-  function milliseconds(value: number | null) { return value === null ? '—' : `${Math.round(value)} мс` }
   function percent(value: number | null) { return value === null ? '0%' : `${Math.max(0, Math.min(100, Math.round(value * 100)))}%` }
   function modeLabel(name: string) {
     const base = name === 'lex' ? 'bm25' : name === 'vec' ? 'cosine' : 'default'
@@ -131,8 +134,9 @@
   function ciMark(value: boolean | null) { return value === null ? '—' : value ? '✓' : '!' }
   async function copyCommand() {
     const command = 'cargo run --release --bin eval -- --dataset data/eval/example-v1.json --min-recall-at-k 0.75 --min-mrr 0.6 --max-p95-ms 300 --history-jsonl bench.jsonl'
-    await navigator.clipboard.writeText(command)
-    ui.toast('Команда eval скопирована', 'ok')
+    const copied = await copyText(command)
+    if (copied) ui.toast('Команда eval скопирована', 'ok')
+    else ui.toast('Не удалось скопировать: буфер обмена недоступен', 'error')
   }
   onMount(load)
 </script>

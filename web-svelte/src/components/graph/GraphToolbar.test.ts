@@ -6,7 +6,7 @@ import { ui } from '@/lib/state/ui.svelte'
 import { graph } from '@/lib/state/graph.svelte'
 import GraphToolbar from './GraphToolbar.svelte'
 
-vi.mock('@/api/client', () => ({ api: { get: vi.fn(), graph: vi.fn(), neighbors: vi.fn() } }))
+vi.mock('@/api/client', () => ({ api: { projects: vi.fn(), tunnels: vi.fn(), graph: vi.fn(), neighbors: vi.fn() } }))
 
 function props() {
   return {
@@ -22,7 +22,7 @@ function props() {
 
 beforeEach(() => {
   ui.locale = 'en'
-  graph.nodes = [{ id: 'a', label: 'A' } as never, { id: 'b', label: 'B' } as never]
+  graph.nodes = [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }]
   graph.edges = []
   graph.projects = [{ project_id: 'rag', document_count: 12 }]
   graph.project = 'rag'

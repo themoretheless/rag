@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { errorMessage, lazyPromise } from '@/lib/async'
   import { onDestroy, tick } from 'svelte'
   import { wiki } from '@/lib/state/wiki.svelte'
   import { ui } from '@/lib/state/ui.svelte'
@@ -10,12 +11,8 @@
 
   let articleEl: HTMLElement | null = $state(null)
   let mermaidRenderGeneration = 0
-  let mermaidPromise: Promise<(typeof import('mermaid'))['default']> | null = null
-
-  function loadMermaid() {
-    mermaidPromise ??= import('mermaid').then((module) => module.default)
-    return mermaidPromise
-  }
+  // Loaded once on first use; a failed chunk load is not cached, so the next page retries.
+  const loadMermaid = lazyPromise(() => import('mermaid').then((module) => module.default))
 
   async function renderMermaidDiagrams() {
     const generation = ++mermaidRenderGeneration
@@ -28,7 +25,14 @@
     )
     if (diagrams.length === 0) return
 
-    const mermaid = await loadMermaid()
+    let mermaid: Awaited<ReturnType<typeof loadMermaid>>
+    try {
+      mermaid = await loadMermaid()
+    } catch (cause) {
+      // The diagram sources stay visible as text; the next render attempt reloads the chunk.
+      if (generation === mermaidRenderGeneration) ui.toast(`Mermaid: ${errorMessage(cause)}`, 'error')
+      return
+    }
     if (generation !== mermaidRenderGeneration) return
     mermaid.initialize({
       startOnLoad: false,
@@ -39,7 +43,8 @@
     })
     for (let index = 0; index < diagrams.length; index++) {
       if (generation !== mermaidRenderGeneration) return
-      const diagram = diagrams[index]!
+      const diagram = diagrams[index]
+      if (!diagram) continue
       const source = diagram.textContent ?? ''
       if (!source.trim()) continue
 
@@ -231,6 +236,7 @@
         <!-- markdown is escaped inside renderWikiHtml; wikilinks route via onClick -->
         <!-- svelte-ignore a11y_no_noninteractive_element_interactions (delegated wikilink routing) -->
         <div class="body prose" onclick={onClick} onkeydown={onKeydown} role="document">
+          <!-- eslint-disable-next-line svelte/no-at-html-tags -- renderWikiHtml escapes the source before emitting tags -->
           {@html html}
         </div>
       </div>

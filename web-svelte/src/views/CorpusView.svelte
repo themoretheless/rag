@@ -1,338 +1,104 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
-  import { api, loadPanels } from '@/api/client'
+  import { untrack } from 'svelte'
+  import { api } from '@/api/client'
+  import { errorMessage } from '@/lib/async'
+  import { baseName, downloadBlob } from '@/lib/download'
+  import { relativeDate, shortDate, shortHash } from '@/lib/format'
   import { goGraph, route } from '@/lib/router.svelte'
   import { ui } from '@/lib/state/ui.svelte'
+  import { contentSize } from './corpus/corpusModel'
+  import { createCorpusStore } from './corpus/corpusStore.svelte'
 
-  type Project = { project_id: string; document_count: number; rooms: { room: string; document_count: number }[] }
-  type Row = { id: string; uri: string; title: string; wing?: string | null; room?: string | null; source_file?: string | null; layer: string; kind: string; status: string; revision?: number; pinned?: boolean; boost?: number; content_hash?: string | null; updated_at: string }
-  type DetailDocument = Row & { revision: number; metadata_json: string; content: string }
-  type DocumentDetail = { document: DetailDocument; chunks?: { id: string; chunk_index: number; content: string; char_start: number; char_end: number }[]; chunks_total?: number; chunks_truncated?: boolean }
-  type DocumentPage = { items?: Row[]; page?: { total?: number; next_cursor?: string | null } }
-  type EmbeddingStatus = { match?: boolean; live?: { provider?: string; model?: string; dims?: number }; manifest?: { provider?: string; model?: string; dims?: number } }
-  type Taxonomy = { unscoped_count?: number; total_documents?: number }
-  type ProjectHome = { source_roots?: { canonical_root: string; file_count: number }[] }
-  type SyncJobResponse = { id?: string; job?: { id?: string } }
+  const layerOptions: readonly (readonly [value: string, label: string])[] = [['', 'все'], ['raw', 'raw'], ['wiki', 'wiki']]
 
-  let projects = $state<Project[]>([])
-  let rows = $state<Row[]>([])
-  let total = $state(0)
-  let project = $state('')
-  let room = $state('')
-  let layer = $state('')
-  let status = $state('')
-  let query = $state('')
-  let selected = $state<Row | null>(null)
-  let detail = $state<DocumentDetail | null>(null)
-  let busy = $state(false)
-  let detailBusy = $state(false)
-  let detailError = $state('')
-  let documentError = $state('')
-  let appendError = $state('')
-  let panelWarning = $state('')
-  let nextCursor = $state<string | null>(null)
-  let appliedFilterSignature = $state('')
-  let loadingMore = $state(false)
+  const store = createCorpusStore()
+
   let syncPath = $state('')
   let syncBusy = $state(false)
-  let projectHome = $state<ProjectHome | null>(null)
-  let embeddingStatus = $state<EmbeddingStatus | null>(null)
-  let taxonomy = $state<Taxonomy>({})
-  let backlinks = $state<{ id: string; label: string }[]>([])
-  let showText = $state(false)
-  let dialogEl: HTMLDivElement | null = $state(null)
-  let pendingSelectionId = $state('')
-  let appliedRoute = $state<string | null>(null)
-  let documentRequestId = 0
-  let detailRequestId = 0
-  let projectHomeRequestId = 0
-  let refreshGeneration = 0
   let sourceBusy = $state(false)
+  let dialogEl: HTMLDivElement | null = $state(null)
+  let appliedRoute: string | null = null
 
   async function downloadSource() {
-    const source = detailDocument
+    const source = store.detailDocument
     if (!source?.source_file || sourceBusy) return
     sourceBusy = true
     try {
-      const blob = await api.sourceFile(source.id)
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = source.source_file.split(/[\\/]/).pop() || 'source'
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      setTimeout(() => URL.revokeObjectURL(url), 60_000)
+      downloadBlob(await api.sourceFile(source.id), baseName(source.source_file))
     } catch (cause) {
-      ui.toast(cause instanceof Error ? cause.message : 'Не удалось скачать источник.', 'error')
+      ui.toast(errorMessage(cause, 'Не удалось скачать источник.'), 'error')
     } finally {
       sourceBusy = false
     }
-  }
-
-  const detailDocument = $derived(detail?.document ?? null)
-  const scopedDocumentCount = $derived(projects.reduce((sum, item) => sum + item.document_count, 0))
-  const allDocumentCount = $derived(taxonomy.total_documents ?? (scopedDocumentCount + (taxonomy.unscoped_count ?? 0)))
-  const filtersDirty = $derived.by(() => Boolean(appliedFilterSignature) && documentQuery() !== appliedFilterSignature)
-
-  function documentQuery() {
-    const params = new URLSearchParams({ limit: '200' })
-    if (project) params.set('wing', project)
-    if (room) params.set('room', room)
-    if (layer) params.set('layer', layer)
-    if (status) params.set('status', status)
-    if (status === 'archived') params.set('include_archived', 'true')
-    if (query.trim()) params.set('q', query.trim())
-    return params.toString()
-  }
-
-  async function loadProjects(generation?: number) {
-    const response = await api.get<{ items: Project[] }>('/v1/projects')
-    if (generation != null && generation !== refreshGeneration) return
-    projects = response.items ?? []
-  }
-
-  async function loadEmbeddingStatus(generation?: number) {
-    const response = await api.get<EmbeddingStatus>('/v1/embedding-manifest')
-    if (generation != null && generation !== refreshGeneration) return
-    embeddingStatus = response
-  }
-
-  async function loadTaxonomy(generation?: number) {
-    const response = await api.get<{ taxonomy?: Taxonomy }>('/v1/taxonomy')
-    if (generation != null && generation !== refreshGeneration) return
-    taxonomy = response.taxonomy ?? {}
-  }
-
-  async function loadDocuments(append = false, generation?: number) {
-    const cursor = append ? nextCursor : null
-    const requestSignature = documentQuery()
-    if (append && (!cursor || requestSignature !== appliedFilterSignature)) return
-    const requestQuery = new URLSearchParams(requestSignature)
-    if (cursor) requestQuery.set('cursor', cursor)
-    const requestId = ++documentRequestId
-    if (append) {
-      loadingMore = true
-      appendError = ''
-    } else {
-      busy = true
-      documentError = ''
-      appendError = ''
-    }
-    try {
-      const response = await api.get<DocumentPage>(`/v1/documents?${requestQuery.toString()}`)
-      if (requestId !== documentRequestId || (generation != null && generation !== refreshGeneration)) return
-      if (append && requestSignature !== documentQuery()) return
-      const incoming = response.items ?? []
-      rows = append
-        ? [...new Map([...rows, ...incoming].map((row) => [row.id, row])).values()]
-        : incoming
-      total = response.page?.total ?? rows.length
-      nextCursor = response.page?.next_cursor ?? null
-      if (!append) appliedFilterSignature = requestSignature
-      if (!append && selected && !rows.some((row: Row) => row.id === selected?.id)) {
-        selected = null
-        detail = null
-      }
-      if (!append && pendingSelectionId) {
-        const targetId = pendingSelectionId
-        const target = rows.find((row) => row.id === targetId)
-        if (target) {
-          pendingSelectionId = ''
-          void choose(target)
-        } else {
-          void loadRoutedDocument(targetId, requestId)
-        }
-      } else if (!selected && rows.length) {
-        void choose(rows[0])
-      }
-    } catch (cause) {
-      if (requestId === documentRequestId && (generation == null || generation === refreshGeneration)) {
-        const message = cause instanceof Error ? cause.message : String(cause)
-        if (append) appendError = message
-        else documentError = message
-      }
-    } finally {
-      if (requestId === documentRequestId && (generation == null || generation === refreshGeneration)) {
-        busy = false
-        loadingMore = false
-      }
-    }
-  }
-
-  async function loadRoutedDocument(documentId: string, catalogRequestId: number) {
-    try {
-      const response = await api.post<{ items?: DocumentDetail[] }>('/v1/multi-get', {
-        document_ids: [documentId],
-        include_chunks: false,
-      })
-      if (catalogRequestId !== documentRequestId || pendingSelectionId !== documentId) return
-      const routed = response.items?.[0]?.document
-      if (!routed) {
-        pendingSelectionId = ''
-        panelWarning = `Документ ${documentId} не найден`
-        return
-      }
-      rows = [routed, ...rows.filter((row) => row.id !== routed.id)]
-      pendingSelectionId = ''
-      void choose(routed)
-    } catch (cause) {
-      if (catalogRequestId === documentRequestId && pendingSelectionId === documentId) {
-        pendingSelectionId = ''
-        panelWarning = `Не удалось открыть документ по ссылке: ${cause instanceof Error ? cause.message : String(cause)}`
-      }
-    }
-  }
-
-  async function loadAll() {
-    const generation = ++refreshGeneration
-    const selectedAtStart = selected?.id ?? ''
-    panelWarning = ''
-    const failures = await loadPanels([
-      ['проекты', () => loadProjects(generation)],
-      ['документы', () => loadDocuments(false, generation)],
-      ['taxonomy', () => loadTaxonomy(generation)],
-      ['манифест эмбеддингов', () => loadEmbeddingStatus(generation)],
-    ])
-    if (generation !== refreshGeneration) return
-    if (failures.length) panelWarning = `Не обновлены панели: ${failures.join(', ')}`
-    if (selectedAtStart && selected?.id === selectedAtStart) await choose(selected, generation)
-  }
-
-  async function choose(row: Row, generation?: number) {
-    const requestId = ++detailRequestId
-    selected = row
-    detail = null
-    backlinks = []
-    showText = false
-    detailBusy = true
-    detailError = ''
-    try {
-      const [response, backlinkResponse] = await Promise.all([
-        api.post<{ items?: DocumentDetail[] }>('/v1/multi-get', { document_ids: [row.id], include_chunks: true, chunk_limit: 80 }),
-        api.backlinks(row.id).catch(() => null),
-      ])
-      if (requestId === detailRequestId && selected?.id === row.id && (generation == null || generation === refreshGeneration)) {
-        detail = response?.items?.[0] ?? null
-        backlinks = backlinkResponse?.backlinks ?? []
-      }
-    } catch (cause) {
-      if (requestId === detailRequestId && selected?.id === row.id && (generation == null || generation === refreshGeneration)) {
-        detailError = cause instanceof Error ? cause.message : String(cause)
-        ui.toast(detailError, 'error')
-      }
-    } finally {
-      if (requestId === detailRequestId && selected?.id === row.id && (generation == null || generation === refreshGeneration)) detailBusy = false
-    }
-  }
-
-  function chooseScope(nextProject: string, nextRoom = '') {
-    const requestId = ++projectHomeRequestId
-    project = nextProject
-    room = nextRoom
-    projectHome = null
-    if (nextProject) {
-      void api.get<{ project?: ProjectHome }>(`/v1/project-home?project=${encodeURIComponent(nextProject)}`).then((response) => {
-        if (requestId === projectHomeRequestId && project === nextProject && room === nextRoom) projectHome = response?.project ?? null
-      }).catch((cause) => {
-        if (requestId !== projectHomeRequestId) return
-        const message = cause instanceof Error ? cause.message : String(cause)
-        console.warn('project-home load failed', cause)
-        panelWarning = `Не удалось загрузить корни проекта: ${message}`
-      })
-    }
-    void loadDocuments()
   }
 
   async function startSync() {
     if (!syncPath.trim()) return
     syncBusy = true
     try {
-      const response = await api.post<SyncJobResponse>('/v1/jobs/sync', { path: syncPath.trim(), wing: project || undefined, room: room || undefined })
-      ui.toast(`Sync поставлен в очередь · ${response?.id ?? response?.job?.id ?? ''}`, 'ok')
+      const jobId = await store.startSync(syncPath.trim())
+      ui.toast(`Sync поставлен в очередь · ${jobId}`, 'ok')
     } catch (cause) {
-      ui.toast(cause instanceof Error ? cause.message : String(cause), 'error')
+      ui.toast(errorMessage(cause), 'error')
     } finally {
       syncBusy = false
     }
-  }
-
-  function shortDate(value: string) {
-    if (!value) return '—'
-    return value.replace('T', ' ').slice(0, 16)
-  }
-
-  function relativeDate(value: string) {
-    const timestamp = Date.parse(value)
-    if (!Number.isFinite(timestamp)) return shortDate(value)
-    const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60_000))
-    if (minutes < 60) return `${minutes} мин назад`
-    const hours = Math.floor(minutes / 60)
-    if (hours < 24) return `${hours} ч назад`
-    const days = Math.floor(hours / 24)
-    if (days < 7) return `${days} дн назад`
-    return value.slice(0, 10)
-  }
-
-  function shortHash(value?: string | null) {
-    if (!value) return '—'
-    return value.length > 24 ? `${value.slice(0, 12)}…${value.slice(-6)}` : value
-  }
-
-  function contentSize(value?: string | null) {
-    if (!value) return '—'
-    const bytes = new TextEncoder().encode(value).length
-    return `${new Intl.NumberFormat('ru-RU').format(bytes)} байт`
   }
 
   $effect(() => {
     if (route.name !== 'corpus') return
     const signature = route.query.toString()
     if (signature === appliedRoute) return
+    const first = appliedRoute === null
     appliedRoute = signature
-    const routedDocumentId = route.query.get('document_id')?.trim() ?? ''
-    project = route.query.get('project')?.trim() ?? ''
-    room = route.query.get('room')?.trim() ?? ''
-    query = route.query.get('q')?.trim() ?? ''
-    pendingSelectionId = routedDocumentId
-    void loadDocuments()
+    const next = {
+      project: route.query.get('project')?.trim() ?? '',
+      room: route.query.get('room')?.trim() ?? '',
+      query: route.query.get('q')?.trim() ?? '',
+      documentId: route.query.get('document_id')?.trim() ?? '',
+    }
+    // Only the URL drives this effect; the store's own reads must not re-trigger it.
+    untrack(() => {
+      store.applyRoute(next)
+      // The first URL loads every panel (documents included, once); later ones only the catalog.
+      void (first ? store.refreshAll() : store.loadDocuments())
+    })
   })
 
   $effect(() => {
-    if (showText) requestAnimationFrame(() => dialogEl?.focus())
+    if (store.textOpen) requestAnimationFrame(() => dialogEl?.focus())
   })
 
   function onWindowKeydown(event: KeyboardEvent) {
-    if (showText && event.key === 'Escape') {
+    if (store.textOpen && event.key === 'Escape') {
       event.preventDefault()
-      showText = false
+      store.textOpen = false
     }
   }
 
-  onMount(loadAll)
 </script>
 
 <svelte:window onkeydown={onWindowKeydown} />
 
 <div class="corpus">
   <aside class="palace">
-    <header><strong>Крылья · комнаты</strong><span>{allDocumentCount}</span></header>
-    <button class:active={!project} class="scope all" onclick={() => chooseScope('')}><span>Все документы</span><b>{allDocumentCount}</b></button>
+    <header><strong>Крылья · комнаты</strong><span>{store.allDocumentCount}</span></header>
+    <button class:active={!store.project} class="scope all" onclick={() => store.chooseScope('')}><span>Все документы</span><b>{store.allDocumentCount}</b></button>
     <div class="scope-list">
-      {#each projects as item (item.project_id)}
-        <button class="scope wing" class:active={project === item.project_id && !room} onclick={() => chooseScope(item.project_id)}><span>▾ {item.project_id}</span><b>{item.document_count}</b></button>
-        {#if project === item.project_id}
-          {#each item.rooms as child (child.room)}
-            <button class="scope room" class:active={room === child.room} onclick={() => chooseScope(item.project_id, child.room)}><span>{child.room}</span><b>{child.document_count}</b></button>
+      {#each store.projects as item (item.project_id)}
+        <button class="scope wing" class:active={store.project === item.project_id && !store.room} onclick={() => store.chooseScope(item.project_id)}><span>▾ {item.project_id}</span><b>{item.document_count}</b></button>
+        {#if store.project === item.project_id}
+          {#each item.rooms ?? [] as child (child.room)}
+            <button class="scope room" class:active={store.room === child.room} onclick={() => store.chooseScope(item.project_id, child.room)}><span>{child.room}</span><b>{child.document_count}</b></button>
           {/each}
         {/if}
       {/each}
-      <button class="scope unscoped" disabled title="Документы без крыла входят в «Все документы»; отдельный фильтр по пустому wing пока не поддерживается HTTP API"><span>◌ без крыла</span><b>{taxonomy.unscoped_count ?? 0}</b></button>
+      <button class="scope unscoped" disabled title="Документы без крыла входят в «Все документы»; отдельный фильтр по пустому wing пока не поддерживается HTTP API"><span>◌ без крыла</span><b>{store.taxonomy.unscoped_count ?? 0}</b></button>
     </div>
     <section class="sync">
       <strong>Корень ingest · sync</strong>
       <p>Gateway читает только разрешённые пути из <code>RAG_INGEST_ROOTS</code>.</p>
-      {#each projectHome?.source_roots ?? [] as root}<small>{root.canonical_root} · {root.file_count} файлов</small>{/each}
+      {#each store.projectHome?.source_roots ?? [] as root}<small>{root.canonical_root} · {root.file_count} файлов</small>{/each}
       <input bind:value={syncPath} aria-label="Путь для sync_sources" placeholder="/разрешённый/путь" />
       <button class="primary" disabled={syncBusy || !syncPath.trim()} onclick={startSync}>{syncBusy ? 'Запуск…' : 'sync_sources'}</button>
     </section>
@@ -340,31 +106,32 @@
 
   <section class="catalog">
     <div class="screen-head">
-      <div><h1>{room || project || 'Корпус'}</h1><p>{total} документов · immutable raw и производные слои</p></div>
-      <button class="secondary" onclick={loadAll}>Обновить</button>
+      <div><h1>{store.room || store.project || 'Корпус'}</h1><p>{store.total} документов · immutable raw и производные слои</p></div>
+      <button class="secondary" onclick={() => store.refreshAll()}>Обновить</button>
     </div>
-    {#if panelWarning}<div class="panel-warning" role="status">{panelWarning}</div>{/if}
+    {#if store.panelWarning}<div class="panel-warning" role="status">{store.panelWarning}</div>{/if}
     <section class="ingest-zone"><div><strong>Индексировать разрешённую папку</strong><p><code>sync_sources</code> · дубли по content_hash пропускаются · чанки и граф обновляются одним writer</p></div><div class="connectors"><span class="native">Markdown · Obsidian</span><span class="native">Код · репозитории</span><span class="native">TXT · JSON · TOML</span><span class="external">PDF · pdftotext</span><span class="planned">Notion · экспорт md</span><span class="planned">Картинки · OCR</span></div></section>
     <div class="toolbar">
-      <input bind:value={query} aria-label="Фильтр документов" onkeydown={(event) => event.key === 'Enter' && loadDocuments()} placeholder="Фильтр по названию, URI или пути…" />
-      <div class="layer-tabs" aria-label="Слой документа">{#each [['','все'],['raw','raw'],['wiki','wiki']] as option}<button class:active={layer === option[0]} onclick={() => { layer = option[0]; void loadDocuments() }}>{option[1]}</button>{/each}</div>
-      <select bind:value={status} aria-label="Статус документа" onchange={() => void loadDocuments()}><option value="">активные</option><option>active</option><option>draft</option><option>archived</option></select>
+      <input bind:value={store.query} aria-label="Фильтр документов" onkeydown={(event) => event.key === 'Enter' && store.loadDocuments()} placeholder="Фильтр по названию, URI или пути…" />
+      <div class="layer-tabs" aria-label="Слой документа">{#each layerOptions as [value, label] (value)}<button class:active={store.layer === value} onclick={() => { store.layer = value; void store.loadDocuments() }}>{label}</button>{/each}</div>
+      <select bind:value={store.status} aria-label="Статус документа" onchange={() => void store.loadDocuments()}><option value="">активные</option><option>active</option><option>draft</option><option>archived</option></select>
       <select disabled aria-label="Сортировка" title="Сервер возвращает каталог в каноническом порядке"><option>обновлён ↓</option></select>
-      <button class="secondary" onclick={() => void loadDocuments()}>Найти</button>
+      <button class="secondary" onclick={() => void store.loadDocuments()}>Найти</button>
     </div>
     <div class="table panel">
       <div class="thead"><span>Документ</span><span>Тип</span><span>Крыло / комната</span><span>Чанки</span><span title="Ревизия">Rev.</span><span>Обновлён</span><span>Статус</span></div>
       <div class="tbody">
-        {#if documentError}<div class="empty error">{documentError}</div>{:else if busy}<div class="empty">Загрузка корпуса…</div>{:else if !rows.length}<div class="empty">В этом срезе нет документов</div>{:else}
-          {#each rows as row (row.id)}
-            <button class="tr" class:selected={selected?.id === row.id} onclick={() => choose(row)}>
-              <span><b>{row.title || row.uri}</b><small>{row.uri}</small></span><span><i>{row.kind || row.layer}</i></span><span>{[row.wing, row.room].filter(Boolean).join(' / ') || '— / —'}</span><span class="mono">{selected?.id === row.id ? (detail?.chunks_total ?? detail?.chunks?.length ?? '…') : '—'}</span><span class="mono">{selected?.id === row.id && detailDocument ? `r${detailDocument.revision}` : '—'}</span><span class="mono">{relativeDate(row.updated_at)}</span><span class={`status ${row.status}`}>{row.status}</span>
+        {#if store.documentError}<div class="empty error">{store.documentError}</div>{:else if store.busy}<div class="empty">Загрузка корпуса…</div>{:else if !store.rows.length}<div class="empty">В этом срезе нет документов</div>{:else}
+          {#each store.rows as row (row.id)}
+            {@const current = store.selected?.id === row.id}
+            <button class="tr" class:selected={current} onclick={() => store.choose(row)}>
+              <span><b>{row.title || row.uri}</b><small>{row.uri}</small></span><span><i>{row.kind || row.layer}</i></span><span>{[row.wing, row.room].filter(Boolean).join(' / ') || '— / —'}</span><span class="mono">{current ? (store.detail?.chunks_total ?? store.detail?.chunks?.length ?? '…') : '—'}</span><span class="mono">{current && store.detailDocument ? `r${store.detailDocument.revision}` : '—'}</span><span class="mono">{relativeDate(row.updated_at)}</span><span class={`status ${row.status}`}>{row.status}</span>
             </button>
           {/each}
-          {#if nextCursor}
+          {#if store.nextCursor}
             <div class="load-more-row">
-              <button class="load-more" disabled={loadingMore || filtersDirty} onclick={() => loadDocuments(true)}>{loadingMore ? 'Загрузка…' : filtersDirty ? 'Примените фильтр, чтобы продолжить' : `Загрузить ещё · показано ${rows.length} из ${total}`}</button>
-              {#if appendError}<div class="append-error" role="alert"><span>{appendError}</span><button disabled={loadingMore || filtersDirty} onclick={() => loadDocuments(true)}>Повторить</button></div>{/if}
+              <button class="load-more" disabled={store.loadingMore || store.filtersDirty} onclick={() => store.loadMore()}>{store.loadingMore ? 'Загрузка…' : store.filtersDirty ? 'Примените фильтр, чтобы продолжить' : `Загрузить ещё · показано ${store.rows.length} из ${store.total}`}</button>
+              {#if store.appendError}<div class="append-error" role="alert"><span>{store.appendError}</span><button disabled={store.loadingMore || store.filtersDirty} onclick={() => store.loadMore()}>Повторить</button></div>{/if}
             </div>
           {/if}
         {/if}
@@ -372,20 +139,25 @@
     </div>
   </section>
 
-  {#if selected}
+  {#if store.selected}
+    {@const selected = store.selected}
+    {@const detail = store.detail}
+    {@const detailDocument = store.detailDocument}
+    {@const embedding = store.embeddingStatus}
     <aside class="inspector">
-      <header><span><i>{detailDocument?.layer ?? selected.layer}</i><b>{detailDocument?.kind ?? selected.kind}</b>{#if detailDocument?.pinned}<em>pinned</em>{/if}</span><button aria-label="Закрыть инспектор" onclick={() => { detailRequestId += 1; selected = null; detail = null; backlinks = []; detailBusy = false; detailError = ''; showText = false }}>×</button></header>
+      <header><span><i>{detailDocument?.layer ?? selected.layer}</i><b>{detailDocument?.kind ?? selected.kind}</b>{#if detailDocument?.pinned}<em>pinned</em>{/if}</span><button aria-label="Закрыть инспектор" onclick={() => store.closeInspector()}>×</button></header>
       <h2>{detailDocument?.title ?? selected.title}</h2><code>{detailDocument?.uri ?? selected.uri}</code>
-      <dl><dt>content_hash</dt><dd title={detailDocument?.content_hash ?? undefined}>{shortHash(detailDocument?.content_hash)}</dd><dt>размер</dt><dd>{contentSize(detailDocument?.content)} · {detail?.chunks_total ?? detail?.chunks?.length ?? '—'} чанков</dd><dt>эмбеддинги</dt><dd>{embeddingStatus?.live?.model ?? embeddingStatus?.manifest?.model ?? '—'} · {embeddingStatus?.live?.dims ?? embeddingStatus?.manifest?.dims ?? '—'}d {embeddingStatus?.match ? '✓ манифест' : '· проверить'}</dd><dt>wing / room</dt><dd>{detailDocument ? [detailDocument.wing, detailDocument.room].filter(Boolean).join(' / ') || '—' : '—'}</dd><dt>source_file</dt><dd>{detailDocument?.source_file || '—'}</dd><dt>boost · status</dt><dd>{detailDocument?.boost ?? '—'} · {detailDocument?.status ?? '—'}</dd><dt>revision</dt><dd>{detailDocument ? `r${detailDocument.revision}` : '—'}</dd><dt>обновлён</dt><dd>{detailDocument ? shortDate(detailDocument.updated_at) : '—'}</dd></dl>
-      <section class="chunks"><div><strong>Карта чанков</strong><span>{detail?.chunks_total ?? detail?.chunks?.length ?? '—'}</span></div>{#if detailBusy}<p>Загрузка…</p>{:else if detailError}<div class="detail-error" role="alert"><span>{detailError}</span><button onclick={() => selected && choose(selected)}>Повторить</button></div>{:else if detail?.chunks?.length}{#each detail.chunks.slice(0, 12) as chunk}<button><b>#{chunk.chunk_index}</b><span>{chunk.content}</span><small>{chunk.char_start}–{chunk.char_end}</small></button>{/each}{:else}<p>Чанки отсутствуют</p>{/if}</section>
-      <section class="backlinks"><div><strong>Обратные ссылки</strong><span>{backlinks.length}</span></div>{#if backlinks.length}<div class="backlink-list">{#each backlinks.slice(0, 8) as backlink}<button onclick={() => goGraph(backlink.id, { project: selected?.wing ?? '' })}>↗ {backlink.label}</button>{/each}</div>{:else}<p>Обратных ссылок нет</p>{/if}</section>
-      <div class="inspector-actions"><button class="secondary" disabled title="reembed_document пока доступен только через MCP">reembed_document</button><button class="secondary" disabled title="refile пока доступен только через MCP">refile · переложить</button><button class="secondary" disabled title="Архивация raw-документа пока недоступна в HTTP API">В архив</button><button class="secondary" onclick={() => selected?.id && goGraph(selected.id, { project: selected.wing ?? '' })}>Показать в графе</button>{#if detailDocument?.source_file}<button class="secondary" onclick={downloadSource} disabled={sourceBusy}>{sourceBusy ? "Загрузка…" : "Открыть источник"}</button>{:else}<button class="secondary" disabled>Источник недоступен</button>{/if}<button class="primary text-action" disabled={!detailDocument?.content} onclick={() => showText = true}>Открыть текст · {contentSize(detailDocument?.content)}</button></div>
+      <dl><dt>content_hash</dt><dd title={detailDocument?.content_hash ?? undefined}>{shortHash(detailDocument?.content_hash)}</dd><dt>размер</dt><dd>{contentSize(detailDocument?.content)} · {detail?.chunks_total ?? detail?.chunks?.length ?? '—'} чанков</dd><dt>эмбеддинги</dt><dd>{embedding?.live?.model ?? embedding?.manifest?.model ?? '—'} · {embedding?.live?.dims ?? embedding?.manifest?.dims ?? '—'}d {embedding?.match ? '✓ манифест' : '· проверить'}</dd><dt>wing / room</dt><dd>{detailDocument ? [detailDocument.wing, detailDocument.room].filter(Boolean).join(' / ') || '—' : '—'}</dd><dt>source_file</dt><dd>{detailDocument?.source_file || '—'}</dd><dt>boost · status</dt><dd>{detailDocument?.boost ?? '—'} · {detailDocument?.status ?? '—'}</dd><dt>revision</dt><dd>{detailDocument ? `r${detailDocument.revision}` : '—'}</dd><dt>обновлён</dt><dd>{detailDocument ? shortDate(detailDocument.updated_at) : '—'}</dd></dl>
+      <section class="chunks"><div><strong>Карта чанков</strong><span>{detail?.chunks_total ?? detail?.chunks?.length ?? '—'}</span></div>{#if store.detailBusy}<p>Загрузка…</p>{:else if store.detailError}<div class="detail-error" role="alert"><span>{store.detailError}</span><button onclick={() => store.choose(selected)}>Повторить</button></div>{:else if detail?.chunks?.length}{#each detail.chunks.slice(0, 12) as chunk}<button><b>#{chunk.chunk_index}</b><span>{chunk.content}</span><small>{chunk.char_start}–{chunk.char_end}</small></button>{/each}{:else}<p>Чанки отсутствуют</p>{/if}</section>
+      <section class="backlinks"><div><strong>Обратные ссылки</strong><span>{store.backlinks.length}</span></div>{#if store.backlinks.length}<div class="backlink-list">{#each store.backlinks.slice(0, 8) as backlink}<button onclick={() => goGraph(backlink.id, { project: selected.wing ?? '' })}>↗ {backlink.label}</button>{/each}</div>{:else}<p>Обратных ссылок нет</p>{/if}</section>
+      <div class="inspector-actions"><button class="secondary" disabled title="reembed_document пока доступен только через MCP">reembed_document</button><button class="secondary" disabled title="refile пока доступен только через MCP">refile · переложить</button><button class="secondary" disabled title="Архивация raw-документа пока недоступна в HTTP API">В архив</button><button class="secondary" onclick={() => selected.id && goGraph(selected.id, { project: selected.wing ?? '' })}>Показать в графе</button>{#if detailDocument?.source_file}<button class="secondary" onclick={downloadSource} disabled={sourceBusy}>{sourceBusy ? "Загрузка…" : "Открыть источник"}</button>{:else}<button class="secondary" disabled>Источник недоступен</button>{/if}<button class="primary text-action" disabled={!detailDocument?.content} onclick={() => store.textOpen = true}>Открыть текст · {contentSize(detailDocument?.content)}</button></div>
     </aside>
   {/if}
 </div>
 
-{#if showText && detailDocument}
-  <div class="text-modal"><button class="backdrop" aria-label="Закрыть текст" onclick={() => showText = false}></button><div bind:this={dialogEl} class="document-dialog" role="dialog" aria-modal="true" aria-labelledby="document-text-title" tabindex="-1"><header><div><span>{detailDocument.layer} · {detailDocument.kind}</span><h2 id="document-text-title">{detailDocument.title}</h2><code>{detailDocument.uri}</code></div><button aria-label="Закрыть" onclick={() => showText = false}>×</button></header><pre>{detailDocument.content}</pre></div></div>
+{#if store.textOpen && store.detailDocument}
+  {@const doc = store.detailDocument}
+  <div class="text-modal"><button class="backdrop" aria-label="Закрыть текст" onclick={() => store.textOpen = false}></button><div bind:this={dialogEl} class="document-dialog" role="dialog" aria-modal="true" aria-labelledby="document-text-title" tabindex="-1"><header><div><span>{doc.layer} · {doc.kind}</span><h2 id="document-text-title">{doc.title}</h2><code>{doc.uri}</code></div><button aria-label="Закрыть" onclick={() => store.textOpen = false}>×</button></header><pre>{doc.content}</pre></div></div>
 {/if}
 
 <style>

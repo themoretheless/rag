@@ -235,8 +235,15 @@ export interface PackContextResponse {
 
 /* ---------- Operational dashboards (console / models / agents / evaluation) ---------- */
 
-/** `GET /v1/status` (fields are optional: older gateways omit some). */
+/**
+ * `GET /v1/status` (fields are optional: older gateways omit some).
+ * `?summary=true` answers with the cheap subset and may use the legacy
+ * `documents` / `chunks` counter names.
+ */
 export interface StorageStatus {
+  ok?: boolean
+  documents?: number
+  chunks?: number
   backend?: string
   db_path?: string
   db_file_bytes?: number
@@ -312,8 +319,51 @@ export interface OpsLogItem {
   payload_json?: string | null
 }
 
-/** `GET /v1/agents` row (only fields read by the console). */
-export interface AgentSummary { agent?: string; online?: boolean }
+/** `GET /v1/agents` row: one MCP client known to the gateway. */
+export interface AgentInfo {
+  agent: string
+  transport?: string
+  online?: boolean
+  last_tool?: string
+  last_call_at?: string
+  calls_today?: number
+  diary_count?: number
+}
+
+/** `GET /v1/calls` row: one recent MCP tool call (in-memory stream, not persisted). */
+export interface CallRow {
+  seq: number
+  ts: string
+  agent: string
+  tool: string
+  args: string
+  elapsed_ms: number
+  ok: boolean
+  result_hint?: string
+  error?: string
+}
+
+/** `GET /v1/activity` row. */
+export interface ActivityItem { seq?: number; at?: string; client?: string; action?: string; status?: string }
+
+export interface SyncNode {
+  node_id: string
+  hostname: string
+  role: string
+  last_seen_at: string
+  last_push_seq: number
+  pull_cursor: number
+  last_error?: string
+}
+/** `GET /v1/sync/status` → `sync`. */
+export interface SyncState {
+  role: string
+  node_id: string
+  primary_url?: string
+  latest_primary_seq: number
+  pending_outbox: number
+  nodes: SyncNode[]
+}
 
 /** `GET /v1/kg/stats` → `stats`. */
 export interface KgStats { total_facts?: number }
@@ -330,7 +380,151 @@ export interface KgFact {
   valid_to?: string | null
 }
 
+/** `{ items: [...] }` envelope used by most list endpoints. */
 export interface ItemsResponse<T> { items?: T[] }
+
+/* ---------- Corpus (projects / documents) ---------- */
+
+/** `GET /v1/projects` row (a wing with its rooms). */
+export interface ProjectSummary {
+  project_id: string
+  document_count: number
+  rooms?: TaxonomyRoom[]
+}
+
+/** `GET /v1/project-home` → `project`. */
+export interface ProjectHome { source_roots?: { canonical_root: string; file_count: number }[] }
+
+/** `GET /v1/documents` catalog row. */
+export interface DocumentRow {
+  id: string
+  uri: string
+  title: string
+  wing?: string | null
+  room?: string | null
+  source_file?: string | null
+  layer: string
+  kind: string
+  status: string
+  revision?: number
+  pinned?: boolean
+  boost?: number
+  content_hash?: string | null
+  updated_at: string
+}
+
+/** `GET /v1/documents` filters; `cursor` continues a previous page. */
+export interface DocumentsQuery {
+  limit?: number | undefined
+  wing?: string | undefined
+  room?: string | undefined
+  layer?: string | undefined
+  status?: string | undefined
+  include_archived?: boolean | undefined
+  q?: string | undefined
+  cursor?: string | undefined
+}
+
+/** `GET /v1/documents` page. */
+export interface DocumentPage {
+  items?: DocumentRow[]
+  page?: { total?: number; next_cursor?: string | null }
+}
+
+export interface DocumentChunk {
+  id: string
+  chunk_index: number
+  content: string
+  char_start: number
+  char_end: number
+}
+
+/** `POST /v1/multi-get` item: full document plus (optionally) its chunks. */
+export interface DocumentDetail {
+  document: DocumentRow & { revision: number; metadata_json: string; content: string }
+  chunks?: DocumentChunk[]
+  chunks_total?: number
+  chunks_truncated?: boolean
+}
+
+/* ---------- Search requests ---------- */
+
+/** `POST /v1/search` body. */
+export interface SearchRequest {
+  query: string
+  mode: SearchResponse['mode']
+  top_k: number
+  wing?: string | undefined
+  room?: string | undefined
+  layer?: string | undefined
+  min_score?: number | undefined
+  rrf_k?: number | undefined
+  max_chunks_per_document?: number | undefined
+  context_expansion?: 'neighbors' | undefined
+  neighbor_chunks?: number | undefined
+  max_context_tokens?: number | undefined
+  recency_half_life_days?: number | undefined
+  timeout_ms?: number | undefined
+  document_id?: string | undefined
+}
+
+/** `POST /v1/pack-context` body. */
+export interface PackContextRequest {
+  hits: SearchHit[]
+  max_tokens: number
+  context_expansion?: 'neighbors' | undefined
+  neighbor_chunks?: number | undefined
+}
+
+/* ---------- Wiki review / proposals / knowledge views ---------- */
+
+/** `GET /v1/wiki-review` row: a wiki page whose raw source moved on. */
+export interface ReviewEvidence {
+  wiki_id: string
+  wiki_uri: string
+  wiki_title: string
+  raw_id: string
+  raw_uri: string
+  raw_title: string
+  raw_updated_at: string | null
+  link_kind: string
+}
+
+export interface WikiProposal {
+  id: string
+  base: DocumentBody
+  sources: { document_id: string; uri: string; content_hash: string | null; content: string | null }[]
+  content: string
+  revision: number
+  status: 'pending' | 'accepted' | 'rejected'
+}
+
+/** `POST /v1/wiki-proposals` body. */
+export type WikiProposalChange =
+  | { action: 'create'; document_id: string }
+  | { action: 'save'; id: string; revision: number; content: string }
+  | { action: 'accept' | 'reject'; id: string; revision: number }
+
+export interface KnowledgeProps { document_type: string; review_status: string; owner: string; review_due: string }
+/** `GET /v1/knowledge` filters (also stored inside a saved view). */
+export interface KnowledgeFilter {
+  q: string
+  wing: string
+  document_type: string
+  review_status: string
+  owner: string
+  due_before: string
+  offset: number
+}
+export interface KnowledgeRow {
+  id: string
+  uri: string
+  title: string
+  wing: string | null
+  revision: number
+  properties: Partial<KnowledgeProps>
+}
+export interface KnowledgeView { id: string; name: string; revision: number; filters: KnowledgeFilter }
 
 /** `GET /v1/llm-status` → `llm`. */
 export interface LlmStatus {
@@ -391,3 +585,26 @@ export interface EvalRun {
   scale_recommendation?: EvalScaleRecommendation
 }
 export interface EvalHistoryResponse { items?: EvalRun[]; configured?: boolean; path?: string }
+
+/** `GET /v1/eval/feedback` row: a real question saved from the search screen. */
+export interface EvalQuestion {
+  id: string
+  search: { query: string; mode: string }
+  expected: { uri: string }[]
+  no_answer: boolean
+}
+/** `POST /v1/eval/feedback` body. */
+export interface EvalFeedbackBody {
+  id: string
+  /** The executed search request, replayed verbatim on a later run. */
+  search: SearchRequest
+  expected: string[]
+  no_answer: boolean
+}
+/** `POST /v1/eval/feedback/run` result. */
+export interface EvalFeedbackRun {
+  status: string
+  recall?: number
+  mrr?: number
+  empty_result_for_no_answer?: boolean
+}

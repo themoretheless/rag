@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import type { HealthResponse } from '@/api/types'
 
-vi.mock('@/api/client', () => ({ api: { get: vi.fn(), health: vi.fn() } }))
+vi.mock('@/api/client', () => ({ api: { agents: vi.fn(), health: vi.fn() } }))
 
 const mocked = vi.mocked(api)
 
@@ -17,7 +17,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
   delete document.documentElement.dataset.theme
-  window.matchMedia = vi.fn().mockReturnValue({ matches: false }) as unknown as typeof window.matchMedia
+  window.matchMedia = vi.fn().mockReturnValue({ matches: false })
 })
 
 afterEach(() => {
@@ -33,7 +33,6 @@ describe('ui store', () => {
     expect(ui.theme).toBe('light')
     expect(document.documentElement.dataset.theme).toBe('light')
     expect(ui.locale).toBe('en')
-    expect(ui.localeLabel).toBe('EN')
   })
 
   it('ignores unknown persisted locales', async () => {
@@ -50,21 +49,19 @@ describe('ui store', () => {
     expect(document.documentElement.dataset.theme).toBe('light')
   })
 
-  it('toggleLocale flips and persists the locale and translations', async () => {
+  it('setLocale switches and persists the locale and translations', async () => {
     const ui = await freshUi()
     const ru = ui.t('wiki')
-    ui.toggleLocale()
+    ui.setLocale(ui.locale === 'en' ? 'ru' : 'en')
     expect(ui.locale).toBe('en')
     expect(localStorage.getItem('rag-locale')).toBe('en')
     expect(typeof ui.t('wiki')).toBe('string')
-    ui.toggleLocale()
+    ui.setLocale(ui.locale === 'en' ? 'ru' : 'en')
     expect(ui.t('wiki')).toBe(ru)
   })
 
-  it('toggles sidebar and command palette', async () => {
+  it('opens and closes the command palette', async () => {
     const ui = await freshUi()
-    ui.toggleSidebar()
-    expect(ui.sidebarCollapsed).toBe(true)
     ui.openCommand()
     expect(ui.commandOpen).toBe(true)
     ui.closeCommand()
@@ -84,14 +81,14 @@ describe('ui store', () => {
 
   it('checkHealth keeps health and agents failures independent', async () => {
     const ui = await freshUi()
-    mocked.health.mockResolvedValue({ ok: true } as unknown as HealthResponse)
-    mocked.get.mockResolvedValue({ items: [{ agent: 'claude', online: true }] })
+    mocked.health.mockResolvedValue({ ok: true })
+    mocked.agents.mockResolvedValue([{ agent: 'claude', online: true }])
     await ui.checkHealth()
     expect(ui.health).toEqual({ ok: true })
     expect(ui.shellAgents).toHaveLength(1)
 
     mocked.health.mockRejectedValue(new Error('down'))
-    mocked.get.mockRejectedValue(new Error('agents down'))
+    mocked.agents.mockRejectedValue(new Error('agents down'))
     await ui.checkHealth()
     expect(ui.health).toBeNull()
     expect(ui.healthError).toBe('down')
@@ -104,7 +101,7 @@ describe('ui store', () => {
     let resolveOld!: (v: HealthResponse) => void
     mocked.health.mockReturnValueOnce(new Promise((r) => (resolveOld = r)))
     mocked.health.mockResolvedValueOnce({ ok: 'new' } as unknown as HealthResponse)
-    mocked.get.mockResolvedValue({ items: [] })
+    mocked.agents.mockResolvedValue([])
     const old = ui.checkHealth()
     await ui.checkHealth()
     resolveOld({ ok: 'old' } as unknown as HealthResponse)

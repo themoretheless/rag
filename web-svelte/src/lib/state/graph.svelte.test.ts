@@ -2,20 +2,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import type { GraphEdge, GraphNode, GraphView } from '@/api/types'
 
-vi.mock('@/api/client', () => ({ api: { get: vi.fn(), graph: vi.fn(), neighbors: vi.fn() } }))
+vi.mock('@/api/client', () => ({ api: { projects: vi.fn(), tunnels: vi.fn(), graph: vi.fn(), neighbors: vi.fn() } }))
 
 const mocked = vi.mocked(api)
 
 function node(id: string, kind = 'doc'): GraphNode {
-  return { id, label: id.toUpperCase(), kind } as GraphNode
+  return { id, label: id.toUpperCase(), kind }
 }
 function edge(source_id: string, target_id: string, rel_type = 'links'): GraphEdge {
-  return { id: `${source_id}-${target_id}`, source_id, target_id, rel_type } as GraphEdge
+  return { id: `${source_id}-${target_id}`, source_id, target_id, rel_type }
 }
 const view: GraphView = {
   nodes: [node('a'), node('b'), node('c'), node('t', 'tag')],
   edges: [edge('a', 'b'), edge('b', 'c', 'mentions'), edge('t', 'b', 'tagged')],
-} as GraphView
+}
 
 async function freshStore() {
   vi.resetModules()
@@ -25,10 +25,8 @@ async function freshStore() {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mocked.get.mockImplementation(async (path: string) => {
-    if (path === '/v1/projects') return { items: [{ project_id: 'rag', document_count: 3 }] }
-    return { items: [] }
-  })
+  mocked.projects.mockResolvedValue([{ project_id: 'rag', document_count: 3 }])
+  mocked.tunnels.mockResolvedValue([])
 })
 
 describe('graph store', () => {
@@ -76,7 +74,7 @@ describe('graph store', () => {
     const graph = await freshStore()
     let resolveFirst!: (v: GraphView) => void
     mocked.graph.mockReturnValueOnce(new Promise((r) => (resolveFirst = r)))
-    mocked.neighbors.mockResolvedValue({ nodes: [node('z')], edges: [] } as unknown as GraphView)
+    mocked.neighbors.mockResolvedValue({ nodes: [node('z')], edges: [] })
     const first = graph.loadFull()
     await graph.loadNeighbors('z')
     resolveFirst(view)
@@ -88,10 +86,7 @@ describe('graph store', () => {
   it('appends visible tunnel edges without duplicates', async () => {
     const graph = await freshStore()
     mocked.graph.mockResolvedValue(view)
-    mocked.get.mockImplementation(async (path: string) => {
-      if (path === '/v1/tunnels') return { items: [edge('a', 'c', 'tunnel'), edge('a', 'b'), edge('a', 'zz', 'tunnel')] }
-      return { items: [] }
-    })
+    mocked.tunnels.mockResolvedValue([edge('a', 'c', 'tunnel'), edge('a', 'b'), edge('a', 'zz', 'tunnel')])
     await graph.loadFull()
     await vi.waitFor(() => expect(graph.edges).toHaveLength(4))
     expect(graph.edges.at(-1)?.rel_type).toBe('tunnel')

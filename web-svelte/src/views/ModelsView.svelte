@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { statusResource } from '@/api/resources.svelte'
+  import { bytes } from '@/lib/format'
+  import { errorMessage } from '@/lib/async'
   import { onMount } from 'svelte'
   import { api, hasGatewayToken, loadPanels, setGatewayToken } from '@/api/client'
   import { ui } from '@/lib/state/ui.svelte'
@@ -31,12 +34,12 @@
       // Drop all cached data and restart loaders with the new credentials.
       window.location.reload()
     } catch (cause) {
-      tokenError = cause instanceof Error ? cause.message : 'Не удалось обновить токен.'
+      tokenError = errorMessage(cause, 'Не удалось обновить токен.')
     }
   }
 
   async function fetchDoctor() {
-    const response = (await api.get<DoctorReport>('/v1/doctor')) ?? {}
+    const response = await api.doctor()
     doctor = response
     doctorKnown = true
     return response
@@ -46,11 +49,11 @@
     busy = true
     error = ''
     const failures = await loadPanels([
-      ['LLM', async () => { llm = (await api.get<{ llm?: LlmStatus }>('/v1/llm-status'))?.llm ?? {}; llmKnown = true }],
-      ['embedding manifest', async () => { embedding = (await api.get<EmbeddingManifestStatus>('/v1/embedding-manifest')) ?? {}; embeddingKnown = true }],
-      ['storage status', async () => { status = (await api.get<StorageStatus>('/v1/status')) ?? {}; statusKnown = true }],
-      ['runtime', async () => { runtime = (await api.get<{ runtime?: RuntimeInfo }>('/v1/runtime'))?.runtime ?? {}; runtimeKnown = true }],
-      ['capabilities', async () => { capabilities = (await api.get<Capabilities>('/v1/capabilities')) ?? {}; capabilitiesKnown = true }],
+      ['LLM', async () => { llm = await api.llmStatus(); llmKnown = true }],
+      ['embedding manifest', async () => { embedding = await api.embeddingManifest(); embeddingKnown = true }],
+      ['storage status', async () => { status = await statusResource.refresh(); statusKnown = true }],
+      ['runtime', async () => { runtime = await api.runtime(); runtimeKnown = true }],
+      ['capabilities', async () => { capabilities = await api.capabilities(); capabilitiesKnown = true }],
       ['doctor', async () => { await fetchDoctor() }],
     ])
     error = failures.length ? `Не обновлены панели: ${failures.join(', ')}` : ''
@@ -58,8 +61,8 @@
   }
 
   async function checkpoint() {
-    try { await api.postOptional('/v1/operations/checkpoint'); ui.toast('Checkpoint завершён', 'ok'); await load() }
-    catch (cause) { ui.toast(cause instanceof Error ? cause.message : String(cause), 'error') }
+    try { await api.checkpoint(); ui.toast('Checkpoint завершён', 'ok'); await load() }
+    catch (cause) { ui.toast(errorMessage(cause), 'error') }
   }
 
   function summarizeDoctor(report: DoctorReport | null | undefined, known: boolean) {
@@ -81,21 +84,15 @@
       const summary = summarizeDoctor(response, true)
       ui.toast(`Doctor: ${summary.label}`, summary.ok === true ? 'ok' : summary.ok === false ? 'error' : 'info')
     } catch (cause) {
-      ui.toast(cause instanceof Error ? cause.message : String(cause), 'error')
+      ui.toast(errorMessage(cause), 'error')
     } finally {
       doctorBusy = false
     }
   }
 
-  function bytes(value?: number) {
-    if (value == null) return '—'
-    const units = ['Б','КБ','МБ','ГБ']; let size = value; let unit = 0
-    while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit += 1 }
-    return `${size.toFixed(unit > 1 ? 1 : 0)} ${units[unit]}`
-  }
 
-  function isLoopbackBind(value: unknown) {
-    const bind = String(value ?? '').trim().toLowerCase().replace(/^https?:\/\//, '')
+  function isLoopbackBind(value: string | undefined) {
+    const bind = (value ?? '').trim().toLowerCase().replace(/^https?:\/\//, '')
     const host = bind.startsWith('[') ? bind.slice(1, bind.indexOf(']')) : bind.split(':')[0]
     return host === '127.0.0.1' || host === 'localhost' || host === '::1'
   }

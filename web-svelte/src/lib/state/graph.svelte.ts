@@ -1,17 +1,19 @@
+import { errorMessage } from '@/lib/async'
 import { api } from '@/api/client'
-import type { GraphEdge, GraphNode, GraphView } from '@/api/types'
+import type { GraphEdge, GraphNode, GraphView, ProjectSummary } from '@/api/types'
 import type { LayoutMode } from '@/lib/forceLayout'
 
 /** Graph explorer state: nodes/edges, seed expand, selection, layout. */
 class GraphStore {
-  nodes = $state<GraphNode[]>([])
-  edges = $state<GraphEdge[]>([])
+  /** Replaced wholesale per load; never mutated, so no deep proxy over hundreds of nodes. */
+  nodes = $state.raw<GraphNode[]>([])
+  edges = $state.raw<GraphEdge[]>([])
   loading = $state(false)
   error = $state<string | null>(null)
   seed = $state('')
   depth = $state(2)
   maxNodes = $state(300)
-  projects = $state<Array<{ project_id: string; document_count: number }>>([])
+  projects = $state.raw<ProjectSummary[]>([])
   project = $state('rag')
   includeTags = $state(true)
   selectedId = $state<string | null>(null)
@@ -50,18 +52,19 @@ class GraphStore {
   })
 
   private applyView(view: GraphView) {
-    this.nodes = view.nodes ?? []
-    this.edges = view.edges ?? []
+    this.nodes = view.nodes
+    this.edges = view.edges
     if (!this.selectedId || !this.nodes.some((node) => node.id === this.selectedId)) {
       const degree = new Map<string, number>()
       const relationKinds = new Map<string, Set<string>>()
       for (const edge of this.edges) {
         degree.set(edge.source_id, (degree.get(edge.source_id) ?? 0) + 1)
         degree.set(edge.target_id, (degree.get(edge.target_id) ?? 0) + 1)
-        if (!relationKinds.has(edge.source_id)) relationKinds.set(edge.source_id, new Set())
-        if (!relationKinds.has(edge.target_id)) relationKinds.set(edge.target_id, new Set())
-        relationKinds.get(edge.source_id)!.add(edge.rel_type)
-        relationKinds.get(edge.target_id)!.add(edge.rel_type)
+        for (const id of [edge.source_id, edge.target_id]) {
+          const kinds = relationKinds.get(id)
+          if (kinds) kinds.add(edge.rel_type)
+          else relationKinds.set(id, new Set([edge.rel_type]))
+        }
       }
       const candidates = this.nodes.filter((node) => !/tag|stub/i.test(node.kind ?? ''))
       this.selectedId = (candidates.length ? candidates : this.nodes).reduce<GraphNode | null>(
@@ -81,8 +84,7 @@ class GraphStore {
     if (this.projectsPromise) return this.projectsPromise
     this.projectsPromise = (async () => {
       try {
-        const response = await api.get<{ items?: Array<{ project_id: string; document_count: number }> }>('/v1/projects')
-        this.projects = response.items ?? []
+        this.projects = await api.projects()
         this.projectsLoaded = true
       } catch {
         // Keep the requested scope intact. The graph endpoint must validate it;
@@ -96,12 +98,12 @@ class GraphStore {
 
   private async appendVisibleTunnels(requestToken: number) {
     try {
-      const response = await api.get<{ items?: GraphEdge[] }>('/v1/tunnels')
+      const tunnels = await api.tunnels()
       if (requestToken !== this.requestToken) return
       const visible = new Set(this.nodes.map((node) => node.id))
       const known = new Set(this.edges.map((edge) => edge.id || `${edge.source_id}:${edge.target_id}:${edge.rel_type}`))
       const additions: GraphEdge[] = []
-      for (const edge of response.items ?? []) {
+      for (const edge of tunnels) {
         const key = edge.id || `${edge.source_id}:${edge.target_id}:${edge.rel_type}`
         if (visible.has(edge.source_id) && visible.has(edge.target_id) && !known.has(key)) {
           additions.push(edge)
@@ -138,7 +140,7 @@ class GraphStore {
       this.loading = false
       void this.appendVisibleTunnels(requestToken)
     } catch (e) {
-      if (requestToken === this.requestToken) this.error = e instanceof Error ? e.message : String(e)
+      if (requestToken === this.requestToken) this.error = errorMessage(e)
     } finally {
       if (requestToken === this.requestToken) {
         this.loading = false
@@ -179,7 +181,7 @@ class GraphStore {
       this.loading = false
       void this.appendVisibleTunnels(requestToken)
     } catch (e) {
-      if (requestToken === this.requestToken) this.error = e instanceof Error ? e.message : String(e)
+      if (requestToken === this.requestToken) this.error = errorMessage(e)
     } finally {
       if (requestToken === this.requestToken) {
         this.loading = false

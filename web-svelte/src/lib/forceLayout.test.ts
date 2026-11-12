@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { GraphEdge } from '@/api/types'
-import { RING_GAP, legendEntries, nodeColor, nodeRadius, placeRadialLocal, resolveSeedId, type SimNode } from './forceLayout'
+import { RING_GAP, nodeColor, nodeRadius, placeRadialLocal, resolveSeedId, type SimNode } from './forceLayout'
 
 const node = (id: string, label = id, document_id: string | null = null): SimNode => ({ id, label, kind: 'doc', document_id, radius: 8 })
 const edge = (source_id: string, target_id: string): GraphEdge => ({ source_id, target_id, rel_type: 'links' })
@@ -22,17 +22,6 @@ describe('nodeColor / nodeRadius', () => {
   })
 })
 
-describe('legendEntries', () => {
-  it('returns one sorted entry per bucket', () => {
-    const entries = legendEntries([
-      { id: 'a', label: 'a', kind: 'wiki' },
-      { id: 'b', label: 'b', kind: 'tag' },
-      { id: 'c', label: 'c', kind: 'page' },
-      { id: 'd', label: 'd' },
-    ])
-    expect(entries.map((entry) => entry.source)).toEqual(['document', 'tag', 'wiki'])
-  })
-})
 
 describe('resolveSeedId', () => {
   const nodes = [node('n2', 'Beta', 'doc-2'), node('n1', 'Alpha', 'doc-1')]
@@ -53,9 +42,9 @@ describe('resolveSeedId', () => {
 
 describe('placeRadialLocal', () => {
   it('centres the seed, rings neighbours by BFS depth and freezes positions', () => {
-    const nodes = [node('s'), node('a'), node('b'), node('lonely')]
+    const s = node('s'), a = node('a'), b = node('b'), lonely = node('lonely')
+    const nodes = [s, a, b, lonely]
     placeRadialLocal(nodes, [edge('s', 'a'), edge('a', 'b')], 800, 600, 's')
-    const [s, a, b, lonely] = nodes
     expect([s.x, s.y]).toEqual([400, 300])
     expect(s.fx).toBe(s.x)
     const dist = (n: SimNode) => Math.hypot((n.x ?? 0) - 400, (n.y ?? 0) - 300)

@@ -76,7 +76,7 @@ function splitPipeCells(line: string): string[] {
       i++
       continue
     }
-    cur += s[i]
+    cur += s.charAt(i)
     i++
   }
   cells.push(cur.trim())
@@ -128,7 +128,7 @@ export interface OutlineHeading {
 }
 
 /** Plain heading text for outline labels (strips common inline markdown). */
-export function plainHeadingText(raw: string): string {
+function plainHeadingText(raw: string): string {
   return raw
     .replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_m, t: string, l?: string) =>
       (l ?? t).trim(),
@@ -140,7 +140,7 @@ export function plainHeadingText(raw: string): string {
     .trim()
 }
 
-export function slugifyHeading(text: string): string {
+function slugifyHeading(text: string): string {
   const base = text
     .toLowerCase()
     .normalize('NFKD')
@@ -170,7 +170,7 @@ export function extractHeadings(content: string): OutlineHeading[] {
     if (inCode) continue
     const m = line.trimEnd().match(/^(#{1,3})\s+(.+)$/)
     if (!m) continue
-    const level = m[1]!.length as 1 | 2 | 3
+    const level = (m[1] ?? '').length as 1 | 2 | 3
     const text = plainHeadingText(m[2] ?? '')
     if (!text) continue
     let id = slugifyHeading(text)

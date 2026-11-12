@@ -1,11 +1,16 @@
 /**
- * Tiny history-API router (runes module). Routes:
- *   /            → redirect /wiki
- *   /wiki/:id?   → wiki view (id optional)
- *   /graph?seed= → graph view
- *   /search      → search view
+ * Tiny history-API router (runes module).
+ *
+ * The screens and their paths are declared once in `./routes` (`ROUTES`); this module
+ * only tracks the current location against that table:
+ *   /                 → redirect to the default route (/console)
+ *   /<route path>     → that screen; query params stay available in `route.query`
+ *   /wiki/:id         → wiki screen with `route.pageId` (the only parameterised route)
+ *   anything else     → redirect to the default route
  */
-export type RouteName = 'console' | 'corpus' | 'search' | 'graph' | 'wiki' | 'agents' | 'sync' | 'evaluation' | 'models' | 'resources'
+import { DEFAULT_ROUTE, matchRoute, routeByName, type RouteName } from './routes'
+
+export type { RouteName }
 
 export interface RouteState {
   name: RouteName
@@ -23,26 +28,16 @@ interface Parsed {
 }
 
 function parseLocation(pathname: string, search: string): Parsed {
-  const query = new URLSearchParams(search)
-  if (pathname === '/' || pathname === '') {
-    return { redirect: '/console', state: { name: 'console', pageId: null, path: '/console', query: new URLSearchParams() } }
+  const match = matchRoute(pathname)
+  if (!match) {
+    // `/` and unknown paths land on the default screen with a clean query.
+    const { name, path } = DEFAULT_ROUTE
+    return { redirect: path, state: { name, pageId: null, path, query: new URLSearchParams() } }
   }
-  if (pathname === '/wiki' || pathname.startsWith('/wiki/')) {
-    const rest = pathname.slice('/wiki'.length).replace(/^\//, '')
-    const pageId = rest ? decodeURIComponent(rest) : null
-    return { redirect: null, state: { name: 'wiki', pageId, path: pathname, query } }
+  return {
+    redirect: null,
+    state: { name: match.entry.name, pageId: match.param, path: pathname, query: new URLSearchParams(search) },
   }
-  if (pathname === '/graph') {
-    return { redirect: null, state: { name: 'graph', pageId: null, path: pathname, query } }
-  }
-  if (pathname === '/search') {
-    return { redirect: null, state: { name: 'search', pageId: null, path: pathname, query } }
-  }
-  const simple = pathname.slice(1) as RouteName
-  if (['console', 'corpus', 'agents', 'sync', 'evaluation', 'models', 'resources'].includes(simple)) {
-    return { redirect: null, state: { name: simple, pageId: null, path: pathname, query } }
-  }
-  return { redirect: '/console', state: { name: 'console', pageId: null, path: '/console', query: new URLSearchParams() } }
 }
 
 export const route = $state<RouteState>({
@@ -113,7 +108,7 @@ export function goSearch() {
 }
 
 export function go(name: RouteName) {
-  navigate(`/${name}`)
+  navigate(routeByName(name).path)
 }
 
 /** Seed param of the current /graph location (trimmed, null when absent). */

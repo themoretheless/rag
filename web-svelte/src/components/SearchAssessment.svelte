@@ -1,7 +1,7 @@
 <script lang="ts">
   import { api } from '@/api/client'
-  import type { SearchHit } from '@/api/types'
-  let { search, hits, disabled = false }: { search: Record<string, unknown>; hits: SearchHit[]; disabled?: boolean } = $props()
+  import type { SearchHit, SearchRequest } from '@/api/types'
+  let { search, hits, disabled = false }: { search: SearchRequest; hits: SearchHit[]; disabled?: boolean } = $props()
   let expected = $state<string[]>([])
   let other = $state('')
   let noAnswer = $state(false)
@@ -15,7 +15,7 @@
     busy = true; message = ''
     try {
       const sources = [...expected, ...other.split('\n').map(v => v.trim()).filter(Boolean)]
-      await api.postOptional('/v1/eval/feedback', { id, search, expected:noAnswer ? [] : sources, no_answer:noAnswer })
+      await api.saveEvalFeedback({ id, search, expected:noAnswer ? [] : sources, no_answer:noAnswer })
       saved = true; message = 'Вопрос и разметка сохранены. Повторный прогон доступен в разделе «Оценка».'
     } catch(e) { message = String(e) }
     finally { busy = false }

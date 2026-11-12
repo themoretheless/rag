@@ -1,7 +1,8 @@
 <script lang="ts">
   import ReviewProposals from './ReviewProposals.svelte'
   let proposals: ReviewProposals | undefined = $state()
-  import { api, type ReviewEvidence } from '@/api/client'
+  import { api } from '@/api/client'
+  import type { ReviewEvidence } from '@/api/types'
   import { goWiki } from '@/lib/router.svelte'
   let items = $state<ReviewEvidence[]>([])
   let loading = $state(false)
@@ -12,12 +13,14 @@
   let sourceTitle = $state('')
   let sourceLoading = $state(false)
   let generation = 0
+  /** Evidence rows of one wiki page; never empty. */
+  type ReviewGroup = [ReviewEvidence, ...ReviewEvidence[]]
   const groups = $derived.by(() => {
-    const result = new Map<string, ReviewEvidence[]>()
+    const result = new Map<string, ReviewGroup>()
     for (const item of items) {
-      const group = result.get(item.wiki_id) ?? []
-      group.push(item)
-      result.set(item.wiki_id, group)
+      const group = result.get(item.wiki_id)
+      if (group) group.push(item)
+      else result.set(item.wiki_id, [item])
     }
     return [...result.values()].filter(group => group.some(item =>
       `${item.wiki_title} ${item.raw_title} ${item.raw_uri}`.toLowerCase().includes(filter.toLowerCase())))
@@ -40,7 +43,7 @@
     } catch (e) { if (current === generation) source = `Не удалось открыть источник: ${String(e)}` }
     finally { if (current === generation) sourceLoading = false }
   }
-  function task(group: ReviewEvidence[]) {
+  function task(group: ReviewGroup) {
     return `Проверь актуальность статьи ${group[0].wiki_uri} (id: ${group[0].wiki_id}).\nИсточники:\n${group.map(item => `- ${item.raw_uri || item.raw_id}: ${item.link_kind === 'source_missing' ? 'источник отсутствует' : 'требуется проверка'}`).join('\n')}\nСначала создай предложение через POST /v1/wiki-proposals (action=create, document_id статьи). Используй base и sources из полученного снимка для подготовки текста. Сохрани его через action=save с id и revision предложения. Покажи изменения и подтверждения человеку; action=accept вызывай после принятия предложения. Не выдумывай содержимое отсутствующих источников.`
   }
 </script>
