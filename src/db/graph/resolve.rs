@@ -2,7 +2,6 @@
 
 use std::path::Path;
 
-use duckdb::{params, Connection};
 use uuid::Uuid;
 
 use crate::db::graph::{
@@ -10,6 +9,9 @@ use crate::db::graph::{
     find_node_by_uri_locked as find_node_by_uri, find_nodes_by_label_locked as find_nodes_by_label,
     insert_derived_graph_edges_locked as insert_graph_edges,
     upsert_graph_node_locked as upsert_graph_node, DerivedEdge,
+};
+use crate::db::lin_engine::{
+    cell_i64, cell_nonempty_string, cell_str, cell_string, LinReader, LinWriter,
 };
 use crate::db::Store;
 use crate::error::Result;
@@ -27,19 +29,12 @@ use crate::util::{slugify, wiki_slug_from_uri, SlugPolicy};
 ///
 /// Returns `(node_id, edge_count)` for the document node and edges written this pass.
 pub fn rebuild_document_graph(store: &Store, doc: &Document) -> Result<(String, usize)> {
-    let mut conn = store.lock()?;
-    let tx = conn.transaction()?;
-    let result = rebuild_document_graph_locked(&tx, doc)?;
-    tx.commit()?;
-    Ok(result)
+    store.with_tx(|tx| rebuild_document_graph_locked(tx, doc))
 }
 
 /// Transaction-aware graph rebuild used by atomic document writes.
-///
-/// `duckdb::Transaction` dereferences to [`Connection`], so callers can run the
-/// exact same resolution logic under their surrounding document/chunk transaction.
 pub(crate) fn rebuild_document_graph_locked(
-    conn: &Connection,
+    conn: &mut impl LinWriter,
     doc: &Document,
 ) -> Result<(String, usize)> {
     let node_id = ensure_document_node(conn, &doc.id, &doc.title, &doc.uri)?;
@@ -105,23 +100,24 @@ pub(crate) fn rebuild_document_graph_locked(
 }
 
 /// §4.5: `(chunk id, char_start, char_end)` for a document, in document order.
-fn load_chunk_spans(conn: &Connection, document_id: &str) -> Result<Vec<(String, i64, i64)>> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT id, char_start, char_end
-        FROM chunks
-        WHERE document_id = ?
-        ORDER BY chunk_index ASC
-        "#,
-    )?;
-    let spans = crate::db::rows::query_vec(&mut stmt, params![document_id], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, i64>(1)?,
-            row.get::<_, i64>(2)?,
-        ))
-    })?;
-    Ok(spans)
+fn load_chunk_spans(r: &impl LinReader, document_id: &str) -> Result<Vec<(String, i64, i64)>> {
+    let rows = r.find_by_eq("chunks", "document_id", document_id)?;
+    let mut indexed: Vec<(i64, String, i64, i64)> = rows
+        .iter()
+        .map(|row| {
+            (
+                cell_i64(row, "chunk_index", 0),
+                cell_string(row, "id"),
+                cell_i64(row, "char_start", 0),
+                cell_i64(row, "char_end", 0),
+            )
+        })
+        .collect();
+    indexed.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    Ok(indexed
+        .into_iter()
+        .map(|(_, id, cs, ce)| (id, cs, ce))
+        .collect())
 }
 
 /// Id of the chunk holding a link span (§4.5). A span that straddles a boundary
@@ -191,7 +187,7 @@ fn document_supports_knowledge_markup(doc: &Document) -> bool {
 /// This keeps otherwise linkless source files inside a navigable hierarchy
 /// without producing an O(n²) clique between sibling files.
 fn append_structural_edges(
-    conn: &Connection,
+    conn: &mut impl LinWriter,
     doc: &Document,
     document_node_id: &str,
     edges: &mut Vec<DerivedEdge>,
@@ -241,7 +237,7 @@ fn append_structural_edges(
 }
 
 fn ensure_structural_node(
-    conn: &Connection,
+    conn: &mut impl LinWriter,
     structural_kind: &str,
     label: &str,
     uri: &str,
@@ -290,7 +286,7 @@ fn structural_edge(source_id: &str, target_id: String, context: &str) -> Derived
 /// reuse keeps the existing node id so edges written before the document arrived
 /// stay attached after promotion.
 fn ensure_document_node(
-    conn: &Connection,
+    conn: &mut impl LinWriter,
     document_id: &str,
     title: &str,
     uri: &str,
@@ -330,7 +326,7 @@ fn ensure_document_node(
 
 /// Mark an existing node as the document node for `document_id`, keeping its id.
 fn bind_as_document_node(
-    conn: &Connection,
+    conn: &mut impl LinWriter,
     mut node: GraphNode,
     document_id: &str,
     title: &str,
@@ -347,7 +343,7 @@ fn bind_as_document_node(
 }
 
 fn create_document_node(
-    conn: &Connection,
+    conn: &mut impl LinWriter,
     document_id: &str,
     title: &str,
     uri: &str,
@@ -413,7 +409,7 @@ fn uri_basename(uri: &str) -> Option<String> {
     }
 }
 
-fn resolve_target(conn: &Connection, link: &ExtractedLink) -> Result<String> {
+fn resolve_target(conn: &mut impl LinWriter, link: &ExtractedLink) -> Result<String> {
     match link.rel_type.as_str() {
         "tagged" => upsert_tag_node(conn, &link.target_label),
         _ => resolve_wikilink_target(conn, &link.target_label),
@@ -424,7 +420,7 @@ fn resolve_target(conn: &Connection, link: &ExtractedLink) -> Result<String> {
 ///
 /// Every tag writer (extraction and maintenance `set_tags`) goes through this so
 /// `#Alpha`, `alpha` and legacy `tag://{label}` nodes resolve to one hub.
-pub(crate) fn upsert_tag_node(conn: &Connection, label: &str) -> Result<String> {
+pub(crate) fn upsert_tag_node(conn: &mut impl LinWriter, label: &str) -> Result<String> {
     let key = crate::graph::normalize::tag_key(label);
     let uri = format!("tag://{key}");
     if let Some(node) = find_node_by_uri(conn, &uri)? {
@@ -460,7 +456,7 @@ pub(crate) fn upsert_tag_node(conn: &Connection, label: &str) -> Result<String> 
 /// 3. Document by those uris → its graph node
 /// 4. `wiki_index.slug` → page document node
 /// 5. Create a new stub (label only; uri left unset until page write)
-fn resolve_wikilink_target(conn: &Connection, label: &str) -> Result<String> {
+fn resolve_wikilink_target(conn: &mut impl LinWriter, label: &str) -> Result<String> {
     let label = label.trim();
     if label.is_empty() {
         // Should not happen from extract; keep a stable empty stub.
@@ -518,37 +514,27 @@ fn resolve_wikilink_target(conn: &Connection, label: &str) -> Result<String> {
 }
 
 fn pick_wikilink_node(matches: &[GraphNode]) -> Option<&GraphNode> {
-    // §5.3: a wikilink names a page, so it binds to a *unique* resolved document
-    // node, or to an unresolved stub. Tag hubs and structural entities are never
-    // wikilink targets — binding [[inbox]] to the #inbox hub would make a tag
-    // look like a note.
     let mut documents = matches
         .iter()
         .filter(|n| NodeKind::Document.is(&n.kind) && n.resolved);
     let document = documents.next()?;
     if documents.next().is_some() {
-        // Two documents share one label_key: that is ambiguity, not a match. Stay
-        // on a stub and let `link_health` surface it instead of picking a winner.
         return pick_stub_node(matches);
     }
     Some(document)
 }
 
-/// Existing promotion target for a wikilink: an unresolved stub-like node. Both
-/// tag and structural-entity nodes carry `resolved = true`, so they never match.
 fn pick_stub_node(matches: &[GraphNode]) -> Option<&GraphNode> {
     matches
         .iter()
         .find(|n| NodeKind::Stub.is(&n.kind) || !n.resolved)
 }
 
-fn upsert_stub(conn: &Connection, label: &str) -> Result<String> {
+fn upsert_stub(conn: &mut impl LinWriter, label: &str) -> Result<String> {
     let matches = find_nodes_by_label(conn, label)?;
     if let Some(n) = pick_stub_node(&matches) {
         return Ok(n.id.clone());
     }
-    // A label that only matches resolved documents is an ambiguous or mistyped
-    // target: mint an unbound stub for the link rather than borrowing that node.
     let node = GraphNode {
         id: Uuid::new_v4().to_string(),
         kind: "stub".into(),
@@ -563,52 +549,48 @@ fn upsert_stub(conn: &Connection, label: &str) -> Result<String> {
     Ok(id)
 }
 
-fn find_document_by_uri(conn: &Connection, uri: &str) -> Result<Option<(String, String, String)>> {
-    find_document_node_data(
-        conn,
-        "SELECT id, title, uri FROM documents WHERE uri = ? LIMIT 1",
-        uri,
-    )
+fn find_document_by_uri(r: &impl LinReader, uri: &str) -> Result<Option<(String, String, String)>> {
+    let rows = r.find_by_eq("documents", "uri", uri)?;
+    Ok(rows.first().map(|row| {
+        (
+            cell_string(row, "id"),
+            cell_string(row, "title"),
+            cell_string(row, "uri"),
+        )
+    }))
 }
 
 fn find_document_by_id(
-    conn: &Connection,
+    r: &impl LinReader,
     document_id: &str,
 ) -> Result<Option<(String, String, String)>> {
-    find_document_node_data(
-        conn,
-        "SELECT id, title, uri FROM documents WHERE id = ? LIMIT 1",
-        document_id,
-    )
+    Ok(r.get_by_id("documents", document_id)?.map(|row| {
+        (
+            cell_string(&row, "id"),
+            cell_string(&row, "title"),
+            cell_string(&row, "uri"),
+        )
+    }))
 }
 
-fn find_document_node_data(
-    conn: &Connection,
-    sql: &str,
-    value: &str,
-) -> Result<Option<(String, String, String)>> {
-    let mut stmt = conn.prepare_cached(sql)?;
-    let mut rows = stmt.query(params![value])?;
-    match rows.next()? {
-        Some(row) => Ok(Some((row.get(0)?, row.get(1)?, row.get(2)?))),
-        None => Ok(None),
+fn find_wiki_index_page_id(r: &impl LinReader, slug: &str) -> Result<Option<String>> {
+    if let Some(row) = r.get_by_id("wiki_index", slug)? {
+        return Ok(cell_nonempty_string(&row, "page_id")
+            .or_else(|| cell_nonempty_string(&row, "document_id")));
     }
-}
-
-fn find_wiki_index_page_id(conn: &Connection, slug: &str) -> Result<Option<String>> {
-    let mut stmt = conn.prepare_cached(
-        r#"
-        SELECT COALESCE(page_id, document_id)
-        FROM wiki_index
-        WHERE slug = ? OR label = ? OR id = ?
-        LIMIT 1
-        "#,
-    )?;
-    let mut rows = stmt.query(params![slug, slug, slug])?;
-    match rows.next()? {
-        Some(row) => Ok(row.get(0)?),
-        None => Ok(None),
-    }
+    let mut found: Option<String> = None;
+    r.scan_each("wiki_index", |row| {
+        if cell_str(row, "slug") == Some(slug)
+            || cell_str(row, "label") == Some(slug)
+            || cell_str(row, "id") == Some(slug)
+        {
+            found = cell_nonempty_string(row, "page_id")
+                .or_else(|| cell_nonempty_string(row, "document_id"));
+            return Ok(false);
+        }
+        Ok(true)
+    })?;
+    Ok(found)
 }
 
 /// Light slug for link targets (keep dots for file names; collapse spaces).
@@ -688,24 +670,17 @@ mod tests {
         for _ in 0..2 {
             rebuild_document_graph(&store, &source).unwrap();
         }
-        let conn = store.lock().unwrap();
+        let r = store.read().unwrap();
         for id in manual {
-            let count: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM graph_edges WHERE id = ? AND origin = 'explicit'",
-                    params![id],
-                    |row| row.get(0),
-                )
-                .unwrap();
-            assert_eq!(count, 1);
+            let row = r.get_by_id("graph_edges", &id).unwrap().expect("manual edge");
+            assert_eq!(cell_str(&row, "origin"), Some("explicit"));
         }
-        let derived: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM graph_edges WHERE source_id = ? AND origin = 'extract'",
-                params![source_node],
-                |row| row.get(0),
-            )
-            .unwrap();
+        let derived = r
+            .find_by_eq("graph_edges", "source_id", source_node.as_str())
+            .unwrap()
+            .into_iter()
+            .filter(|row| cell_str(row, "origin") == Some("extract"))
+            .count();
         assert_eq!(
             derived, 1,
             "rebuild replaces rather than duplicates extracted edges"
@@ -742,34 +717,23 @@ mod tests {
             occurrence: Option<i64>,
         }
         let rows = {
-            let conn = store.lock().unwrap();
-            let mut stmt = conn
-                .prepare(
-                    r#"
-                    SELECT rel_type, origin, alias, heading, chunk_id,
-                           char_start, char_end, occurrence
-                    FROM graph_edges
-                    WHERE source_id = ?
-                    ORDER BY rel_type ASC, id ASC
-                    "#,
-                )
-                .unwrap();
-            let found = stmt
-                .query_map(duckdb::params![node_id], |row| {
-                    Ok(Row {
-                        rel: row.get(0)?,
-                        origin: row.get(1)?,
-                        alias: row.get(2)?,
-                        heading: row.get(3)?,
-                        chunk_id: row.get(4)?,
-                        char_start: row.get(5)?,
-                        char_end: row.get(6)?,
-                        occurrence: row.get(7)?,
-                    })
-                })
+            let r = store.read().unwrap();
+            let mut found: Vec<Row> = r
+                .find_by_eq("graph_edges", "source_id", node_id.as_str())
                 .unwrap()
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .unwrap();
+                .iter()
+                .map(|row| Row {
+                    rel: cell_string(row, "rel_type"),
+                    origin: crate::db::lin_engine::cell_opt_string(row, "origin"),
+                    alias: crate::db::lin_engine::cell_opt_string(row, "alias"),
+                    heading: crate::db::lin_engine::cell_opt_string(row, "heading"),
+                    chunk_id: crate::db::lin_engine::cell_opt_string(row, "chunk_id"),
+                    char_start: crate::db::lin_engine::cell_i64_opt(row, "char_start"),
+                    char_end: crate::db::lin_engine::cell_i64_opt(row, "char_end"),
+                    occurrence: crate::db::lin_engine::cell_i64_opt(row, "occurrence"),
+                })
+                .collect();
+            found.sort_by(|a, b| a.rel.cmp(&b.rel));
             found
         };
 
@@ -796,26 +760,23 @@ mod tests {
             .link_nodes(&node_id, &stub_id, "related", 1.0)
             .unwrap();
         let explicit = {
-            let conn = store.lock().unwrap();
-            conn.prepare(
-                "SELECT origin, alias, heading, chunk_id, char_start, char_end, occurrence
-                 FROM graph_edges WHERE source_id = ? AND rel_type = 'related'",
-            )
-            .unwrap()
-            .query_map(duckdb::params![node_id], |row| {
-                Ok((
-                    row.get::<_, Option<String>>(0)?,
-                    row.get::<_, Option<String>>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                    row.get::<_, Option<String>>(3)?,
-                    row.get::<_, Option<i64>>(4)?,
-                    row.get::<_, Option<i64>>(5)?,
-                    row.get::<_, Option<i64>>(6)?,
-                ))
-            })
-            .unwrap()
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .unwrap()
+            let r = store.read().unwrap();
+            r.find_by_eq("graph_edges", "source_id", node_id.as_str())
+                .unwrap()
+                .into_iter()
+                .filter(|row| cell_str(row, "rel_type") == Some("related"))
+                .map(|row| {
+                    (
+                        crate::db::lin_engine::cell_opt_string(&row, "origin"),
+                        crate::db::lin_engine::cell_opt_string(&row, "alias"),
+                        crate::db::lin_engine::cell_opt_string(&row, "heading"),
+                        crate::db::lin_engine::cell_opt_string(&row, "chunk_id"),
+                        crate::db::lin_engine::cell_i64_opt(&row, "char_start"),
+                        crate::db::lin_engine::cell_i64_opt(&row, "char_end"),
+                        crate::db::lin_engine::cell_i64_opt(&row, "occurrence"),
+                    )
+                })
+                .collect::<Vec<_>>()
         }
         .remove(0);
         assert_eq!(explicit.0.as_deref(), Some("explicit"));
@@ -861,30 +822,42 @@ mod tests {
         let (node, _) = rebuild_document_graph(&store, &source).unwrap();
         let target = store.find_nodes_by_label("Old target").unwrap().remove(0);
         let explicit = store.link_nodes(&node, &target.id, "related", 1.0).unwrap();
-        store
-            .lock()
-            .unwrap()
-            .execute("UPDATE graph_edges SET origin = NULL", [])
-            .unwrap();
+        {
+            let mut w = store.write().unwrap();
+            let all_ids: Vec<String> = w
+                .filter_map_rows("graph_edges", |r| Ok(Some(cell_string(r, "id"))))
+                .unwrap();
+            for eid in all_ids {
+                w.update_where(
+                    "graph_edges",
+                    lin::query::pred::eq("id", eid.as_str()),
+                    crate::db::lin_engine::RecBuilder::new()
+                        .opt_str("origin", None)
+                        .build(),
+                )
+                .unwrap();
+            }
+        }
 
         {
-            let conn = store.lock().unwrap();
-            let attributed = crate::db::schema::backfill_graph_edge_origins(&conn).unwrap();
+            let mut conn = store.write().unwrap();
+            let attributed = crate::db::schema::backfill_graph_edge_origins(&mut conn).unwrap();
             assert_eq!(attributed, 2, "both legacy rows gain an owner");
         }
 
         rebuild_document_graph(&store, &source).unwrap();
         let counts = {
-            let conn = store.lock().unwrap();
-            conn.query_row(
-                "SELECT \
-                 COUNT(*) FILTER (WHERE origin = 'extract'), \
-                 COUNT(*) FILTER (WHERE origin = 'explicit') \
-                 FROM graph_edges WHERE source_id = ?",
-                params![node],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-            )
-            .unwrap()
+            let r = store.read().unwrap();
+            let rows = r.find_by_eq("graph_edges", "source_id", node.as_str()).unwrap();
+            let ext = rows
+                .iter()
+                .filter(|row| cell_str(row, "origin") == Some("extract"))
+                .count() as i64;
+            let exp = rows
+                .iter()
+                .filter(|row| cell_str(row, "origin") == Some("explicit"))
+                .count() as i64;
+            (ext, exp)
         };
         assert_eq!(
             counts,
@@ -896,10 +869,6 @@ mod tests {
         assert!(remaining.iter().any(|edge| edge.id == explicit.id));
     }
 
-    /// The pipeline emits its project/directory membership edges as `related`,
-    /// which §1.6 otherwise treats as an explicit relation. Classifying them by
-    /// name alone would stamp them `explicit`, hide them from the delete
-    /// predicate, and stack a fresh pair on every re-ingest.
     #[test]
     fn legacy_membership_edges_are_attributed_by_their_structural_context() {
         let store = open_temp();
@@ -912,35 +881,47 @@ mod tests {
             .find_node_by_uri("project://notes")
             .unwrap()
             .expect("project node");
-        // The control row: same endpoints and rel_type as the project membership
-        // edge, but `link_nodes` cannot write a context, so it stays explicit.
         let hand_made = store
             .link_nodes(&node, &project.id, "related", 1.0)
             .unwrap();
 
-        store
-            .lock()
-            .unwrap()
-            .execute(
-                "UPDATE graph_edges SET origin = NULL, edge_origin = NULL",
-                [],
-            )
-            .unwrap();
+        {
+            let mut w = store.write().unwrap();
+            let all_ids: Vec<String> = w
+                .filter_map_rows("graph_edges", |r| Ok(Some(cell_string(r, "id"))))
+                .unwrap();
+            for eid in all_ids {
+                w.update_where(
+                    "graph_edges",
+                    lin::query::pred::eq("id", eid.as_str()),
+                    crate::db::lin_engine::RecBuilder::new()
+                        .opt_str("origin", None)
+                        .opt_str("edge_origin", None)
+                        .build(),
+                )
+                .unwrap();
+            }
+        }
         let attributed = {
-            let conn = store.lock().unwrap();
-            crate::db::schema::backfill_graph_edge_origins(&conn).unwrap()
+            let mut conn = store.write().unwrap();
+            crate::db::schema::backfill_graph_edge_origins(&mut conn).unwrap()
         };
         assert_eq!(attributed, 3, "two membership edges plus the hand-made one");
 
         let owners = || {
-            let conn = store.lock().unwrap();
-            conn.query_row(
-                "SELECT COUNT(*) FILTER (WHERE origin = 'extract'), \
-                 COUNT(*) FILTER (WHERE origin = 'explicit') FROM graph_edges",
-                [],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-            )
-            .unwrap()
+            let r = store.read().unwrap();
+            let mut ext = 0i64;
+            let mut exp = 0i64;
+            r.scan_each("graph_edges", |row| {
+                match cell_str(row, "origin") {
+                    Some("extract") => ext += 1,
+                    Some("explicit") => exp += 1,
+                    _ => {}
+                }
+                Ok(true)
+            })
+            .unwrap();
+            (ext, exp)
         };
         assert_eq!(
             owners(),
@@ -955,13 +936,11 @@ mod tests {
             "the rebuild re-creates the membership edges in place instead of duplicating them"
         );
         let survives = {
-            let conn = store.lock().unwrap();
-            conn.query_row(
-                "SELECT COUNT(*) FROM graph_edges WHERE id = ? AND origin = 'explicit'",
-                params![hand_made.id],
-                |row| row.get::<_, i64>(0),
-            )
-            .unwrap()
+            let r = store.read().unwrap();
+            r.get_by_id("graph_edges", &hand_made.id)
+                .unwrap()
+                .filter(|row| cell_str(row, "origin") == Some("explicit"))
+                .map_or(0i64, |_| 1)
         };
         assert_eq!(
             survives, 1,
@@ -1199,11 +1178,14 @@ mod tests {
     fn uri_owned_by_another_document_is_not_stolen() {
         let store = open_temp();
         let (first, second, first_node) = {
-            let conn = store.lock().unwrap();
-            let first = ensure_document_node(&conn, "doc-a", "First", "wiki://shared").unwrap();
-            let second = ensure_document_node(&conn, "doc-b", "Second", "wiki://shared").unwrap();
+            let mut conn = store.write().unwrap();
+            let first = ensure_document_node(&mut conn, "doc-a", "First", "wiki://shared").unwrap();
+            let second =
+                ensure_document_node(&mut conn, "doc-b", "Second", "wiki://shared").unwrap();
             // The original owner is untouched by the second document's arrival.
-            let first_node = find_node_by_document_id(&conn, "doc-a").unwrap().unwrap();
+            let first_node = crate::db::graph::find_node_by_document_id_locked(&conn, "doc-a")
+                .unwrap()
+                .unwrap();
             (first, second, first_node)
         };
         assert_ne!(first, second, "one uri is not the identity of two docs");
@@ -1218,13 +1200,13 @@ mod tests {
     fn promote_skips_tag_and_structural_entity_nodes() {
         let store = open_temp();
         {
-            let conn = store.lock().unwrap();
+            let mut conn = store.write().unwrap();
             for (kind, label, uri) in [
                 ("tag", "Deploy Runbook", "tag://deploy-runbook"),
                 ("entity", "Deploy Runbook", "directory:///deploy"),
             ] {
-                upsert_graph_node(
-                    &conn,
+                crate::db::graph::upsert_graph_node_locked(
+                    &mut conn,
                     &GraphNode {
                         id: Uuid::new_v4().to_string(),
                         kind: kind.into(),

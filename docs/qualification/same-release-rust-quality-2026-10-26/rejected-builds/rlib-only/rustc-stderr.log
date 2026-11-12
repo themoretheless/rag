@@ -1,0 +1,8 @@
+error: only metadata stub found for `rlib` dependency `rag_mcp` please provide path to the corresponding .rmeta file with full metadata
+ --> /private/tmp/rag-index-release-20261026/source-0/examples/code_quality_capture.rs:2:5
+  |
+2 | use rag_mcp::db::Store;
+  |     ^^^^^^^
+
+error: aborting due to 1 previous error
+

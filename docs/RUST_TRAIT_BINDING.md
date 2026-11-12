@@ -1,5 +1,13 @@
 # Captured Rust trait and impl binding
 
+The format-78 qualified runtime additionally captures bounds on nongeneric trait
+associated declarations and propagates Self/associated evidence through generic
+method and static-associated-call returns. Conditional declarations use exact
+owner/configuration identities; unknown/duplicate alternatives, GAT and generic
+traits remain unresolved. See
+[associated-bound qualification](qualification/rust-associated-bounds-2026-10-26/README.md)
+for source-backed trait declaration targets, cfg switching and limits.
+
 Index format **32** adds explicit impl ownership, generic parameter/bound facts,
 trait method declarations and associated type assignments to the AST receiver
 engine. No source program, compiler, build script or proc macro runs in indexing

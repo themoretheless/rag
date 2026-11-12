@@ -33,6 +33,7 @@ allow = [
     "Unlicense",
     "Unicode-3.0",
     "CDLA-Permissive-2.0",
+    "MPL-2.0",
     # Bundled fonts in egui's epaint_default_fonts.
     "OFL-1.1",
     "Ubuntu-font-1.0",
@@ -49,3 +50,4 @@ allow-wildcard-paths = true
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = ["https://github.com/themoretheless/lin"]

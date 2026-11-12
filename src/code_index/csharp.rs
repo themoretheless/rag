@@ -1112,7 +1112,8 @@ pub(super) fn resolve_document(
     doc.references.iter().map(|r|{
         let mut candidates=doc.csharp.as_ref().unwrap().sites.get(&r.start_byte).map_or_else(Vec::new,|site|resolver.candidates(r,site));
         candidates.sort();candidates.dedup();
-        CallEdge {reference:r.clone(),resolution:match candidates.len(){0=>"unresolved",1=>"resolved_static",_=>"ambiguous"}.into(),candidates,provenance:"derived",resolution_basis:"csharp_captured_namespace_owner_type_arity_candidates;build_overload_visibility_runtime_unverified".into()}
+        CallEdge {
+            context_evidence: None,reference:r.clone(),resolution:match candidates.len(){0=>"unresolved",1=>"resolved_static",_=>"ambiguous"}.into(),candidates,provenance:"derived",resolution_basis:"csharp_captured_namespace_owner_type_arity_candidates;build_overload_visibility_runtime_unverified".into()}
     }).collect()
 }
 pub(super) fn edges(
@@ -1473,25 +1474,13 @@ mod tests {
         store.upsert_document(&client).unwrap();
         store.index_code().unwrap();
         assert_eq!(store.code_index_diff(&query).unwrap(), diff);
-        let conn = store.lock().unwrap();
-        let raw: String = conn
-            .query_row(
-                "SELECT graph_json FROM code_index_revisions WHERE id=1",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let raw = crate::code_index::test_get_rev_graph_json(&store, 1);
         let mut graph: serde_json::Value = serde_json::from_str(&raw).unwrap();
         graph
             .as_object_mut()
             .unwrap()
             .remove("csharp_syntax_format");
-        conn.execute(
-            "UPDATE code_index_revisions SET graph_json=? WHERE id=1",
-            [graph.to_string()],
-        )
-        .unwrap();
-        drop(conn);
+        crate::code_index::test_set_rev_graph_json(&store, 1, &graph.to_string());
         let legacy = store.code_index_diff(&query).unwrap();
         assert_eq!(legacy["csharp_relations_available"], false);
         assert!(!legacy["relations_removed"]

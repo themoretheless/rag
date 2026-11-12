@@ -1,0 +1,12 @@
+{
+  "code_quality_capture": {
+    "path": "/private/tmp/rag-callback-try-20261026/bin/code_quality_capture",
+    "sha256": "fd8c2bebd490399a2c81b1b54bc2ffc5a2693773684a47c6109ac4f5e6788d0b",
+    "size_bytes": 174087096
+  },
+  "rag-mcp": {
+    "path": "/private/tmp/rag-callback-try-20261026/bin/rag-mcp",
+    "sha256": "5d7e288d1ad4eac4781b614ce7ab7cfcbe197fd1236414b090ab3d8a38beeecc",
+    "size_bytes": 329882984
+  }
+}

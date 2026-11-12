@@ -768,14 +768,14 @@ function broken($a) { switch ($a) { default: break; case 'view': return true; } 
     }
 
     #[test]
-    fn php_methods_parse_but_namespace_calls_fail_closed() {
+    fn php_methods_and_namespace_candidates_preserve_policy_evidence() {
         let s=snapshot(&[("p.php", "<?php namespace One; function policy() {return false;} function handler() {return policy();} class Gate { public function allows() { return true; } }")]);
-        assert!(s.calls.iter().all(|c| c.candidates.is_empty()));
+        assert!(s.calls.iter().any(|c| !c.candidates.is_empty()));
         assert!(s
             .calls
             .iter()
-            .any(|c| c.resolution_basis == "PHP_NAMESPACE_BINDING_UNMODELED"));
-        let r = s.policy_trace(&query("Gate::allows")).unwrap();
+            .all(|c| c.resolution_basis != "PHP_NAMESPACE_BINDING_UNMODELED"));
+        let r = s.policy_trace(&query("One\\Gate::allows")).unwrap();
         assert_eq!(r["default_behavior"], "allow", "{r}");
     }
 

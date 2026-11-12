@@ -2,49 +2,14 @@ use super::*;
 use crate::models::Document;
 use chrono::Utc;
 
-/// The inlined SQL literals are a projection of §7.1, never a second copy.
 #[test]
-fn scoped_sql_name_lists_derive_from_the_models_sources() {
-    assert_eq!(
-        scoped_relation_types(false),
-        sql_string_list(
-            crate::models::pkb_rel_types(false)
-                .iter()
-                .map(String::as_str)
-        )
-    );
-    assert_eq!(
-        scoped_relation_types(true),
-        sql_string_list(
-            crate::models::pkb_rel_types(true)
-                .iter()
-                .map(String::as_str)
-        )
-    );
+fn scoped_pkb_model_lists_match_expected_invariants() {
     assert!(crate::models::pkb_rel_types(true)
         .iter()
         .any(|rel| rel == "реализует"));
-    assert!(!scoped_companion_kinds(true).contains("document"));
-    assert_eq!(
-        ui_node_kinds(false),
-        sql_string_list(
-            crate::models::pkb_node_kinds(false)
-                .iter()
-                .map(String::as_str)
-        )
-    );
-}
-
-/// §1.6: the rebuild delete predicate must inline the extraction-owned names
-/// from the models list, never a second copy of them.
-#[test]
-fn delete_predicate_inlines_the_models_extract_owned_names() {
-    let sql = delete_derived_edges_sql();
-    assert!(sql.contains(&sql_string_list(
-        crate::models::EXTRACT_OWNED_REL_TYPES.iter().copied()
-    )));
-    assert!(sql.contains("origin = 'extract'"), "{sql}");
-    assert!(sql.contains("origin IS NULL"), "{sql}");
+    assert!(crate::models::pkb_node_kinds(true)
+        .iter()
+        .any(|k| k == "document"));
 }
 
 #[test]
@@ -198,17 +163,77 @@ fn upsert_link_neighbors_backlinks() {
 fn find_node_by_uri_names_one_canonical_copy() {
     let store = open_temp();
     {
-        let conn = store.lock().unwrap();
-        conn.execute(
-                "INSERT INTO graph_nodes (id, kind, label, document_id, uri, resolved, created_at, updated_at) VALUES
-                 ('stub-from-a-wikilink', 'stub', 'dup.cs', NULL, 'file:///dup.cs', false, '2026-08-01 10:00:00', '2026-08-01 10:00:00'),
-                 ('older-copy',    'document', 'dup.cs',      'doc-a', 'file:///dup.cs', true,  '2026-09-02 10:00:00', '2026-09-04 10:00:00'),
-                 ('newer-copy',    'document', 'rag: dup.cs', 'doc-a', 'file:///dup.cs', true,  '2026-09-20 10:00:00', '2026-09-20 10:00:00'),
-                 ('zz-tie',        'document', 'tie.cs',   'doc-b', 'file:///tie.cs', true,  '2026-09-01 10:00:00', '2026-09-20 10:00:00'),
-                 ('aa-tie',        'document', 'tie.cs',   'doc-b', 'file:///tie.cs', true,  '2026-09-01 10:00:00', '2026-09-20 10:00:00')",
-                [],
+        use crate::db::lin_engine::{LinWriter, RecBuilder};
+        let mut w = store.write().unwrap();
+        for (id, kind, label, doc_id, uri, resolved, created, updated) in [
+            (
+                "stub-from-a-wikilink",
+                "stub",
+                "dup.cs",
+                None,
+                "file:///dup.cs",
+                false,
+                "2026-08-01 10:00:00",
+                "2026-08-01 10:00:00",
+            ),
+            (
+                "older-copy",
+                "document",
+                "dup.cs",
+                Some("doc-a"),
+                "file:///dup.cs",
+                true,
+                "2026-09-02 10:00:00",
+                "2026-09-04 10:00:00",
+            ),
+            (
+                "newer-copy",
+                "document",
+                "rag: dup.cs",
+                Some("doc-a"),
+                "file:///dup.cs",
+                true,
+                "2026-09-20 10:00:00",
+                "2026-09-20 10:00:00",
+            ),
+            (
+                "zz-tie",
+                "document",
+                "tie.cs",
+                Some("doc-b"),
+                "file:///tie.cs",
+                true,
+                "2026-09-01 10:00:00",
+                "2026-09-20 10:00:00",
+            ),
+            (
+                "aa-tie",
+                "document",
+                "tie.cs",
+                Some("doc-b"),
+                "file:///tie.cs",
+                true,
+                "2026-09-01 10:00:00",
+                "2026-09-20 10:00:00",
+            ),
+        ] {
+            w.upsert_by_id(
+                "graph_nodes",
+                id,
+                RecBuilder::new()
+                    .str("id", id)
+                    .str("kind", kind)
+                    .str("label", label)
+                    .opt_str("document_id", doc_id)
+                    .str("uri", uri)
+                    .bool("resolved", resolved)
+                    .str("metadata_json", "{}")
+                    .str("created_at", created)
+                    .str("updated_at", updated)
+                    .build(),
             )
             .unwrap();
+        }
     }
 
     for _ in 0..3 {
@@ -258,7 +283,7 @@ fn delete_document_keeps_inbound_and_drops_outbound_extract_edges() {
         .unwrap();
     // A -> B: one edge body extraction owns, one the user created.
     {
-        let conn = store.lock().unwrap();
+        let mut w = store.write().unwrap();
         let extracted = DerivedEdge {
             edge: edge("e-out-extract", "n1", "n2", "wikilink"),
             alias: None,
@@ -268,7 +293,7 @@ fn delete_document_keeps_inbound_and_drops_outbound_extract_edges() {
             occurrence: 0,
             chunk_id: None,
         };
-        insert_derived_graph_edges_locked(&conn, &[extracted]).unwrap();
+        insert_derived_graph_edges_locked(&mut *w, &[extracted]).unwrap();
     }
     let out_explicit = store.link_nodes("n1", "n2", "tunnel", 1.0).unwrap().id;
     // B -> A: inbound to the doomed node.
@@ -641,14 +666,16 @@ fn project_graph_scopes_before_cap_and_lazy_expansion_cannot_cross_projects() {
     }
     // Additive migrations historically allowed NULL here. Project exports
     // must expose the same effective `raw` layer as the document codec.
-    store
-        .lock()
-        .unwrap()
-        .execute(
-            "UPDATE documents SET layer = NULL WHERE id = ?",
-            duckdb::params!["alpha-doc"],
+    {
+        use crate::db::lin_engine::{LinWriter, RecBuilder};
+        let mut w = store.write().unwrap();
+        w.update_where(
+            "documents",
+            lin::query::pred::eq("id", "alpha-doc"),
+            RecBuilder::new().opt_str("layer", None).build(),
         )
         .unwrap();
+    }
     let mut alpha_node = node(
         "alpha-node",
         "document",

@@ -327,11 +327,12 @@ async fn wiki_write_rejects_identity_mismatch_before_embedding_or_mutation() {
         error.to_string().contains("incomplete corpus migration"),
         "{error}"
     );
-    store
-        .lock()
-        .unwrap()
-        .execute("DELETE FROM embedding_manifest", [])
-        .unwrap();
+    {
+        use crate::db::lin_engine::{pred_all, LinWriter};
+        let mut w = store.write().unwrap();
+        w.delete_where("embedding_manifest", pred_all())
+            .unwrap();
+    }
     let error = write_wiki_page_command(
         &store,
         &incompatible,
@@ -1697,14 +1698,7 @@ async fn wiki_graph_fault_rolls_back_document_chunks_graph_and_side_effects() {
 
     // Test-only fault injector: the graph rebuild inserts the first edge,
     // then the duplicate violates this constraint after doc/chunk writes.
-    store
-            .lock()
-            .unwrap()
-            .execute(
-                "CREATE UNIQUE INDEX wiki_rollback_edge_key ON graph_edges(source_id, target_id, rel_type)",
-                [],
-            )
-            .expect("fault index");
+    store.set_fail_derived_edge_duplicate_for_test(true);
 
     let error = update_wiki_page_cas(
         &store,
@@ -1723,6 +1717,7 @@ async fn wiki_graph_fault_rolls_back_document_chunks_graph_and_side_effects() {
     )
     .await
     .expect_err("duplicate graph edge must fail the wiki transaction");
+    store.set_fail_derived_edge_duplicate_for_test(false);
     assert!(
         error.to_string().contains("duplicate")
             || error.to_string().contains("constraint")

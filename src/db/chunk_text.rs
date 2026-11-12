@@ -1,11 +1,11 @@
-//! Bounded, text-only chunk reads for document responses.
+//! Bounded, text-only chunk reads for document responses over `lin`.
 //!
-//! The byte budget is checked in SQL before any chunk content is materialized,
-//! and embedding vectors are never selected.
+//! The byte budget is checked before chunk strings are cloned into transport
+//! projections, and embedding vectors are never decoded.
 
-use duckdb::params;
 use serde::Serialize;
 
+use super::lin_engine::{cell_i32, cell_str, cell_string, LinReader};
 use crate::db::Store;
 use crate::error::{AppError, Result};
 
@@ -30,7 +30,7 @@ pub struct ChunkTextPage {
 /// Read up to `limit` chunks of `document_id` in `(chunk_index, id)` order,
 /// optionally restricted to an inclusive `chunk_index` range. When the
 /// selected text exceeds `max_content_bytes`, returns `over_budget(bytes)`
-/// without loading any content.
+/// without materializing `ChunkText` items.
 pub fn chunk_text_page(
     store: &Store,
     document_id: &str,
@@ -40,54 +40,50 @@ pub fn chunk_text_page(
     over_budget: impl FnOnce(usize) -> AppError,
 ) -> Result<ChunkTextPage> {
     let (low, high) = index_range.unwrap_or((i32::MIN, i32::MAX));
-    let limit_sql = i64::try_from(limit).unwrap_or(i64::MAX);
-    let conn = store.lock()?;
-    let total: i64 = conn.query_row(
-        "SELECT COUNT(*)::BIGINT FROM chunks WHERE document_id = ?",
-        [document_id],
-        |row| row.get(0),
-    )?;
-    let content_bytes: i64 = conn.query_row(
-        r#"
-        SELECT COALESCE(SUM(octet_length(encode(content))), 0)::BIGINT
-        FROM (
-            SELECT content
-            FROM chunks
-            WHERE document_id = ? AND chunk_index BETWEEN ? AND ?
-            ORDER BY chunk_index, id
-            LIMIT ?
-        ) selected
-        "#,
-        params![document_id, low, high, limit_sql],
-        |row| row.get(0),
-    )?;
-    let content_bytes = usize::try_from(content_bytes.max(0)).unwrap_or(usize::MAX);
+    let r = store.read()?;
+    let rows = r.find_by_eq("chunks", "document_id", document_id)?;
+    let total = rows.len() as u64;
+
+    let mut selected: Vec<(i32, &str, &lin::Row)> = rows
+        .iter()
+        .filter_map(|row| {
+            let idx = cell_i32(row, "chunk_index", 0);
+            if idx < low || idx > high {
+                return None;
+            }
+            let id = cell_str(row, "id")?;
+            Some((idx, id, row))
+        })
+        .collect();
+
+    selected.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
+    if selected.len() > limit {
+        selected.truncate(limit);
+    }
+
+    let content_bytes: usize = selected
+        .iter()
+        .map(|(_, _, row)| cell_str(row, "content").map_or(0, str::len))
+        .fold(0usize, usize::saturating_add);
+
     if content_bytes > max_content_bytes {
         return Err(over_budget(content_bytes));
     }
-    let mut statement = conn.prepare(
-        r#"
-        SELECT id, chunk_index, content, char_start, char_end
-        FROM chunks
-        WHERE document_id = ? AND chunk_index BETWEEN ? AND ?
-        ORDER BY chunk_index, id
-        LIMIT ?
-        "#,
-    )?;
-    let items = statement
-        .query_map(params![document_id, low, high, limit_sql], |row| {
-            Ok(ChunkText {
-                id: row.get(0)?,
-                chunk_index: row.get(1)?,
-                content: row.get(2)?,
-                char_start: row.get(3)?,
-                char_end: row.get(4)?,
-            })
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    let items = selected
+        .into_iter()
+        .map(|(chunk_index, _, row)| ChunkText {
+            id: cell_string(row, "id"),
+            chunk_index,
+            content: cell_string(row, "content"),
+            char_start: cell_i32(row, "char_start", 0),
+            char_end: cell_i32(row, "char_end", 0),
+        })
+        .collect();
+
     Ok(ChunkTextPage {
         items,
-        total: total.max(0) as u64,
+        total,
         content_bytes,
     })
 }

@@ -1,0 +1,32 @@
+{
+  "status": "passed",
+  "versions": {
+    "index_format": 83,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "checks": [
+    "changed_class_invocations_only",
+    "availability_not_call_evidence",
+    "explicit_disable",
+    "separate_from_call_modes",
+    "captured_base_dependency",
+    "nested_trait_dependency",
+    "depth_budget",
+    "output_limit",
+    "shared_work_budget",
+    "direct_host_budget_independence",
+    "warm_equivalence",
+    "full_resolution_equivalence",
+    "alias_only_Git_before_after",
+    "Git_and_index_read_only",
+    "stale_host_exclusion",
+    "source_sync",
+    "project_isolation"
+  ],
+  "PHP_executed": false,
+  "PHPUnit_executed": false,
+  "production_database_touched": false,
+  "runtime_coverage_measured": false,
+  "safe_to_skip_unlisted_tests": false
+}

@@ -126,11 +126,10 @@ impl Store {
         if !(1..=100000).contains(&budget) {
             return Err(AppError::config("code max_chars must be 1..100000"));
         }
-        let mut connection = self.lock()?;
-        let transaction = connection.transaction()?;
-        let snapshot = snapshot_locked(&transaction, q.project.as_deref())?;
-        let view = cursor::View::new(q, &snapshot)?;
-        let position = view.decode(q.cursor.as_deref())?;
+        let guard = self.read()?;
+        let r = &*guard;
+        let snapshot = snapshot_locked(r, q.project.as_deref())?;
+        let mut view = cursor::View::new(q, &snapshot)?;
         let eligible = |id: &str| {
             snapshot
                 .document_scopes
@@ -147,8 +146,22 @@ impl Store {
             if documents.contains_key(id) {
                 return Ok(());
             }
-            let (content,metadata,revision,path,project):(String,String,i64,String,Option<String>)=transaction.query_row("SELECT content,metadata_json,revision,COALESCE(source_file,uri),wing FROM documents WHERE id=? AND COALESCE(status,'active') NOT IN ('archived','tombstone','consolidated')",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)))?;
-            let source = source::read(&transaction, &content, &metadata)?.into_owned();
+            let rec = r
+                .get_by_id("documents", id)?
+                .filter(|rec| {
+                    let status = opt_str(rec, "status").unwrap_or("active");
+                    !matches!(status, "archived" | "tombstone" | "consolidated")
+                })
+                .ok_or_else(|| AppError::NotFound(format!("document '{id}' not found")))?;
+            let content = req_str(&rec, "content")?.to_string();
+            let metadata = opt_str(&rec, "metadata_json").unwrap_or("{}").to_string();
+            let revision = opt_i64(&rec, "revision").unwrap_or(1);
+            let path = match opt_str(&rec, "source_file") {
+                Some(sf) => sf.to_string(),
+                None => req_str(&rec, "uri")?.to_string(),
+            };
+            let project = opt_str(&rec, "wing").map(str::to_string);
+            let source = source::read(r, &content, &metadata)?.into_owned();
             let scope = &snapshot.document_scopes[id];
             let (expected_revision, hash) = &snapshot.document_fingerprints[id];
             if revision != *expected_revision
@@ -181,20 +194,19 @@ impl Store {
                     });
                     continue;
                 }
-                let chunk: Option<(String, i32, i32)> = transaction
-                    .query_row(
-                        "SELECT document_id,char_start,char_end FROM chunks WHERE id=?",
-                        [id],
-                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-                    )
-                    .optional()?;
+                let chunk_rec = r.get_by_id("chunks", id)?;
+                let chunk: Option<(String, i32, i32, String)> = match chunk_rec {
+                    Some(crec) => {
+                        let doc_id = req_str(&crec, "document_id")?.to_string();
+                        let a = opt_i64(&crec, "char_start").unwrap_or(0) as i32;
+                        let b = opt_i64(&crec, "char_end").unwrap_or(0) as i32;
+                        let body = req_str(&crec, "content")?.to_string();
+                        Some((doc_id, a, b, body))
+                    }
+                    None => None,
+                };
                 let mut resolved = false;
-                if let Some((document, a, b)) = chunk.filter(|(d, _, _)| eligible(d)) {
-                    let body: String = transaction.query_row(
-                        "SELECT content FROM chunks WHERE id=?",
-                        [id],
-                        |r| r.get(0),
-                    )?;
+                if let Some((document, a, b, body)) = chunk.filter(|(d, _, _, _)| eligible(d)) {
                     load(&document, &mut documents)?;
                     let source = &documents[&document].0;
                     if a >= 0 && b >= a {
@@ -252,6 +264,13 @@ impl Store {
                     via: "symbol".into(),
                 })
                 .collect();
+        }
+        view.seal_selected(&spans, &unresolved)?;
+        let position = view.decode(q.cursor.as_deref())?;
+        if spans.iter().any(|s| s.start > s.end) {
+            return Err(AppError::config(
+                "invalid cached code span; index span repair required",
+            ));
         }
         let single = q.selection.symbol.is_some();
         if single && spans.len() != 1 {
@@ -419,7 +438,9 @@ impl Store {
                     });
                     break;
                 }
-                let text = &source[a..b];
+                let text = source.get(a..b).ok_or_else(|| {
+                    AppError::config("invalid cached source partition; index span repair required")
+                })?;
                 let take = text
                     .char_indices()
                     .nth(remaining)
@@ -912,31 +933,81 @@ mod tests {
     fn code_cursor_corrupt_child_boundary_returns_error_without_poisoning_store() {
         let body = "class C:\n    'α'\n    def child(self): pass\n";
         let (_dir, s) = store(body);
-        let payload: String = s
-            .lock()
-            .unwrap()
-            .query_row(
-                "SELECT payload FROM code_index_documents WHERE document_id='a'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let payload: String = {
+            let r = s.read().unwrap();
+            let rec = r.get_by_id("code_index_documents", "a").unwrap().unwrap();
+            req_str(&rec, "payload").unwrap().to_string()
+        };
         let mut doc: IndexedDocument = serde_json::from_str(&payload).unwrap();
-        doc.symbols
-            .iter_mut()
-            .find(|s| s.name == "child")
-            .unwrap()
-            .start_byte = body.find('α').unwrap() + 1;
-        s.lock()
-            .unwrap()
-            .execute(
-                "UPDATE code_index_documents SET payload=? WHERE document_id='a'",
-                [serde_json::to_string(&doc).unwrap()],
-            )
-            .unwrap();
-        let mut q = path();
-        q.include_containers = true;
-        assert!(s.code_read(&q).is_err());
-        assert!(s.code_snapshot().is_ok());
+        for reversed in [false, true] {
+            let child = doc.symbols.iter_mut().find(|s| s.name == "child").unwrap();
+            child.start_byte = body.find('α').unwrap() + 1;
+            child.end_byte = if reversed {
+                child.start_byte - 1
+            } else {
+                body.len() - 1
+            };
+            {
+                let mut w = s.write().unwrap();
+                w.upsert_by_id(
+                    "code_index_documents",
+                    "a",
+                    RecBuilder::new()
+                        .str("document_id", "a")
+                        .str("payload", serde_json::to_string(&doc).unwrap())
+                        .build(),
+                )
+                .unwrap();
+            }
+            let mut q = path();
+            q.include_containers = true;
+            q.selection.limit = Some(1);
+            assert!(s.code_read(&q).is_err());
+            assert!(s.code_snapshot().is_ok());
+        }
+    }
+    #[test]
+    fn code_cursor_rechunk_changes_or_deleted_ids_conflict_without_source_revision_change() {
+        let body = "def first(): return 1\ndef second(): return 2\n";
+        let (_dir, s) = store(body);
+        let chunk = |end: usize| Chunk {
+            id: "current".into(),
+            document_id: "a".into(),
+            chunk_index: 0,
+            content: body.chars().take(end).collect(),
+            embedding: vec![],
+            char_start: 0,
+            char_end: end as i32,
+            metadata_json: "{}".into(),
+        };
+        s.insert_chunks(&[chunk(body.chars().count())]).unwrap();
+        let mut q = CodeReadQuery {
+            entry_ids: Some(vec!["current".into()]),
+            max_chars: Some(3),
+            ..Default::default()
+        };
+        let first = s.code_read(&q).unwrap();
+        q.cursor = first["next_cursor"].as_str().map(str::to_string);
+        let revision: i64 = s.get_document("a").unwrap().unwrap().revision;
+        s.delete_chunks_for_document("a").unwrap();
+        s.insert_chunks(&[chunk(10)]).unwrap();
+        assert_eq!(s.get_document("a").unwrap().unwrap().revision, revision);
+        assert_eq!(
+            s.code_snapshot().unwrap().index_revision,
+            first["index_rev"].as_i64()
+        );
+        assert!(
+            matches!(s.code_read(&q), Err(AppError::Conflict(_))),
+            "chunk reshape must invalidate the cursor"
+        );
+        q.cursor = None;
+        q.cursor = s.code_read(&q).unwrap()["next_cursor"]
+            .as_str()
+            .map(str::to_string);
+        s.delete_chunks_for_document("a").unwrap();
+        assert!(
+            matches!(s.code_read(&q), Err(AppError::Conflict(_))),
+            "missing chunk must invalidate the cursor"
+        );
     }
 }

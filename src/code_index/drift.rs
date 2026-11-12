@@ -1,7 +1,10 @@
 //! Bounded live reads, checksum freshness and a persistent acknowledgement ledger.
 use super::history::File;
 use super::*;
-use duckdb::Connection;
+use crate::db::lin_engine::{
+    cell_i64, cell_opt_string, cell_str, cell_string, format_db_timestamp, LinWriter, RecBuilder,
+};
+use chrono::Utc;
 use rmcp::schemars;
 use std::io::Read;
 use std::path::PathBuf;
@@ -34,7 +37,7 @@ pub struct DriftAck {
     pub note: String,
 }
 pub(super) fn observe(
-    conn: &Connection,
+    w: &mut impl LinWriter,
     revision: i64,
     file: &File,
     kind: &str,
@@ -44,26 +47,41 @@ pub(super) fn observe(
     let id = content_hash(&serde_json::to_string(&(
         revision, &file.id, kind, observed, source,
     ))?);
-    let seq: Option<i64> = conn
-        .query_row(
-            "SELECT seq FROM code_index_drift WHERE event_id=?",
-            [&id],
-            |r| r.get(0),
-        )
-        .optional()?;
-    if seq.is_some() {
-        conn.execute(
-            "UPDATE code_index_drift SET last_seen=current_timestamp WHERE event_id=?",
-            [&id],
+    let now = format_db_timestamp(Utc::now());
+    if w.get_by_id("code_index_drift", &id)?.is_some() {
+        w.update_where(
+            "code_index_drift",
+            lin::query::pred::eq("id", id.as_str()),
+            RecBuilder::new().str("last_seen", now).build(),
         )?;
         return Ok(id);
     }
-    let seq: i64 = conn.query_row(
-        "SELECT COALESCE(MAX(seq),0)+1 FROM code_index_drift",
-        [],
-        |r| r.get(0),
+    let seq = crate::analysis_tasks::next_seq(w, "code_index_drift")?;
+    w.insert_one(
+        "code_index_drift",
+        RecBuilder::new()
+            .id(&id)
+            .str("event_id", &id)
+            .i64("seq", seq)
+            .i64("index_revision", revision)
+            .str("document_id", &file.id)
+            .str("path", &file.path)
+            .opt_str("project", file.project.as_deref())
+            .str("kind", kind)
+            .str("source_kind", source)
+            .opt_str(
+                "indexed_hash",
+                if kind == "added_to_index" {
+                    None
+                } else {
+                    Some(file.hash.as_str())
+                },
+            )
+            .opt_str("observed_hash", observed)
+            .str("first_seen", &now)
+            .str("last_seen", &now)
+            .build(),
     )?;
-    conn.execute("INSERT INTO code_index_drift(event_id,seq,index_revision,document_id,path,project,kind,source_kind,indexed_hash,observed_hash) VALUES (?,?,?,?,?,?,?,?,?,?)",params![id,seq,revision,file.id,file.path,file.project,kind,source,if kind=="added_to_index"{None}else{Some(file.hash.as_str())},observed])?;
     Ok(id)
 }
 fn source_mode(q: &SourceQuery) -> Result<&str> {
@@ -74,16 +92,13 @@ fn source_mode(q: &SourceQuery) -> Result<&str> {
     Ok(mode)
 }
 fn revision_files(store: &Store, q: &SourceQuery) -> Result<(i64, Vec<File>)> {
-    let conn = store.lock()?;
+    let r = store.read()?;
     let revision = match q.index_revision {
         Some(id) => id,
-        None => conn
-            .query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| {
-                r.get::<_, Option<i64>>(0)
-            })?
+        None => crate::analysis_tasks::latest_code_index_rev(&*r)?
             .ok_or_else(|| AppError::not_found("run index_code or sync_sources first"))?,
     };
-    let files = history::files(&conn, revision, q.project.as_deref())?
+    let files = history::files(&*r, revision, q.project.as_deref())?
         .into_iter()
         .filter(|f| {
             q.document_id.as_ref().is_none_or(|id| id == &f.id)
@@ -112,7 +127,8 @@ fn actual(store: &Store, file: &File, mode: &str, roots: &[PathBuf]) -> Result<O
             .filter(|d| !matches!(d.status.as_str(), "archived" | "tombstone" | "consolidated"));
         return doc
             .map(|d| {
-                source::read(&*store.lock()?, &d.content, &d.metadata_json).map(|s| LiveSource {
+                let r = store.read()?;
+                source::read(&*r, &d.content, &d.metadata_json).map(|s| LiveSource {
                     bytes: s.len(),
                     bytes_hash: content_hash(&s),
                     text: s.into_owned(),
@@ -310,7 +326,7 @@ impl Store {
                     let event = if status != "unchanged" {
                         changed += 1;
                         Some(observe(
-                            &*self.lock()?,
+                            &mut *self.write()?,
                             revision,
                             file,
                             status,
@@ -349,7 +365,7 @@ impl Store {
         let (status, hash) = comparison(&file.hash, content.as_ref().map(|s| s.text.as_str()));
         let event = if status != "unchanged" {
             Some(observe(
-                &*self.lock()?,
+                &mut *self.write()?,
                 revision,
                 file,
                 status,
@@ -385,13 +401,55 @@ impl Store {
         )
     }
     pub fn code_drift_report(&self, q: &DriftQuery) -> Result<serde_json::Value> {
-        let conn = self.lock()?;
+        let r = self.read()?;
         let limit = q.limit.unwrap_or(100).clamp(1, 500);
-        let mut stmt=conn.prepare("SELECT event_id,seq,index_revision,document_id,path,project,kind,source_kind,indexed_hash,observed_hash,CAST(first_seen AS VARCHAR),CAST(last_seen AS VARCHAR),CAST(acknowledged_at AS VARCHAR),acknowledgement FROM code_index_drift WHERE (? IS NULL OR project=?) AND (? IS NULL OR index_revision=?) AND (? IS NULL OR seq<?) AND (? OR acknowledged_at IS NULL) ORDER BY seq DESC LIMIT ?")?;
-        let rows=stmt.query_map(params![q.project,q.project,q.index_revision,q.index_revision,q.before_seq,q.before_seq,q.include_acknowledged,(limit+1)as i64],|r|Ok(serde_json::json!({"event_id":r.get::<_,String>(0)?,"seq":r.get::<_,i64>(1)?,"index_rev":r.get::<_,i64>(2)?,"document_id":r.get::<_,String>(3)?,"path":r.get::<_,String>(4)?,"project":r.get::<_,Option<String>>(5)?,"kind":r.get::<_,String>(6)?,"source":r.get::<_,String>(7)?,"indexed_hash":r.get::<_,Option<String>>(8)?,"observed_hash":r.get::<_,Option<String>>(9)?,"first_seen":r.get::<_,String>(10)?,"last_seen":r.get::<_,String>(11)?,"acknowledged_at":r.get::<_,Option<String>>(12)?,"acknowledgement":r.get::<_,Option<String>>(13)?})))?;
-        let mut items = rows.collect::<std::result::Result<Vec<_>, _>>()?;
-        let more = items.len() > limit;
-        items.truncate(limit);
+        let mut matched: Vec<(i64, serde_json::Value)> = Vec::new();
+        r.scan_each("code_index_drift", |row| {
+            let seq = cell_i64(row, "seq", 0);
+            if let Some(before) = q.before_seq
+                && seq >= before
+            {
+                return Ok(true);
+            }
+            if let Some(rev) = q.index_revision
+                && cell_i64(row, "index_revision", 0) != rev
+            {
+                return Ok(true);
+            }
+            if let Some(ref proj) = q.project
+                && cell_str(row, "project") != Some(proj.as_str())
+            {
+                return Ok(true);
+            }
+            let ack_at = cell_opt_string(row, "acknowledged_at");
+            if !q.include_acknowledged && ack_at.is_some() {
+                return Ok(true);
+            }
+            matched.push((
+                seq,
+                serde_json::json!({
+                    "event_id": cell_string(row, "event_id"),
+                    "seq": seq,
+                    "index_rev": cell_i64(row, "index_revision", 0),
+                    "document_id": cell_string(row, "document_id"),
+                    "path": cell_string(row, "path"),
+                    "project": cell_opt_string(row, "project"),
+                    "kind": cell_string(row, "kind"),
+                    "source": cell_string(row, "source_kind"),
+                    "indexed_hash": cell_opt_string(row, "indexed_hash"),
+                    "observed_hash": cell_opt_string(row, "observed_hash"),
+                    "first_seen": cell_string(row, "first_seen"),
+                    "last_seen": cell_string(row, "last_seen"),
+                    "acknowledged_at": ack_at,
+                    "acknowledgement": cell_opt_string(row, "acknowledgement"),
+                }),
+            ));
+            Ok(true)
+        })?;
+        matched.sort_by_key(|a| std::cmp::Reverse(a.0));
+        let more = matched.len() > limit;
+        let items: Vec<serde_json::Value> =
+            matched.into_iter().take(limit).map(|(_, v)| v).collect();
         Ok(
             serde_json::json!({"items":items,"has_more":more,"next_before_seq":if more{items.last().and_then(|v|v["seq"].as_i64())}else{None},"observation_log_only":true}),
         )
@@ -406,28 +464,33 @@ impl Store {
                 "drift_ack requires 1..500 event IDs and a nonblank note up to 4096 bytes",
             ));
         }
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let mut changed = 0;
-        let mut seen = HashSet::new();
-        for id in &q.event_ids {
-            if !seen.insert(id) {
-                continue;
+        let note = q.note.trim();
+        let now = format_db_timestamp(Utc::now());
+        self.with_tx(|tx| {
+            let mut changed = 0usize;
+            let mut seen = HashSet::new();
+            for id in &q.event_ids {
+                if !seen.insert(id) {
+                    continue;
+                }
+                let Some(row) = tx.get_by_id("code_index_drift", id)? else {
+                    return Err(AppError::not_found(format!("unknown drift event {id}")));
+                };
+                if cell_str(&row, "acknowledged_at").is_none() {
+                    changed += tx.update_where(
+                        "code_index_drift",
+                        lin::query::pred::eq("id", id.as_str()),
+                        RecBuilder::new()
+                            .str("acknowledged_at", &now)
+                            .str("acknowledgement", note)
+                            .build(),
+                    )?;
+                }
             }
-            let exists: i64 = tx.query_row(
-                "SELECT COUNT(*) FROM code_index_drift WHERE event_id=?",
-                [id],
-                |r| r.get(0),
-            )?;
-            if exists != 1 {
-                return Err(AppError::not_found(format!("unknown drift event {id}")));
-            }
-            changed+=tx.execute("UPDATE code_index_drift SET acknowledged_at=current_timestamp, acknowledgement=? WHERE event_id=? AND acknowledged_at IS NULL",params![q.note.trim(),id])?;
-        }
-        tx.commit()?;
-        Ok(
-            serde_json::json!({"acknowledged":changed,"requested_unique":seen.len(),"source_or_index_changed":false}),
-        )
+            Ok(
+                serde_json::json!({"acknowledged":changed,"requested_unique":seen.len(),"source_or_index_changed":false}),
+            )
+        })
     }
 }
 

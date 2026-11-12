@@ -1368,8 +1368,8 @@ mod tests {
         assert!(store.find_node_by_document_id("d1").unwrap().is_some());
         assert_eq!(store.list_wiki_index().unwrap().len(), 1);
         let generation_after_refresh = {
-            let conn = store.lock().unwrap();
-            crate::db::fts::fts_generation_state(&conn).unwrap()
+            let r = store.read().unwrap();
+            crate::db::fts::fts_generation_state(&*r).unwrap()
         };
         assert!(!generation_after_refresh.dirty);
         let _hits = crate::db::search::search(
@@ -1384,8 +1384,8 @@ mod tests {
         )
         .unwrap();
         let generation_after_search = {
-            let conn = store.lock().unwrap();
-            crate::db::fts::fts_generation_state(&conn).unwrap()
+            let r = store.read().unwrap();
+            crate::db::fts::fts_generation_state(&*r).unwrap()
         };
         assert_eq!(generation_after_search, generation_after_refresh);
 
@@ -1815,8 +1815,8 @@ mod tests {
             .as_ref()
             .is_some_and(|result| result.chunks_reembedded > 0));
         let generation = {
-            let conn = store.lock().unwrap();
-            crate::db::fts_generation_state(&conn).unwrap()
+            let r = store.read().unwrap();
+            crate::db::fts_generation_state(&*r).unwrap()
         };
         assert!(generation.dirty, "next lexical read must retry FTS");
         let summary_id = report.ops_log_id.as_deref().expect("terminal summary id");
@@ -1864,8 +1864,9 @@ mod tests {
 
         // Wipe index and rebuild via refresh.
         {
-            let conn = store.lock().unwrap();
-            conn.execute("DELETE FROM wiki_index", []).unwrap();
+            use crate::db::lin_engine::{pred_all, LinWriter};
+            let mut w = store.write().unwrap();
+            w.delete_where("wiki_index", pred_all()).unwrap();
         }
         assert!(store.list_wiki_index().unwrap().is_empty());
 

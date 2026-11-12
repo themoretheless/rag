@@ -1,0 +1,292 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+error[E0107]: type alias takes 1 generic argument but 2 generic arguments were supplied
+  --> src/code_index/resolve/python_names/flow.rs:51:28
+   |
+51 |     fn spend(&mut self) -> Result<(), String> {
+   |                            ^^^^^^   -------- help: remove the unnecessary generic argument
+   |                            |
+   |                            expected 1 generic argument
+   |
+note: type alias defined here, with 1 generic parameter: `T`
+  --> src/error.rs:63:10
+   |
+63 | pub type Result<T> = std::result::Result<T, AppError>;
+   |          ^^^^^^ -
+
+error[E0107]: type alias takes 1 generic argument but 2 generic arguments were supplied
+  --> src/code_index/resolve/python_names/flow.rs:58:46
+   |
+58 |     fn merge(&mut self, states: Vec<Env>) -> Result<Option<Env>, String> {
+   |                                              ^^^^^^            -------- help: remove the unnecessary generic argument
+   |                                              |
+   |                                              expected 1 generic argument
+   |
+note: type alias defined here, with 1 generic parameter: `T`
+  --> src/error.rs:63:10
+   |
+63 | pub type Result<T> = std::result::Result<T, AppError>;
+   |          ^^^^^^ -
+
+error[E0107]: type alias takes 1 generic argument but 2 generic arguments were supplied
+  --> src/code_index/resolve/python_names/flow.rs:77:61
+   |
+77 |     fn expr(&mut self, n: Node, env: &Env, depth: usize) -> Result<(), String> {
+   |                                                             ^^^^^^   -------- help: remove the unnecessary generic argument
+   |                                                             |
+   |                                                             expected 1 generic argument
+   |
+note: type alias defined here, with 1 generic parameter: `T`
+  --> src/error.rs:63:10
+   |
+63 | pub type Result<T> = std::result::Result<T, AppError>;
+   |          ^^^^^^ -
+
+error[E0107]: type alias takes 1 generic argument but 2 generic arguments were supplied
+   --> src/code_index/resolve/python_names/flow.rs:109:74
+    |
+109 |     fn assignment(&mut self, node: Node, env: &mut Env, depth: usize) -> Result<Values, String> {
+    |                                                                          ^^^^^^       -------- help: remove the unnecessary generic argument
+    |                                                                          |
+    |                                                                          expected 1 generic argument
+    |
+note: type alias defined here, with 1 generic parameter: `T`
+   --> src/error.rs:63:10
+    |
+ 63 | pub type Result<T> = std::result::Result<T, AppError>;
+    |          ^^^^^^ -
+
+error[E0107]: type alias takes 1 generic argument but 2 generic arguments were supplied
+   --> src/code_index/resolve/python_names/flow.rs:145:68
+    |
+145 |     fn block(&mut self, body: Node, mut env: Env, depth: usize) -> Result<Option<Env>, String> {
+    |                                                                    ^^^^^^            -------- help: remove the unnecessary generic argument
+    |                                                                    |
+    |                                                                    expected 1 generic argument
+    |
+note: type alias defined here, with 1 generic parameter: `T`
+   --> src/error.rs:63:10
+    |
+ 63 | pub type Result<T> = std::result::Result<T, AppError>;
+    |          ^^^^^^ -
+
+error[E0277]: the trait bound `error::AppError: std::convert::From<&str>` is not satisfied
+  --> src/code_index/resolve/python_names/flow.rs:53:57
+   |
+53 |             return Err("receiver_flow_budget_exhausted".into());
+   |                                                         ^^^^ unsatisfied trait bound
+   |
+help: the trait `std::convert::From<&str>` is not implemented for `error::AppError`
+  --> src/error.rs:7:1
+   |
+ 7 | pub enum AppError {
+   | ^^^^^^^^^^^^^^^^^
+help: `error::AppError` implements trait `std::convert::From<T>`
+  --> src/error.rs:31:8
+   |
+31 |     Io(#[from] std::io::Error),
+   |        ^^^^^^^ `std::convert::From<std::io::Error>`
+...
+59 |     Other(#[from] anyhow::Error),
+   |           ^^^^^^^ `std::convert::From<anyhow::Error>`
+...
+65 | impl From<duckdb::Error> for AppError {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `std::convert::From<duckdb::Error>`
+...
+74 | impl From<serde_json::Error> for AppError {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `std::convert::From<serde_json::Error>`
+   = note: required for `&str` to implement `Into<error::AppError>`
+
+error[E0277]: the trait bound `error::AppError: std::convert::From<&str>` is not satisfied
+  --> src/code_index/resolve/python_names/flow.rs:71:63
+   |
+71 |                 return Err("receiver_origin_budget_exhausted".into());
+   |                                                               ^^^^ unsatisfied trait bound
+   |
+help: the trait `std::convert::From<&str>` is not implemented for `error::AppError`
+  --> src/error.rs:7:1
+   |
+ 7 | pub enum AppError {
+   | ^^^^^^^^^^^^^^^^^
+help: `error::AppError` implements trait `std::convert::From<T>`
+  --> src/error.rs:31:8
+   |
+31 |     Io(#[from] std::io::Error),
+   |        ^^^^^^^ `std::convert::From<std::io::Error>`
+...
+59 |     Other(#[from] anyhow::Error),
+   |           ^^^^^^^ `std::convert::From<anyhow::Error>`
+...
+65 | impl From<duckdb::Error> for AppError {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `std::convert::From<duckdb::Error>`
+...
+74 | impl From<serde_json::Error> for AppError {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `std::convert::From<serde_json::Error>`
+   = note: required for `&str` to implement `Into<error::AppError>`
+
+error[E0277]: the trait bound `error::AppError: std::convert::From<&str>` is not satisfied
+  --> src/code_index/resolve/python_names/flow.rs:80:62
+   |
+80 |             return Err("receiver_expression_depth_exhausted".into());
+   |                                                              ^^^^ unsatisfied trait bound
+   |
+help: the trait `std::convert::From<&str>` is not implemented for `error::AppError`
+  --> src/error.rs:7:1
+   |
+ 7 | pub enum AppError {
+   | ^^^^^^^^^^^^^^^^^
+help: `error::AppError` implements trait `std::convert::From<T>`
+  --> src/error.rs:31:8
+   |
+31 |     Io(#[from] std::io::Error),
+   |        ^^^^^^^ `std::convert::From<std::io::Error>`
+...
+59 |     Other(#[from] anyhow::Error),
+   |           ^^^^^^^ `std::convert::From<anyhow::Error>`
+...
+65 | impl From<duckdb::Error> for AppError {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `std::convert::From<duckdb::Error>`
+...
+74 | impl From<serde_json::Error> for AppError {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `std::convert::From<serde_json::Error>`
+   = note: required for `&str` to implement `Into<error::AppError>`
+
+error[E0277]: the trait bound `error::AppError: std::convert::From<&str>` is not satisfied
+  --> src/code_index/resolve/python_names/flow.rs:90:73
+   |
+90 | ...                   return Err("receiver_read_budget_exhausted".into());
+   |                                                                   ^^^^ unsatisfied trait bound
+   |
+help: the trait `std::convert::From<&str>` is not implemented for `error::AppError`
+  --> src/error.rs:7:1
+   |
+ 7 | pub enum AppError {
+   | ^^^^^^^^^^^^^^^^^
+help: `error::AppError` implements trait `std::convert::From<T>`
+  --> src/error.rs:31:8
+   |
+31 |     Io(#[from] std::io::Error),
+   |        ^^^^^^^ `std::convert::From<std::io::Error>`
+...
+59 |     Other(#[from] anyhow::Error),
+   |           ^^^^^^^ `std::convert::From<anyhow::Error>`
+...
+65 | impl From<duckdb::Error> for AppError {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `std::convert::From<duckdb::Error>`
+...
+74 | impl From<serde_json::Error> for AppError {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `std::convert::From<serde_json::Error>`
+   = note: required for `&str` to implement `Into<error::AppError>`
+
+error[E0277]: the trait bound `error::AppError: std::convert::From<&str>` is not satisfied
+   --> src/code_index/resolve/python_names/flow.rs:147:58
+    |
+147 |             return Err("receiver_region_depth_exhausted".into());
+    |                                                          ^^^^ unsatisfied trait bound
+    |
+help: the trait `std::convert::From<&str>` is not implemented for `error::AppError`
+   --> src/error.rs:7:1
+    |
+  7 | pub enum AppError {
+    | ^^^^^^^^^^^^^^^^^
+help: `error::AppError` implements trait `std::convert::From<T>`
+   --> src/error.rs:31:8
+    |
+ 31 |     Io(#[from] std::io::Error),
+    |        ^^^^^^^ `std::convert::From<std::io::Error>`
+...
+ 59 |     Other(#[from] anyhow::Error),
+    |           ^^^^^^^ `std::convert::From<anyhow::Error>`
+...
+ 65 | impl From<duckdb::Error> for AppError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `std::convert::From<duckdb::Error>`
+...
+ 74 | impl From<serde_json::Error> for AppError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `std::convert::From<serde_json::Error>`
+    = note: required for `&str` to implement `Into<error::AppError>`
+
+error[E0277]: the trait bound `error::AppError: std::convert::From<&str>` is not satisfied
+   --> src/code_index/resolve/python_names/flow.rs:169:79
+    |
+169 | ...                   return Err("receiver_loop_state_budget_exhausted".into());
+    |                                                                         ^^^^ unsatisfied trait bound
+    |
+help: the trait `std::convert::From<&str>` is not implemented for `error::AppError`
+   --> src/error.rs:7:1
+    |
+  7 | pub enum AppError {
+    | ^^^^^^^^^^^^^^^^^
+help: `error::AppError` implements trait `std::convert::From<T>`
+   --> src/error.rs:31:8
+    |
+ 31 |     Io(#[from] std::io::Error),
+    |        ^^^^^^^ `std::convert::From<std::io::Error>`
+...
+ 59 |     Other(#[from] anyhow::Error),
+    |           ^^^^^^^ `std::convert::From<anyhow::Error>`
+...
+ 65 | impl From<duckdb::Error> for AppError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `std::convert::From<duckdb::Error>`
+...
+ 74 | impl From<serde_json::Error> for AppError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `std::convert::From<serde_json::Error>`
+    = note: required for `&str` to implement `Into<error::AppError>`
+
+error[E0277]: `?` couldn't convert the error to `error::AppError`
+   --> src/code_index/resolve/python_names/flow.rs:218:61
+    |
+218 |                         .ok_or("receiver_loop_body_missing")?;
+    |                          -----------------------------------^ the trait `std::convert::From<&str>` is not implemented for `error::AppError`
+    |                          |
+    |                          this can't be annotated with `?` because it has type `Result<_, &str>`
+    |
+note: `error::AppError` needs to implement `From<&str>`
+   --> src/error.rs:7:1
+    |
+  7 | pub enum AppError {
+    | ^^^^^^^^^^^^^^^^^
+    = note: the question mark operation (`?`) implicitly performs a conversion on the error value using the `From` trait
+help: `error::AppError` implements trait `std::convert::From<T>`
+   --> src/error.rs:31:8
+    |
+ 31 |     Io(#[from] std::io::Error),
+    |        ^^^^^^^ `std::convert::From<std::io::Error>`
+...
+ 59 |     Other(#[from] anyhow::Error),
+    |           ^^^^^^^ `std::convert::From<anyhow::Error>`
+...
+ 65 | impl From<duckdb::Error> for AppError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `std::convert::From<duckdb::Error>`
+...
+ 74 | impl From<serde_json::Error> for AppError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `std::convert::From<serde_json::Error>`
+
+error[E0277]: the trait bound `error::AppError: std::convert::From<&str>` is not satisfied
+   --> src/code_index/resolve/python_names/flow.rs:249:74
+    |
+249 |                         return Err("receiver_loop_fixed_point_exhausted".into());
+    |                                                                          ^^^^ unsatisfied trait bound
+    |
+help: the trait `std::convert::From<&str>` is not implemented for `error::AppError`
+   --> src/error.rs:7:1
+    |
+  7 | pub enum AppError {
+    | ^^^^^^^^^^^^^^^^^
+help: `error::AppError` implements trait `std::convert::From<T>`
+   --> src/error.rs:31:8
+    |
+ 31 |     Io(#[from] std::io::Error),
+    |        ^^^^^^^ `std::convert::From<std::io::Error>`
+...
+ 59 |     Other(#[from] anyhow::Error),
+    |           ^^^^^^^ `std::convert::From<anyhow::Error>`
+...
+ 65 | impl From<duckdb::Error> for AppError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `std::convert::From<duckdb::Error>`
+...
+ 74 | impl From<serde_json::Error> for AppError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `std::convert::From<serde_json::Error>`
+    = note: required for `&str` to implement `Into<error::AppError>`
+
+Some errors have detailed explanations: E0107, E0277.
+For more information about an error, try `rustc --explain E0107`.
+error: could not compile `rag-mcp` (lib test) due to 13 previous errors

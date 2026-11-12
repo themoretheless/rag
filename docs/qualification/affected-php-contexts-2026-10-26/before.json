@@ -1,0 +1,5 @@
+{
+  "binary_sha256": "41708e66e507025a19ae5eefbe038abddb856c005c5f20c6d5b12fba1df5146d",
+  "exit_code": 1,
+  "expected_missing_PHP_recommendations_reproduced": true
+}

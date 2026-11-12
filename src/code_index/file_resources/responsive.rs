@@ -668,14 +668,7 @@ mod integration_tests {
             .unwrap();
         assert_eq!(moved["relations_added_total"], 0);
         assert_eq!(moved["relations_removed_total"], 0);
-        let c = store.lock().unwrap();
-        let raw: String = c
-            .query_row(
-                "SELECT graph_json FROM code_index_revisions WHERE id=1",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let raw = crate::code_index::test_get_rev_graph_json(&store, 1);
         let mut old: serde_json::Value = serde_json::from_str(&raw).unwrap();
         old.as_object_mut()
             .unwrap()
@@ -691,12 +684,7 @@ mod integration_tests {
         old_url["reference_kind"] = serde_json::json!("css:url");
         old_url.as_object_mut().unwrap().remove("choice");
         old["file_resources"] = serde_json::json!([old_url]);
-        c.execute(
-            "UPDATE code_index_revisions SET graph_json=? WHERE id=1",
-            [old.to_string()],
-        )
-        .unwrap();
-        drop(c);
+        crate::code_index::test_set_rev_graph_json(&store, 1, &old.to_string());
         let legacy = store.code_index_diff(&q).unwrap();
         assert_eq!(legacy["responsive_resource_relations_available"], false);
         assert_eq!(legacy["css_url_classification_comparable"], false);

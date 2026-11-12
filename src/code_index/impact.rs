@@ -1,6 +1,7 @@
 //! Bounded incoming-dependency traversal. Candidate relations never become calls.
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
+pub(super) mod context_walk;
 
 #[derive(Clone, Copy)]
 pub(super) enum Evidence<'a> {
@@ -38,9 +39,9 @@ impl Evidence<'_> {
     }
 }
 #[derive(Clone, Copy)]
-struct Incoming<'a> {
-    source: &'a str,
-    evidence: Evidence<'a>,
+pub(super) struct Incoming<'a> {
+    pub(super) source: &'a str,
+    pub(super) evidence: Evidence<'a>,
 }
 fn insert<'a>(
     incoming: &mut BTreeMap<&'a str, Vec<Incoming<'a>>>,
@@ -126,6 +127,15 @@ pub(super) fn query(
     selected: &[&Symbol],
     limit: usize,
 ) -> serde_json::Value {
+    query_with_paths(snapshot, q, selected, limit, false)
+}
+pub(super) fn query_with_paths(
+    snapshot: &CodeSnapshot,
+    q: &CodeQuery,
+    selected: &[&Symbol],
+    limit: usize,
+    include_paths: bool,
+) -> serde_json::Value {
     let mode = q.impact_relations.as_deref().unwrap_or("calls");
     if !matches!(mode, "calls" | "references" | "all") {
         return serde_json::json!({"error":"impact_relations must be calls, references or all","items":[],"truncated":false});
@@ -209,44 +219,30 @@ pub(super) fn query(
             (a.source, a.evidence.location()).cmp(&(b.source, b.evidence.location()))
         });
     }
-    let mut visited: BTreeSet<_> = selected.iter().map(|s| s.id.as_str()).collect();
-    let mut frontier = visited.clone();
-    let mut items = Vec::new();
-    let mut truncated = false;
-    for depth in 1..=q.depth.unwrap_or(3).clamp(1, 10) {
-        let mut next = BTreeSet::new();
-        for target in &frontier {
-            for edge in incoming.get(target).into_iter().flatten() {
-                if visited.contains(edge.source) {
-                    continue;
-                }
-                if items.len() >= limit {
-                    truncated = true;
-                    continue;
-                }
-                visited.insert(edge.source);
-                next.insert(edge.source);
-                items.push(serde_json::json!({"symbol_id":edge.source,"depth":depth,"via_kind":edge.evidence.location().0,"via_target":target,"via":edge.evidence.value()}));
-            }
-        }
-        if next.is_empty() {
-            frontier.clear();
-            break;
-        }
-        frontier = next;
-    }
-    let depth_limited = frontier.iter().any(|target| {
-        incoming
-            .get(target)
-            .into_iter()
-            .flatten()
-            .any(|e| !visited.contains(e.source))
-    });
+    let walked = context_walk::walk(
+        &selected,
+        &incoming,
+        &known,
+        &projects,
+        context_walk::Options {
+            limit,
+            depth_limit: q.depth.unwrap_or(3).clamp(1, 10),
+            include_paths,
+            work_limit: 262144,
+            output_symbols: None,
+            deduplicate_symbols: true,
+        },
+    );
+    let items = walked.items;
+    let truncated = walked.truncated;
+    let depth_limited = walked.depth_limited;
     let files = affected_files(snapshot, &items);
-    serde_json::json!({"affected_files":files,"affected_files_total":files.len(),"file_summary_scope":"returned_symbols","file_summary_complete_for_returned_symbols":true,"program_impact_complete":false,"items":items,"truncated":truncated,"depth_limited":depth_limited,"traversal_complete":!truncated&&!depth_limited,
+    let mut report = serde_json::json!({"affected_files":files,"affected_files_total":files.len(),"file_summary_scope":"returned_symbols","file_summary_complete_for_returned_symbols":true,"program_impact_complete":false,"items":items,"truncated":truncated,"depth_limited":depth_limited,"traversal_complete":!truncated&&!depth_limited&&!walked.metadata_incomplete,
         "matched_symbols":selected.len(),"selected_roots_excluded":selected_roots_excluded,"invalid_input_documents_excluded":true,"excluded_input_documents_total":excluded.len(),"impact_relations":mode,"resolution":"conservative_static_bindings","runtime_impact_proven":false,"absence_proven":false,
         "path_scope":"selected_seed_symbols","traversal_scope":"fresh_bound_symbol_dependency_graph","module_level_references_traversed":false,"witness_policy":"one_shortest_discovered_relation_per_symbol",
-        "stale_documents":snapshot.stale_documents,"unindexed_documents":snapshot.unindexed_documents,"parse_errors":snapshot.parse_errors})
+        "stale_documents":snapshot.stale_documents,"unindexed_documents":snapshot.unindexed_documents,"parse_errors":snapshot.parse_errors});
+    report["trait_context_traversal"] = walked.diagnostics;
+    report
 }
 
 /// SQL usage evidence is retained even when a raw statement has no owning symbol.

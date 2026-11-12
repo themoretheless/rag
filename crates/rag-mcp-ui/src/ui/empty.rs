@@ -231,7 +231,7 @@ pub fn draw_no_source(
                 mode_row(
                     ui,
                     "DUCKDB",
-                    "rag-mcp-ui --db rag.duckdb",
+                    "rag-mcp-ui --db rag.lin",
                     "эксклюзивное открытие только для чтения; MCP должен быть остановлен",
                     theme::L0,
                 );

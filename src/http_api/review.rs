@@ -239,9 +239,9 @@ mod tests {
             agent_name: None,
         };
         {
-            let mut conn = st.store.lock().unwrap();
-            let tx = conn.transaction().unwrap();
-            review::accept_locked(&tx, &doc, &audit).unwrap();
+            let mut w = st.store.write().unwrap();
+            let mut tx = w.begin_tx().unwrap();
+            review::accept_locked(&mut tx, &doc, &audit).unwrap();
             // Simulate a later write failure by dropping without commit.
         }
         assert_eq!(review::get(&st.store, &p.id).unwrap().status, "pending");

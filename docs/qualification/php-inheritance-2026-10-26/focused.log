@@ -1,0 +1,26 @@
+    Blocking waiting for file lock on build directory
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 02s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 17 tests
+test code_index::php_names::tests::php_names_first_class_values_types_and_anonymous_owner_barrier ... ok
+test code_index::php_names::tests::php_names_inheritance_conditional_bases_and_final_override_relations_fail_closed ... ok
+test code_index::php_names::tests::php_names_conditional_duplicate_imports_traits_and_parse_errors_are_not_guessed ... ok
+test code_index::php_names::tests::php_names_inheritance_import_comments_duplicates_and_local_visibility_barriers ... ok
+test code_index::php_names::tests::php_names_namespace_functions_aliases_case_and_prefixes ... ok
+test code_index::php_names::tests::php_names_group_import_domains_and_reopened_scopes_do_not_leak ... ok
+test code_index::php_names::tests::php_names_declared_static_this_visibility_and_late_dispatch_guards ... ok
+test code_index::php_names::tests::php_names_duplicate_targets_stay_ambiguous_and_other_languages_are_not_php_functions ... ok
+test code_index::php_names::tests::php_names_fallback_is_function_only_and_project_isolated ... ok
+test code_index::php_names::tests::php_names_flat_import_lists_separate_class_function_domains_and_type_occurrences ... ok
+test code_index::php_names::tests::php_names_inherited_methods_imported_chain_parent_override_and_visibility ... ok
+test code_index::php_names::tests::php_names_traits_shadow_bases_but_local_declarations_take_precedence ... ok
+test code_index::php_names::tests::php_names_inheritance_guards_cycles_missing_bases_traits_final_and_abstract ... ok
+test code_index::php_names::tests::php_names_inheritance_interface_relations_and_depth_budget ... ok
+test code_index::php_names::tests::php_names_capture_limits_fail_closed_with_explicit_capability_state ... ok
+test code_index::php_names::tests::php_names_cache_capability_repair_and_frozen_alias_changes ... ok
+test code_index::php_names::tests::php_names_inheritance_cache_upgrade_and_frozen_base_changes ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 1279 filtered out; finished in 0.35s
+

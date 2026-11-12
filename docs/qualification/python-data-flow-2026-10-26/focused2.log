@@ -1,0 +1,13 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 33.96s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 5 tests
+test code_index::data_flow::tests::python_constant_return_does_not_invent_argument_influence ... ok
+test code_index::data_flow::tests::python_value_slice_uses_latest_definitions_and_exact_unicode_spans ... ok
+test code_index::data_flow::tests::python_data_slice_budgets_are_independent_and_stale_sources_are_excluded ... ok
+test code_index::data_flow::tests::python_argument_return_frames_do_not_leak_other_call_sites ... ok
+test code_index::data_flow::tests::python_imported_functions_keep_project_boundaries_and_unresolved_guards ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1367 filtered out; finished in 0.01s
+

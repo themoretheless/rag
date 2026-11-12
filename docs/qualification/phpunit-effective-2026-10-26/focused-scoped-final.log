@@ -1,0 +1,20 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 33.85s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 12 tests
+test code_index::php_names::tests::phpunit_candidates_reject_cycles_foreign_projects_and_legacy_capture ... ok
+test code_index::php_names::tests::phpunit_effective_candidates_reject_conflicts_visibility_cycles_and_unrelated_roots ... ok
+test code_index::php_names::tests::phpunit_effective_candidates_preserve_hosts_aliases_precedence_and_body_sources ... ok
+test code_index::php_names::tests::phpunit_candidates_require_framework_base_and_public_instance_methods ... ok
+test code_index::affected_tests::tests::phpunit_affected_tests_keep_compatible_trait_paths_and_changed_tests ... ok
+test code_index::affected_tests::tests::phpunit_shared_trait_states_do_not_consume_test_limit ... ok
+test code_index::affected_tests::tests::phpunit_trait_tests_are_distinct_host_and_alias_invocations ... ok
+test code_index::affected_tests::tests::phpunit_inherited_tests_preserve_overrides_and_lexical_trait_owner ... ok
+test code_index::affected_tests::tests::phpunit_trait_witnesses_guard_missing_metadata_modes_and_budgets ... ok
+test code_index::php_names::tests::phpunit_candidates_frozen_history_guards_legacy_enrichment ... ok
+test code_index::php_names::tests::phpunit_effective_frozen_history_normalizes_hosts_and_guards_old_invocation_format ... ok
+test code_index::php_names::tests::phpunit_effective_project_snapshot_excludes_foreign_and_stale_hosts ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 1352 filtered out; finished in 0.24s
+

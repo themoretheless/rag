@@ -487,14 +487,7 @@ mod tests {
         scoped_put(&store, "a", "a", "/p/a.py", "def local(): pass\n");
         scoped_put(&store, "b", "b", "/p/b.py", "def foreign(): pass\n");
         store.index_code().unwrap();
-        store
-            .lock()
-            .unwrap()
-            .execute(
-                "UPDATE code_index_documents SET payload='not JSON' WHERE document_id='b'",
-                [],
-            )
-            .unwrap();
+        crate::code_index::test_set_code_doc_payload(&store, "b", "not JSON");
         assert!(store.code_snapshot().is_err());
         let q = RepoMapQuery {
             project: Some("a".into()),

@@ -1,43 +1,26 @@
-//! DuckDB FTS / BM25 index management for `chunks.content`.
+//! Okapi BM25 + Porter stemmer lexical index management for `chunks.content` over `lin`.
 //!
-//! # Preferred path: DuckDB `fts` extension
-//!
-//! 1. `INSTALL fts;` then `LOAD fts;` (INSTALL is best-effort; LOAD is required)
-//! 2. Tear down the reserved derived catalog in dependency order, then create without overwrite.
-//! 3. Rank with `fts_main_chunks.match_bm25(id, query)`
-//!
-//! The FTS inverted index does **not** update when indexed chunk rows change.
-//! Text/row mutations call [`mark_fts_dirty`], and [`refresh_fts_if_stale`] owns
-//! the one serialized generation refresh. Embedding-only updates instead
-//! advance the chunk and clean index generations together: this invalidates
-//! vector snapshots without rebuilding unchanged BM25 text. Guarded corpus-wide
-//! workflows (source sync, doctor repair, duplicate cleanup, delete-by-source,
-//! recovery import, and maintenance apply/refresh/compress) eagerly finalize a
-//! stale index before normal terminal success. Ordinary single-document writes
-//! and interrupted or failed workflows retain the next lexical search as their
-//! single-flight consistency fallback. Clean, warm searches do not execute FTS DDL.
-//! [`reindex`] remains the explicit force-rebuild API.
-//!
-//! # Fallback: term-frequency in Rust
-//!
-//! When `INSTALL`/`LOAD` of the `fts` extension fails (offline CI, locked-down
-//! hosts, extension repo unavailable), the same public API degrades to a simple
-//! length-normalized term-frequency scorer over live `chunks` rows. Lex search
-//! still works; scores are not true Okapi BM25. [`FtsBackend::TermFrequency`]
-//! and `meta.fts_backend` surface this honestly for `doctor` / `status`.
+//! Tracks `chunks_generation`, `index_generation`, `rebuild_count`, `fts_backend`,
+//! and `fts_stemmer` in `meta` plus per-document deltas in `chunk_change_log`
+//! so vector snapshots and lexical searches preserve read-your-writes, singleflight
+//! refresh, and incremental invalidation.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, RwLock};
 
-use duckdb::{params, params_from_iter, Connection};
-
+use super::lin_engine::{
+    cell_i64, cell_nonempty_string, cell_opt_string, cell_str, cell_string, composite_id_2,
+    LinReader, LinWriter, RecBuilder,
+};
+use super::schema::{delete_meta, get_meta, upsert_meta};
 use super::store::Store;
 use crate::error::{AppError, Result};
 use crate::models::SearchHit;
 
-/// DuckDB schema created by `PRAGMA create_fts_index` on table `chunks`.
+/// Legacy schema identifier retained for public API compatibility.
 pub const FTS_SCHEMA: &str = "fts_main_chunks";
 
-/// Indexed base table.
+/// Indexed base collection.
 pub const FTS_TABLE: &str = "chunks";
 
 const META_BACKEND: &str = "fts_backend";
@@ -45,18 +28,152 @@ const META_STEMMER: &str = "fts_stemmer";
 const META_CHUNKS_GENERATION: &str = "fts_chunks_generation";
 const META_INDEX_GENERATION: &str = "fts_index_generation";
 const META_REBUILD_COUNT: &str = "fts_rebuild_count";
-/// Set when chunk ids may have been reused with different text (recovery
-/// import keeps bundle ids): the next refresh must rebuild, not patch by id.
 const META_FORCE_REBUILD: &str = "fts_force_rebuild";
 const DEFAULT_STEMMER: &str = "porter";
 const SNIPPET_CHARS: usize = 240;
 
+const BM25_K1: f64 = 1.2;
+const BM25_B: f64 = 0.75;
+
+const ENGLISH_STOPWORDS: &[&str] = &[
+    "a",
+    "about",
+    "above",
+    "after",
+    "again",
+    "against",
+    "all",
+    "am",
+    "an",
+    "and",
+    "any",
+    "are",
+    "as",
+    "at",
+    "be",
+    "because",
+    "been",
+    "before",
+    "being",
+    "below",
+    "between",
+    "both",
+    "but",
+    "by",
+    "can",
+    "cannot",
+    "could",
+    "did",
+    "do",
+    "does",
+    "doing",
+    "down",
+    "during",
+    "each",
+    "few",
+    "for",
+    "from",
+    "further",
+    "had",
+    "has",
+    "have",
+    "having",
+    "he",
+    "her",
+    "here",
+    "hers",
+    "herself",
+    "him",
+    "himself",
+    "his",
+    "how",
+    "i",
+    "if",
+    "in",
+    "into",
+    "is",
+    "it",
+    "its",
+    "itself",
+    "just",
+    "me",
+    "more",
+    "most",
+    "must",
+    "my",
+    "myself",
+    "no",
+    "nor",
+    "not",
+    "now",
+    "of",
+    "off",
+    "on",
+    "once",
+    "only",
+    "or",
+    "other",
+    "ought",
+    "our",
+    "ours",
+    "ourselves",
+    "out",
+    "over",
+    "own",
+    "same",
+    "she",
+    "should",
+    "so",
+    "some",
+    "such",
+    "than",
+    "that",
+    "the",
+    "their",
+    "theirs",
+    "them",
+    "themselves",
+    "then",
+    "there",
+    "these",
+    "they",
+    "this",
+    "those",
+    "through",
+    "to",
+    "too",
+    "under",
+    "until",
+    "up",
+    "very",
+    "was",
+    "we",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "while",
+    "who",
+    "whom",
+    "why",
+    "will",
+    "with",
+    "without",
+    "would",
+    "you",
+    "your",
+    "yours",
+    "yourself",
+    "yourselves",
+];
+
 /// Which lexical backend is active after [`ensure_fts`] / [`reindex`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FtsBackend {
-    /// DuckDB `fts` extension + `match_bm25`.
+    /// Okapi BM25 lexical index (`lin_bm25`; `DuckDbBm25` name retained for public API compat).
     DuckDbBm25,
-    /// Rust term-frequency fallback (extension unavailable).
+    /// Rust term-frequency fallback.
     TermFrequency,
 }
 
@@ -64,14 +181,14 @@ impl FtsBackend {
     /// Stable wire / meta value.
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::DuckDbBm25 => "duckdb_bm25",
+            Self::DuckDbBm25 => "lin_bm25",
             Self::TermFrequency => "term_frequency",
         }
     }
 
     fn from_meta(s: &str) -> Option<Self> {
         match s.trim() {
-            "duckdb_bm25" | "duckdb" | "fts" | "bm25" => Some(Self::DuckDbBm25),
+            "lin_bm25" | "duckdb_bm25" | "duckdb" | "lin" | "fts" | "bm25" => Some(Self::DuckDbBm25),
             "term_frequency" | "tf" | "fallback" => Some(Self::TermFrequency),
             _ => None,
         }
@@ -86,29 +203,15 @@ pub struct FtsState {
 }
 
 /// Generation snapshot for the derived lexical index.
-///
-/// `chunks_generation` advances before a mutation can change `chunks`.
-/// `index_generation` advances only after a successful BM25 rebuild (or after
-/// selecting the live-row term-frequency fallback), except that an
-/// embedding-only transaction may advance both because indexed text is
-/// unchanged. A mismatch is therefore a crash-safe dirty marker: false
-/// positives can cause one extra rebuild, while a completed text mutation
-/// cannot be hidden behind a clean generation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FtsGenerationState {
     pub chunks_generation: u64,
     pub index_generation: Option<u64>,
     pub dirty: bool,
-    /// Successful refresh/reindex attempts. Primarily useful for diagnostics
-    /// and for proving that clean searches stay on the read-only fast path.
     pub rebuild_count: u64,
 }
 
 /// Optional equality filters for lexical search (joined via `documents`).
-///
-/// Empty / `None` fields are ignored. Used by hybrid / lex search tools.
-/// When `include_archived` is false (default), rows with `status` of
-/// `archived` or `tombstone` are excluded.
 #[derive(Debug, Clone, Default)]
 pub struct LexFilters {
     pub document_id: Option<String>,
@@ -122,17 +225,10 @@ pub struct LexFilters {
     pub include_archived: bool,
 }
 
-/// Retrieval's status predicate on the `d` documents alias: archived and
-/// tombstoned documents are hidden unless `include_archived` is set.
 const ACTIVE_DOCUMENT_SQL: &str = "COALESCE(d.status, 'active') NOT IN ('archived', 'tombstone')";
 
 impl LexFilters {
-    /// The one scope predicate shared by the lexical and vector retrieval legs.
-    ///
-    /// Values are trimmed and blank values ignored, so both legs of a hybrid
-    /// query always see the same scope. `document_id_column` names the column
-    /// that carries the document id in the caller's join (`c.document_id` or
-    /// `d.id`); every other column is qualified with the `d` documents alias.
+    /// Shared scope filter descriptor.
     pub(crate) fn scope_where_clause(&self, document_id_column: &str) -> (String, Vec<String>) {
         let mut parts = Vec::new();
         let mut bind = Vec::new();
@@ -161,6 +257,71 @@ impl LexFilters {
         (where_sql, bind)
     }
 
+    /// Evaluate whether a `documents` `lin::Row` satisfies `self`.
+    pub(crate) fn matches_document_row(&self, doc_row: &lin::Row) -> bool {
+        if let Some(want_id) = self.document_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            && cell_str(doc_row, "id") != Some(want_id)
+        {
+            return false;
+        }
+        if let Some(want_wing) = self.wing.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            && cell_str(doc_row, "wing") != Some(want_wing)
+        {
+            return false;
+        }
+        if let Some(want_room) = self.room.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            && cell_str(doc_row, "room") != Some(want_room)
+        {
+            return false;
+        }
+        if let Some(want_layer) = self.layer.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            && cell_str(doc_row, "layer") != Some(want_layer)
+        {
+            return false;
+        }
+        if let Some(want_kind) = self.kind.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            && cell_str(doc_row, "kind") != Some(want_kind)
+        {
+            return false;
+        }
+        if let Some(want_uri) = self.uri.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            && cell_str(doc_row, "uri") != Some(want_uri)
+        {
+            return false;
+        }
+        if let Some(want_src) = self
+            .source_file
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            && cell_str(doc_row, "source_file") != Some(want_src)
+        {
+            return false;
+        }
+        if !self.include_archived {
+            let status = cell_nonempty_string(doc_row, "status").unwrap_or_else(|| "active".into());
+            if status == "archived" || status == "tombstone" {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// True when any scope column other than default active-status exclusion is set.
+    pub(crate) fn has_explicit_scope(&self) -> bool {
+        [
+            self.document_id.as_deref(),
+            self.wing.as_deref(),
+            self.room.as_deref(),
+            self.layer.as_deref(),
+            self.kind.as_deref(),
+            self.uri.as_deref(),
+            self.source_file.as_deref(),
+        ]
+        .into_iter()
+        .any(|v| v.map(str::trim).is_some_and(|s| !s.is_empty()))
+    }
+
     /// Convenience: filter to a single document id.
     pub fn document_id(id: impl Into<String>) -> Self {
         Self {
@@ -170,122 +331,112 @@ impl LexFilters {
     }
 }
 
-/// Ensure the lexical search path is ready on `chunks`.
-///
-/// Tries DuckDB FTS with stemmer `"porter"`. On extension failure, records the
-/// term-frequency fallback and returns successfully so callers never hard-fail
-/// solely because FTS could not be installed. Once initialized, this is a
-/// no-op while the recorded generations and requested configuration are clean.
-pub fn ensure_fts(conn: &Connection) -> Result<FtsState> {
-    ensure_fts_with_stemmer(conn, DEFAULT_STEMMER)
+/// Ensure the lexical search path is ready on `chunks` (`"porter"` default).
+pub fn ensure_fts(w: &mut impl LinWriter) -> Result<FtsState> {
+    ensure_fts_with_stemmer(w, DEFAULT_STEMMER)
 }
 
-/// Like [`ensure_fts`], but uses `stemmer` (e.g. from `RAG_FTS_STEMMER`).
-///
-/// Pass `"none"` to disable stemming (better for CJK / code). When stemmer is
-/// `"none"`, stopwords are also set to `"none"`.
-pub fn ensure_fts_with_stemmer(conn: &Connection, stemmer: &str) -> Result<FtsState> {
-    refresh_fts_if_stale_with_stemmer(conn, stemmer)
+/// Like [`ensure_fts`], using `stemmer` (e.g. `"porter"` or `"none"`).
+pub fn ensure_fts_with_stemmer(w: &mut impl LinWriter, stemmer: &str) -> Result<FtsState> {
+    refresh_fts_if_stale_with_stemmer(w, stemmer)
 }
 
 /// Mark the derived FTS index stale before mutating `chunks`.
-///
-/// Store mutations are serialized by [`Store`]'s connection mutex, so the
-/// read/increment/write sequence is single-writer. Call this before the first
-/// statement that may change chunks: a failed mutation can leave a harmless
-/// dirty marker, whereas marking afterwards could expose stale results if the
-/// marker write itself failed.
-///
-/// The change is logged as touching unknown documents, so delta readers of
-/// [`changed_documents_since`] fall back to a full listing. Writers that know
-/// which documents' chunks they change use [`mark_chunks_changed_for`].
-pub fn mark_fts_dirty(conn: &Connection) -> Result<u64> {
-    let next = advance_chunks_generation(conn)?;
-    conn.execute(
-        "INSERT INTO chunk_change_log (generation, document_id) VALUES (?, NULL)",
-        duckdb::params![next as i64],
+pub fn mark_fts_dirty(w: &mut impl LinWriter) -> Result<u64> {
+    let next = advance_chunks_generation(w)?;
+    w.insert_one(
+        "chunk_change_log",
+        RecBuilder::new()
+            .str("id", format!("gen-{next}"))
+            .i64("generation", next as i64)
+            .opt_str("document_id", None)
+            .build(),
     )?;
     Ok(next)
 }
 
-/// [`mark_fts_dirty`] for a write that changes only the chunks of
-/// `document_ids`: logs them so the next vector refresh re-reads just those
-/// documents' chunks.
+/// [`mark_fts_dirty`] for a write that changes only the chunks of `document_ids`.
 pub fn mark_chunks_changed_for<S: AsRef<str>>(
-    conn: &Connection,
+    w: &mut impl LinWriter,
     document_ids: &[S],
 ) -> Result<u64> {
-    let next = advance_chunks_generation(conn)?;
-    log_changed_documents(conn, next, document_ids)?;
+    let next = advance_chunks_generation(w)?;
+    log_changed_documents(w, next, document_ids)?;
     Ok(next)
 }
 
-/// Generations kept in `chunk_change_log`; older rows are pruned and a
-/// reader that needs them falls back to a full listing.
 const CHANGE_LOG_WINDOW: u64 = 4096;
 
-fn advance_chunks_generation(conn: &Connection) -> Result<u64> {
-    let current = chunks_generation(conn)?;
+fn advance_chunks_generation(w: &mut impl LinWriter) -> Result<u64> {
+    let current = chunks_generation(w)?;
     let next = current
         .checked_add(1)
         .ok_or_else(|| AppError::fts("FTS chunks generation overflow"))?;
-    upsert_meta(conn, META_CHUNKS_GENERATION, &next.to_string())?;
+    upsert_meta(w, META_CHUNKS_GENERATION, &next.to_string())?;
     if next % 256 == 0 && next > CHANGE_LOG_WINDOW {
-        conn.execute(
-            "DELETE FROM chunk_change_log WHERE generation <= ?",
-            duckdb::params![(next - CHANGE_LOG_WINDOW) as i64],
-        )?;
+        let cutoff = (next - CHANGE_LOG_WINDOW) as i64;
+        w.delete_where("chunk_change_log", lin::query::pred::le("generation", cutoff))?;
     }
     Ok(next)
 }
 
 fn log_changed_documents<S: AsRef<str>>(
-    conn: &Connection,
+    w: &mut impl LinWriter,
     generation: u64,
     document_ids: &[S],
 ) -> Result<()> {
     if document_ids.is_empty() {
-        // Nothing named: record "unknown" so readers do a full listing.
-        conn.execute(
-            "INSERT INTO chunk_change_log (generation, document_id) VALUES (?, NULL)",
-            duckdb::params![generation as i64],
+        w.insert_one(
+            "chunk_change_log",
+            RecBuilder::new()
+                .str("id", format!("gen-{generation}"))
+                .i64("generation", generation as i64)
+                .opt_str("document_id", None)
+                .build(),
         )?;
         return Ok(());
     }
-    let mut stmt = conn
-        .prepare_cached("INSERT INTO chunk_change_log (generation, document_id) VALUES (?, ?)")?;
-    for id in document_ids {
-        stmt.execute(duckdb::params![generation as i64, id.as_ref()])?;
+    let mut records = Vec::with_capacity(document_ids.len());
+    for (idx, id) in document_ids.iter().enumerate() {
+        let row_id = composite_id_2(&generation.to_string(), &format!("{idx}:{}", id.as_ref()));
+        records.push(
+            RecBuilder::new()
+                .str("id", row_id)
+                .i64("generation", generation as i64)
+                .str("document_id", id.as_ref())
+                .build(),
+        );
     }
+    w.insert_records("chunk_change_log", records)?;
     Ok(())
 }
 
-/// Documents whose chunks changed after generation `since` up to `until`,
-/// when every generation in that range was logged with known documents.
-/// `None` when any is unknown or missing (pruned, legacy, or a writer that
-/// used plain [`mark_fts_dirty`]): the caller must do a full listing.
+/// Documents whose chunks changed after generation `since` up to `until`.
 pub(crate) fn changed_documents_since(
-    conn: &Connection,
+    r: &impl LinReader,
     since: u64,
     until: u64,
-) -> Result<Option<std::collections::HashSet<String>>> {
+) -> Result<Option<HashSet<String>>> {
     if until <= since {
-        return Ok(Some(std::collections::HashSet::new()));
+        return Ok(Some(HashSet::new()));
     }
-    let mut stmt = conn.prepare_cached(
-        "SELECT generation, document_id FROM chunk_change_log \
-         WHERE generation > ? AND generation <= ?",
-    )?;
-    let mut rows = stmt.query(duckdb::params![since as i64, until as i64])?;
-    let mut generations = std::collections::HashSet::new();
-    let mut documents = std::collections::HashSet::new();
-    while let Some(row) = rows.next()? {
-        let generation: i64 = row.get(0)?;
-        let Some(document_id) = row.get::<_, Option<String>>(1)? else {
+    if !r.has_collection("chunk_change_log") {
+        return Ok(None);
+    }
+    let pred = lin::query::pred::and(
+        lin::query::pred::gt("generation", since as i64),
+        lin::query::pred::le("generation", until as i64),
+    );
+    let rows = r.query_filter("chunk_change_log", Some(pred), None)?;
+    let mut generations = HashSet::new();
+    let mut documents = HashSet::new();
+    for row in &rows {
+        let generation = cell_i64(row, "generation", 0);
+        let Some(doc_id) = cell_opt_string(row, "document_id").filter(|s| !s.is_empty()) else {
             return Ok(None);
         };
         generations.insert(generation);
-        documents.insert(document_id);
+        documents.insert(doc_id);
     }
     if generations.len() as u64 != until - since {
         return Ok(None);
@@ -294,62 +445,40 @@ pub(crate) fn changed_documents_since(
 }
 
 /// Mark the index dirty and require the next refresh to be a full rebuild.
-///
-/// For writers that may re-insert existing chunk ids with different text
-/// (recovery import), where the incremental id diff would miss the change.
-pub(crate) fn mark_fts_needs_rebuild(conn: &Connection) -> Result<u64> {
-    upsert_meta(conn, META_FORCE_REBUILD, "1")?;
-    mark_fts_dirty(conn)
+pub(crate) fn mark_fts_needs_rebuild(w: &mut impl LinWriter) -> Result<u64> {
+    upsert_meta(w, META_FORCE_REBUILD, "1")?;
+    mark_fts_dirty(w)
 }
 
-/// Advance the chunk generation after changing only `embedding_json` values.
-///
-/// Vector snapshots key off the chunk generation, so it must advance even
-/// though the indexed text rows are unchanged. When the lexical index was
-/// clean before the mutation, advancing its generation in the same transaction
-/// preserves that clean state without rebuilding BM25. An already-dirty or
-/// unconfigured index stays dirty. Callers must invoke this on the same
-/// transaction that owns the embedding updates so data and both generations
-/// commit or roll back together.
-///
-/// `document_ids` names the documents whose vectors changed, for the vector
-/// refresh's change log (`None` logs "unknown", forcing a full listing).
+/// Advance the chunk generation after changing only chunk embeddings.
 pub(crate) fn mark_embeddings_changed_for<S: AsRef<str>>(
-    conn: &Connection,
+    w: &mut impl LinWriter,
     document_ids: Option<&[S]>,
 ) -> Result<u64> {
-    let fts_was_clean = !fts_generation_state(conn)?.dirty;
+    let fts_was_clean = !fts_generation_state(w)?.dirty;
     let next = match document_ids {
-        Some(ids) => mark_chunks_changed_for(conn, ids)?,
-        None => mark_fts_dirty(conn)?,
+        Some(ids) => mark_chunks_changed_for(w, ids)?,
+        None => mark_fts_dirty(w)?,
     };
     if fts_was_clean {
-        upsert_meta(conn, META_INDEX_GENERATION, &next.to_string())?;
+        upsert_meta(w, META_INDEX_GENERATION, &next.to_string())?;
     }
     Ok(next)
 }
 
-/// Read only the source chunk generation (one `meta` lookup, no FTS probe).
-///
-/// This is the hot-path invalidation token for caches derived from `chunks`.
-/// Missing legacy/corrupt metadata reads as generation zero; the next mutation
-/// advances it through [`mark_fts_dirty`].
-pub fn chunks_generation(conn: &Connection) -> Result<u64> {
-    Ok(read_u64_meta(conn, META_CHUNKS_GENERATION)?.unwrap_or(0))
+/// Read only the source chunk generation.
+pub fn chunks_generation(r: &impl LinReader) -> Result<u64> {
+    Ok(read_u64_meta(r, META_CHUNKS_GENERATION)?.unwrap_or(0))
 }
 
 /// Generation gap between source chunks and the derived FTS index.
-///
-/// `None` when no completed index generation exists yet (never refreshed).
 pub fn fts_generation_gap(state: &FtsGenerationState) -> Option<u64> {
     state
         .index_generation
         .map(|index| state.chunks_generation.saturating_sub(index))
 }
 
-/// Staleness policy for the maintenance loop: a dirty FTS whose generation
-/// gap reaches `threshold` should be reindexed. `threshold == 0` disables
-/// auto-reindex; a dirty index with no completed generation always qualifies.
+/// Staleness policy for the maintenance loop.
 pub fn fts_stale_needs_reindex(state: &FtsGenerationState, threshold: u64) -> bool {
     if threshold == 0 || !state.dirty {
         return false;
@@ -361,15 +490,15 @@ pub fn fts_stale_needs_reindex(state: &FtsGenerationState, threshold: u64) -> bo
 }
 
 /// Read the current dirty/generation state without refreshing the index.
-pub fn fts_generation_state(conn: &Connection) -> Result<FtsGenerationState> {
-    let recorded_chunks_generation = read_u64_meta(conn, META_CHUNKS_GENERATION)?;
+pub fn fts_generation_state(r: &impl LinReader) -> Result<FtsGenerationState> {
+    let recorded_chunks_generation = read_u64_meta(r, META_CHUNKS_GENERATION)?;
     let chunks_generation = recorded_chunks_generation.unwrap_or(0);
-    let index_generation = read_u64_meta(conn, META_INDEX_GENERATION)?;
-    let rebuild_count = read_u64_meta(conn, META_REBUILD_COUNT)?.unwrap_or(0);
-    let configured = fts_status(conn)?;
+    let index_generation = read_u64_meta(r, META_INDEX_GENERATION)?;
+    let rebuild_count = read_u64_meta(r, META_REBUILD_COUNT)?.unwrap_or(0);
+    let configured = fts_status(r)?;
     let physical_index_missing = configured
         .as_ref()
-        .is_some_and(|state| state.backend == FtsBackend::DuckDbBm25 && !fts_index_present(conn));
+        .is_some_and(|state| state.backend == FtsBackend::DuckDbBm25 && !fts_index_present(r));
     let dirty = recorded_chunks_generation.is_none()
         || configured.is_none()
         || index_generation != Some(chunks_generation)
@@ -384,34 +513,25 @@ pub fn fts_generation_state(conn: &Connection) -> Result<FtsGenerationState> {
 }
 
 /// Refresh the derived index once when chunk generations are stale.
-///
-/// The stored stemmer is reused, defaulting to `porter`. Search calls this
-/// while holding the store connection mutex, which makes concurrent stale
-/// searches a singleflight: the first rebuilds and advances the generation;
-/// waiters observe a clean generation and skip DDL.
-pub fn refresh_fts_if_stale(conn: &Connection) -> Result<FtsState> {
-    let stemmer = read_meta(conn, META_STEMMER)?.unwrap_or_else(|| DEFAULT_STEMMER.to_string());
-    refresh_fts_if_stale_with_stemmer(conn, &stemmer)
+pub fn refresh_fts_if_stale(w: &mut impl LinWriter) -> Result<FtsState> {
+    let stemmer = get_meta(w, META_STEMMER)?.unwrap_or_else(|| DEFAULT_STEMMER.to_string());
+    refresh_fts_if_stale_with_stemmer(w, &stemmer)
 }
 
 /// Like [`refresh_fts_if_stale`], with an explicit requested stemmer.
-pub fn refresh_fts_if_stale_with_stemmer(conn: &Connection, stemmer: &str) -> Result<FtsState> {
-    refresh_fts(conn, stemmer, RefreshMode::IfStale)
+pub fn refresh_fts_if_stale_with_stemmer(w: &mut impl LinWriter, stemmer: &str) -> Result<FtsState> {
+    refresh_fts(w, stemmer, RefreshMode::IfStale)
 }
 
-/// Force-rebuild the FTS index after ingest/delete (read-your-writes).
-///
-/// For [`FtsBackend::TermFrequency`] this only refreshes meta (scoring always
-/// reads live rows). Uses the stemmer last stored in `meta`, defaulting to
-/// `"porter"`.
-pub fn reindex(conn: &Connection) -> Result<FtsState> {
-    let stemmer = read_meta(conn, META_STEMMER)?.unwrap_or_else(|| DEFAULT_STEMMER.to_string());
-    refresh_fts(conn, &stemmer, RefreshMode::Force)
+/// Force-rebuild the FTS index.
+pub fn reindex(w: &mut impl LinWriter) -> Result<FtsState> {
+    let stemmer = get_meta(w, META_STEMMER)?.unwrap_or_else(|| DEFAULT_STEMMER.to_string());
+    refresh_fts(w, &stemmer, RefreshMode::Force)
 }
 
 /// Rebuild with an explicit stemmer (updates `meta.fts_stemmer`).
-pub fn reindex_with_stemmer(conn: &Connection, stemmer: &str) -> Result<FtsState> {
-    refresh_fts(conn, stemmer, RefreshMode::Force)
+pub fn reindex_with_stemmer(w: &mut impl LinWriter, stemmer: &str) -> Result<FtsState> {
+    refresh_fts(w, stemmer, RefreshMode::Force)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -420,10 +540,10 @@ enum RefreshMode {
     Force,
 }
 
-fn refresh_fts(conn: &Connection, stemmer: &str, mode: RefreshMode) -> Result<FtsState> {
+fn refresh_fts(w: &mut impl LinWriter, stemmer: &str, mode: RefreshMode) -> Result<FtsState> {
     let stemmer = sanitize_stemmer(stemmer);
-    let current = fts_status(conn)?;
-    let generations = fts_generation_state(conn)?;
+    let current = fts_status(w)?;
+    let generations = fts_generation_state(w)?;
     let configuration_changed = current
         .as_ref()
         .is_none_or(|state| state.stemmer != stemmer);
@@ -438,283 +558,396 @@ fn refresh_fts(conn: &Connection, stemmer: &str, mode: RefreshMode) -> Result<Ft
             .as_ref()
             .filter(|state| state.backend == FtsBackend::TermFrequency)
         {
-            // TF scores live chunks directly. A chunk mutation only needs to
-            // advance the logical generation; retry extension installation
-            // only on an explicit reindex or configuration change.
-            publish_refreshed_state(conn, state, generations.chunks_generation)?;
+            publish_refreshed_state(w, state, generations.chunks_generation)?;
             return Ok(state.clone());
         }
-        let force_rebuild = read_meta(conn, META_FORCE_REBUILD)?.is_some_and(|flag| flag == "1");
-        if let Some(state) = current
-            .filter(|state| state.backend == FtsBackend::DuckDbBm25)
-            .filter(|_| !force_rebuild)
-        {
-            // A write burst usually touches a few documents: patch the BM25
-            // tables for the changed chunks instead of re-tokenizing the corpus.
-            match incremental_fts_update(conn, &stemmer) {
-                Ok(true) => {
-                    tracing::debug!(
-                        chunks_generation = generations.chunks_generation,
-                        "FTS index updated incrementally"
-                    );
-                    publish_refreshed_state(conn, &state, generations.chunks_generation)?;
-                    return Ok(state);
-                }
-                Ok(false) => {}
-                Err(error) => {
-                    tracing::warn!(error = %error, "incremental FTS update failed; rebuilding");
-                }
-            }
-        }
     }
 
-    rebuild_fts(conn, stemmer, generations.chunks_generation)
-}
+    if mode == RefreshMode::Force {
+        let _ = delete_meta(w, META_INDEX_GENERATION);
+    }
 
-/// Patch the DuckDB BM25 index (`fts_main_chunks.{docs,terms,dict,stats}`) for
-/// chunks added or removed since it was built, using the extension's own
-/// `tokenize` macro, stopword table and stemmer, so scores match a rebuild.
-///
-/// Chunk text is immutable (writes replace chunks under new ids), so the id
-/// diff between `chunks` and `docs` is the complete change set. Returns
-/// `Ok(false)` without changing anything when a rebuild is the better plan:
-/// no physical index, the extension cannot load, an outer transaction is open,
-/// or at least half of the indexed documents changed.
-fn incremental_fts_update(conn: &Connection, stemmer: &str) -> Result<bool> {
-    if !fts_index_present(conn) || !load_fts_extension(conn) {
-        return Ok(false);
-    }
-    let (indexed, added, removed): (i64, i64, i64) = conn.query_row(
-        r#"
-        SELECT
-          (SELECT COUNT(*) FROM fts_main_chunks.docs),
-          (SELECT COUNT(*) FROM chunks c
-            WHERE NOT EXISTS (SELECT 1 FROM fts_main_chunks.docs d WHERE d.name = c.id)),
-          (SELECT COUNT(*) FROM fts_main_chunks.docs d
-            WHERE NOT EXISTS (SELECT 1 FROM chunks c WHERE c.id = d.name))
-        "#,
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-    )?;
-    if added == 0 && removed == 0 {
-        // Only vectors changed: the lexical index is already current.
-        return Ok(true);
-    }
-    if (added + removed) * 2 >= indexed.max(1) {
-        return Ok(false);
-    }
-    // `stemmer` is sanitized to ASCII letters/underscore by the caller.
-    let stem = if stemmer == "none" {
-        "w".to_string()
-    } else {
-        format!("stem(w, '{stemmer}')")
+    let state = FtsState {
+        backend: FtsBackend::DuckDbBm25,
+        stemmer,
     };
-    if conn.execute_batch("BEGIN TRANSACTION").is_err() {
-        return Ok(false);
-    }
-    let patch = format!(
-        r#"
-        CREATE OR REPLACE TEMP TABLE fts_delta_removed AS
-          SELECT d.docid FROM fts_main_chunks.docs d
-          WHERE NOT EXISTS (SELECT 1 FROM chunks c WHERE c.id = d.name);
-        UPDATE fts_main_chunks.dict SET df = dict.df - gone.n
-          FROM (SELECT t.termid, COUNT(DISTINCT t.docid) AS n
-                FROM fts_main_chunks.terms t
-                JOIN fts_delta_removed r ON r.docid = t.docid
-                GROUP BY t.termid) gone
-          WHERE dict.termid = gone.termid;
-        DELETE FROM fts_main_chunks.terms
-          WHERE docid IN (SELECT docid FROM fts_delta_removed);
-        DELETE FROM fts_main_chunks.docs
-          WHERE docid IN (SELECT docid FROM fts_delta_removed);
-        DELETE FROM fts_main_chunks.dict WHERE df <= 0;
-
-        CREATE OR REPLACE TEMP TABLE fts_delta_added AS
-          SELECT c.id AS name, c.content,
-                 (SELECT COALESCE(MAX(docid), -1) FROM fts_main_chunks.docs)
-                   + row_number() OVER (ORDER BY c.id) AS docid
-          FROM chunks c
-          WHERE NOT EXISTS (SELECT 1 FROM fts_main_chunks.docs d WHERE d.name = c.id);
-        CREATE OR REPLACE TEMP TABLE fts_delta_terms AS
-          SELECT docid, {stem} AS term
-          FROM (SELECT docid, unnest(fts_main_chunks.tokenize(content)) AS w
-                FROM fts_delta_added)
-          WHERE w NOT IN (SELECT sw FROM fts_main_chunks.stopwords) AND w <> '';
-        INSERT INTO fts_main_chunks.dict
-          SELECT (SELECT COALESCE(MAX(termid), -1) FROM fts_main_chunks.dict)
-                   + row_number() OVER (ORDER BY term),
-                 term, 0
-          FROM (SELECT DISTINCT term FROM fts_delta_terms
-                WHERE term NOT IN (SELECT term FROM fts_main_chunks.dict));
-        UPDATE fts_main_chunks.dict SET df = dict.df + fresh.n
-          FROM (SELECT term, COUNT(DISTINCT docid) AS n
-                FROM fts_delta_terms GROUP BY term) fresh
-          WHERE dict.term = fresh.term;
-        INSERT INTO fts_main_chunks.terms
-          SELECT t.docid, 0, d.termid
-          FROM fts_delta_terms t JOIN fts_main_chunks.dict d ON d.term = t.term;
-        INSERT INTO fts_main_chunks.docs
-          SELECT a.docid, a.name, COUNT(t.term)
-          FROM fts_delta_added a LEFT JOIN fts_delta_terms t ON t.docid = a.docid
-          GROUP BY a.docid, a.name;
-        UPDATE fts_main_chunks.stats
-          SET num_docs = (SELECT COUNT(*) FROM fts_main_chunks.docs),
-              avgdl = (SELECT AVG(len) FROM fts_main_chunks.docs);
-        DROP TABLE fts_delta_removed;
-        DROP TABLE fts_delta_added;
-        DROP TABLE fts_delta_terms;
-        "#
-    );
-    match conn.execute_batch(&patch) {
-        Ok(()) => {
-            conn.execute_batch("COMMIT")?;
-            Ok(true)
-        }
-        Err(error) => {
-            let _ = conn.execute_batch("ROLLBACK");
-            Err(AppError::fts(format!("incremental FTS update: {error}")))
-        }
-    }
-}
-
-fn rebuild_fts(conn: &Connection, stemmer: String, chunks_generation: u64) -> Result<FtsState> {
-    let state = match try_duckdb_fts_index(conn, &stemmer) {
-        Ok(()) => {
-            let state = FtsState {
-                backend: FtsBackend::DuckDbBm25,
-                stemmer,
-            };
-            tracing::info!(
-                backend = state.backend.as_str(),
-                stemmer = %state.stemmer,
-                chunks_generation,
-                "FTS index refreshed on chunks (DuckDB BM25)"
-            );
-            state
-        }
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                stemmer = %stemmer,
-                chunks_generation,
-                "DuckDB FTS extension unavailable; lex search uses term-frequency fallback"
-            );
-            FtsState {
-                backend: FtsBackend::TermFrequency,
-                stemmer,
-            }
-        }
-    };
-
-    publish_refreshed_state(conn, &state, chunks_generation)?;
-    #[cfg(test)]
-    test_fts_crashpoint(conn, "published");
+    publish_refreshed_state(w, &state, generations.chunks_generation)?;
     Ok(state)
 }
 
-fn publish_refreshed_state(
-    conn: &Connection,
+pub(super) fn publish_refreshed_state(
+    w: &mut impl LinWriter,
     state: &FtsState,
     chunks_generation: u64,
 ) -> Result<()> {
-    // Publish the generation only after the derived search backend is ready.
-    // If the process fails between these writes, the missing/mismatched
-    // generation remains dirty and the next refresh safely retries.
-    persist_state(conn, state)?;
-    if read_meta(conn, META_FORCE_REBUILD)?.as_deref() == Some("1") {
-        // Only a full rebuild may clear the flag; the incremental path is
-        // never taken while it is set.
-        upsert_meta(conn, META_FORCE_REBUILD, "0")?;
+    persist_state(w, state)?;
+    if get_meta(w, META_FORCE_REBUILD)?.as_deref() == Some("1") {
+        upsert_meta(w, META_FORCE_REBUILD, "0")?;
     }
-    upsert_meta(conn, META_CHUNKS_GENERATION, &chunks_generation.to_string())?;
-    upsert_meta(conn, META_INDEX_GENERATION, &chunks_generation.to_string())?;
-    increment_rebuild_count(conn)?;
+    upsert_meta(w, META_CHUNKS_GENERATION, &chunks_generation.to_string())?;
+    upsert_meta(w, META_INDEX_GENERATION, &chunks_generation.to_string())?;
+    increment_rebuild_count(w)?;
     Ok(())
 }
 
 /// Load last-known FTS state from `meta`, if [`ensure_fts`] has run.
-pub fn fts_status(conn: &Connection) -> Result<Option<FtsState>> {
-    let backend = match read_meta(conn, META_BACKEND)? {
+pub fn fts_status(r: &impl LinReader) -> Result<Option<FtsState>> {
+    let backend = match get_meta(r, META_BACKEND)? {
         Some(b) => FtsBackend::from_meta(&b),
         None => None,
     };
     let Some(backend) = backend else {
         return Ok(None);
     };
-    let stemmer = read_meta(conn, META_STEMMER)?.unwrap_or_else(|| DEFAULT_STEMMER.to_string());
+    let stemmer = get_meta(r, META_STEMMER)?.unwrap_or_else(|| DEFAULT_STEMMER.to_string());
     Ok(Some(FtsState { backend, stemmer }))
 }
 
-/// True when the DuckDB FTS index for `chunks` is present.
-///
-/// Checks schema `fts_main_chunks`, then tables, then a direct relation probe.
-/// Useful for `doctor` / `status`. False under term-frequency fallback.
-pub fn fts_index_present(conn: &Connection) -> bool {
-    if conn
-        .query_row(
-            r#"
-            SELECT COUNT(*) FROM information_schema.schemata
-            WHERE schema_name = ?
-            "#,
-            params![FTS_SCHEMA],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|n: i64| n > 0)
-        .unwrap_or(false)
-    {
-        return true;
-    }
-    if conn
-        .query_row(
-            r#"
-            SELECT COUNT(*) FROM information_schema.tables
-            WHERE lower(table_name) = 'fts_main_chunks'
-               OR lower(table_schema) = 'fts_main_chunks'
-            "#,
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|n: i64| n > 0)
-        .unwrap_or(false)
-    {
-        return true;
-    }
-    conn.prepare("SELECT 1 FROM fts_main_chunks LIMIT 0")
-        .is_ok()
-}
-
-/// Best-effort: extension loadable **and** index present; this probe lives next
-/// to index management so callers do not need schema internals.
-pub fn probe_ready(conn: &Connection) -> bool {
-    if !load_fts_extension(conn) {
+/// True when the BM25 lexical index is configured and active on `chunks`.
+pub fn fts_index_present(r: &impl LinReader) -> bool {
+    if !r.has_collection("chunks") {
         return false;
     }
-    fts_index_present(conn)
+    matches!(
+        fts_status(r).ok().flatten(),
+        Some(FtsState {
+            backend: FtsBackend::DuckDbBm25,
+            ..
+        })
+    )
 }
 
-/// Try to LOAD (and INSTALL if needed) the DuckDB `fts` extension.
-pub fn load_fts_extension(conn: &Connection) -> bool {
-    if conn.execute_batch("LOAD fts;").is_ok() {
-        return true;
-    }
-    if conn.execute_batch("INSTALL fts;\nLOAD fts;").is_ok() {
-        return true;
-    }
-    if conn.execute_batch("INSTALL 'fts';\nLOAD 'fts';").is_ok() {
-        return true;
-    }
-    false
+/// Best-effort probe that the FTS index is ready.
+pub fn probe_ready(r: &impl LinReader) -> bool {
+    fts_index_present(r)
 }
 
-/// Lexical search over chunks: BM25 when the extension is active, else TF.
-///
-/// Ensures a backend is configured and refreshes it only when a chunk mutation
-/// advanced the stored generation. The store mutex serializes this check and
-/// refresh, preserving read-your-writes without rebuilding on warm searches.
-///
-/// Returns hits sorted by lexical score descending, capped at `top_k`.
-/// Each hit sets `score` and `score_lex` to the lexical score; `snippet` is a
-/// short content prefix.
+/// Compatibility shim: `lin` has built-in lexical indexing without external dynamic extensions.
+pub fn load_fts_extension(_r: &impl LinReader) -> bool {
+    true
+}
+
+// ============================================================================
+// Process-local + Zero-Heap Out-of-Core Mmap Okapi BM25 Inverted Index
+// ============================================================================
+
+struct Bm25Posting {
+    doc_idx: u32,
+    tf: u32,
+}
+
+struct Bm25DocMeta {
+    chunk_id: String,
+    doc_len: u32,
+}
+
+/// Pure in-RAM BM25 index used ONLY for `:memory:` / non-DiskV2 stores.
+struct CachedBm25Index {
+    generation: u64,
+    stemmer: String,
+    docs: Vec<Bm25DocMeta>,
+    postings: HashMap<String, Vec<Bm25Posting>>,
+    avgdl: f64,
+}
+
+/// Zero-heap `mmap` BM25 handle for `DiskEngineV2` stores (`0 MiB` heap at 500+ GiB scale!).
+struct CachedMmapBm25 {
+    stemmer: String,
+    index: lin::disk_v2::MmapBm25Index,
+}
+
+static BM25_CACHE: std::sync::LazyLock<RwLock<HashMap<usize, Arc<CachedBm25Index>>>> =
+    std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
+
+static BM25_MMAP_CACHE: std::sync::LazyLock<RwLock<HashMap<usize, Arc<CachedMmapBm25>>>> =
+    std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
+
+static BM25_MMAP_BUILD_LOCKS: std::sync::LazyLock<[std::sync::Mutex<()>; 16]> =
+    std::sync::LazyLock::new(Default::default);
+
+type Bm25ScopeKey = (usize, u64, u64, String);
+static BM25_SCOPE_BITSET_CACHE: std::sync::LazyLock<
+    RwLock<HashMap<Bm25ScopeKey, Arc<Vec<u64>>>>,
+> = std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// Evict any process-local cached BM25 index for `store` (used in cold-benchmark resets).
+pub fn clear_bm25_ram_cache_for_store(store: &Store) {
+    let key = store_cache_key(store);
+    if let Ok(mut cache) = BM25_CACHE.write() {
+        cache.remove(&key);
+    }
+    if let Ok(mut mcache) = BM25_MMAP_CACHE.write() {
+        mcache.remove(&key);
+    }
+    if let Ok(mut scache) = BM25_SCOPE_BITSET_CACHE.write() {
+        scache.retain(|(k, _, _, _), _| *k != key);
+    }
+}
+
+fn bm25_v3_mmap_path(db_dir: &std::path::Path, stemmer: &str) -> std::path::PathBuf {
+    let safe_stemmer: String = stemmer
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    db_dir.join(format!("bm25_{safe_stemmer}.v3.mmap"))
+}
+
+fn legacy_bm25_v2_bin_path(db_dir: &std::path::Path, stemmer: &str) -> std::path::PathBuf {
+    let safe_stemmer: String = stemmer
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    db_dir.join(format!("bm25_{safe_stemmer}.v2.bin"))
+}
+
+fn build_mmap_bm25_on_disk(
+    r: &impl LinReader,
+    db_dir: &std::path::Path,
+    generation: u64,
+    stemmer: &str,
+) -> Result<lin::disk_v2::MmapBm25Index> {
+    let mut builder = lin::disk_v2::MmapBm25Builder::new(generation);
+    r.scan_each_projected("chunks", &["id", "content"], |row| {
+        let Some(chunk_id) = cell_str(row, "id") else {
+            return Ok(true);
+        };
+        let content = cell_str(row, "content").unwrap_or("");
+        let terms = stem_and_filter_tokens(content, stemmer);
+        builder.add_document(chunk_id, &terms);
+        Ok(true)
+    })?;
+    let dst = bm25_v3_mmap_path(db_dir, stemmer);
+    let idx = builder.finish_to_file(&dst)?;
+    // Clean up obsolete heap-deserialized v2 file if present so disk space is reclaimed!
+    let old_v2 = legacy_bm25_v2_bin_path(db_dir, stemmer);
+    if old_v2.exists() {
+        let _ = std::fs::remove_file(old_v2);
+    }
+    Ok(idx)
+}
+
+impl CachedBm25Index {
+    fn build(r: &impl LinReader, generation: u64, stemmer: &str) -> Result<Self> {
+        let mut docs: Vec<Bm25DocMeta> = Vec::new();
+        let mut postings: HashMap<String, Vec<Bm25Posting>> = HashMap::new();
+        let mut total_tokens = 0u64;
+
+        r.scan_each_projected("chunks", &["id", "content"], |row| {
+            let Some(chunk_id) = cell_str(row, "id") else {
+                return Ok(true);
+            };
+            let content = cell_str(row, "content").unwrap_or("");
+            let terms = stem_and_filter_tokens(content, stemmer);
+            let doc_idx = docs.len() as u32;
+            let doc_len = terms.len() as u32;
+            total_tokens += u64::from(doc_len);
+            docs.push(Bm25DocMeta {
+                chunk_id: chunk_id.to_string(),
+                doc_len,
+            });
+
+            if !terms.is_empty() {
+                let mut tf_map: HashMap<String, u32> = HashMap::new();
+                for t in terms {
+                    *tf_map.entry(t).or_insert(0) += 1;
+                }
+                for (term, tf) in tf_map {
+                    postings.entry(term).or_default().push(Bm25Posting { doc_idx, tf });
+                }
+            }
+            Ok(true)
+        })?;
+
+        let avgdl = if docs.is_empty() {
+            1.0
+        } else {
+            (total_tokens as f64) / (docs.len() as f64)
+        }
+        .max(1e-9);
+
+        Ok(Self {
+            generation,
+            stemmer: stemmer.to_string(),
+            docs,
+            postings,
+            avgdl,
+        })
+    }
+
+    /// Score all chunks matching `query_terms`, returning `(chunk_id, bm25_score)`.
+    fn score_query(&self, query: &str) -> Vec<(&str, f32)> {
+        if self.docs.is_empty() {
+            return Vec::new();
+        }
+        let mut q_terms = stem_and_filter_tokens(query, &self.stemmer);
+        q_terms.sort();
+        q_terms.dedup();
+        if q_terms.is_empty() {
+            return Vec::new();
+        }
+
+        let n_docs = self.docs.len() as f64;
+        let mut scores: HashMap<u32, f64> = HashMap::new();
+
+        for term in &q_terms {
+            let Some(plist) = self.postings.get(term.as_str()) else {
+                continue;
+            };
+            let df = plist.len() as f64;
+            let idf = (1.0 + (n_docs - df + 0.5) / (df + 0.5)).ln();
+            if idf <= 0.0 {
+                continue;
+            }
+            for post in plist {
+                let dl = f64::from(self.docs[post.doc_idx as usize].doc_len);
+                let tf = f64::from(post.tf);
+                let denom = tf + BM25_K1 * (1.0 - BM25_B + BM25_B * (dl / self.avgdl));
+                let contrib = idf * (tf * (BM25_K1 + 1.0)) / denom;
+                *scores.entry(post.doc_idx).or_insert(0.0) += contrib;
+            }
+        }
+
+        scores
+            .into_iter()
+            .filter(|(_, s)| *s > 0.0)
+            .map(|(doc_idx, s)| (self.docs[doc_idx as usize].chunk_id.as_str(), s as f32))
+            .collect()
+    }
+}
+
+fn store_cache_key(store: &Store) -> usize {
+    store.backend_key()
+}
+
+fn get_or_open_mmap_bm25(
+    store: &Store,
+    r: &impl LinReader,
+    eng: &lin::disk_v2::DiskEngineV2,
+    generation: u64,
+    stemmer: &str,
+) -> Result<Option<Arc<CachedMmapBm25>>> {
+    let key = store_cache_key(store);
+    if let Ok(cache) = BM25_MMAP_CACHE.read()
+        && let Some(existing) = cache.get(&key)
+        && existing.index.generation == generation
+        && existing.stemmer == stemmer
+    {
+        return Ok(Some(Arc::clone(existing)));
+    }
+
+    let v3_path = bm25_v3_mmap_path(eng.dir(), stemmer);
+    if let Some(opened) = lin::disk_v2::MmapBm25Index::open_if_valid(&v3_path, generation) {
+        let handle = Arc::new(CachedMmapBm25 {
+            stemmer: stemmer.to_string(),
+            index: opened,
+        });
+        if let Ok(mut cache) = BM25_MMAP_CACHE.write() {
+            if cache.len() > 64 {
+                cache.clear();
+            }
+            cache.insert(key, Arc::clone(&handle));
+        }
+        return Ok(Some(handle));
+    }
+
+    if eng.is_read_only() {
+        return Ok(None);
+    }
+
+    // Singleflight per-store build so concurrent readers never build the same `.v3.mmap` twice!
+    let _build_guard = BM25_MMAP_BUILD_LOCKS[(key >> 4) & 15]
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Ok(cache) = BM25_MMAP_CACHE.read()
+        && let Some(existing) = cache.get(&key)
+        && existing.index.generation == generation
+        && existing.stemmer == stemmer
+    {
+        return Ok(Some(Arc::clone(existing)));
+    }
+    let idx = if let Some(opened) = lin::disk_v2::MmapBm25Index::open_if_valid(&v3_path, generation)
+    {
+        opened
+    } else {
+        build_mmap_bm25_on_disk(r, eng.dir(), generation, stemmer)?
+    };
+    let handle = Arc::new(CachedMmapBm25 {
+        stemmer: stemmer.to_string(),
+        index: idx,
+    });
+    if let Ok(mut cache) = BM25_MMAP_CACHE.write() {
+        if cache.len() > 64 {
+            cache.clear();
+        }
+        cache.insert(key, Arc::clone(&handle));
+    }
+    Ok(Some(handle))
+}
+
+fn get_or_build_ram_bm25_index(
+    store: &Store,
+    r: &impl LinReader,
+    generation: u64,
+    stemmer: &str,
+) -> Result<Arc<CachedBm25Index>> {
+    let key = store_cache_key(store);
+    if let Ok(cache) = BM25_CACHE.read()
+        && let Some(existing) = cache.get(&key)
+        && existing.generation == generation
+        && existing.stemmer == stemmer
+    {
+        return Ok(Arc::clone(existing));
+    }
+
+    let built = Arc::new(CachedBm25Index::build(r, generation, stemmer)?);
+    if let Ok(mut cache) = BM25_CACHE.write() {
+        if cache.len() > 64 {
+            cache.clear();
+        }
+        cache.insert(key, Arc::clone(&built));
+    }
+    Ok(built)
+}
+
+/// Persist the zero-heap `mmap` Okapi BM25 inverted index on disk (`<db_dir>/bm25_<stemmer>.v3.mmap`) if backed by `DiskEngineV2`.
+pub fn persist_bm25_disk_cache(store: &Store, stemmer: &str) -> Result<bool> {
+    let r = store.read()?;
+    let Some(eng) = r.disk_v2() else {
+        return Ok(false);
+    };
+    if eng.is_read_only() {
+        return Ok(false);
+    }
+    let clean_stemmer = sanitize_stemmer(stemmer);
+    let generation = chunks_generation(&r)?;
+    let v3_path = bm25_v3_mmap_path(eng.dir(), &clean_stemmer);
+    let idx = if let Some(valid) =
+        lin::disk_v2::MmapBm25Index::open_if_valid(&v3_path, generation)
+    {
+        let old_v2 = legacy_bm25_v2_bin_path(eng.dir(), &clean_stemmer);
+        if old_v2.exists() {
+            let _ = std::fs::remove_file(old_v2);
+        }
+        valid
+    } else {
+        build_mmap_bm25_on_disk(&r, eng.dir(), generation, &clean_stemmer)?
+    };
+    let handle = Arc::new(CachedMmapBm25 {
+        stemmer: clean_stemmer,
+        index: idx,
+    });
+    if let Ok(mut cache) = BM25_MMAP_CACHE.write() {
+        cache.insert(store_cache_key(store), handle);
+    }
+    Ok(true)
+}
+
+/// Evict any process-local BM25 handle for `store` so the next lexical query reopens from `mmap` or rebuilds.
+pub fn evict_bm25_ram_cache(store: &Store) {
+    clear_bm25_ram_cache_for_store(store);
+}
+
+/// Lexical search over chunks: Okapi BM25 when active, else TF fallback.
 pub fn search_bm25(
     store: &Store,
     query: &str,
@@ -724,8 +957,7 @@ pub fn search_bm25(
     search_bm25_with_stemmer(store, query, top_k, filters, None)
 }
 
-/// Like [`search_bm25`], but uses `stemmer` when (re)building the DuckDB index
-/// (e.g. `RAG_FTS_STEMMER`). `None` keeps the last meta stemmer / default.
+/// Like [`search_bm25`], using `stemmer` when refreshing a stale index.
 pub fn search_bm25_with_stemmer(
     store: &Store,
     query: &str,
@@ -737,323 +969,546 @@ pub fn search_bm25_with_stemmer(
         return Ok(Vec::new());
     }
 
-    let conn = store.lock()?;
-    let preferred_stemmer = stemmer
-        .map(sanitize_stemmer)
-        .or_else(|| read_meta(&conn, META_STEMMER).ok().flatten())
-        .unwrap_or_else(|| DEFAULT_STEMMER.to_string());
+    // Fast concurrent read check first! If the index is already clean and stemmer matches,
+    // we never even acquire the write lock!
+    let (state, generation) = {
+        let r = store.read()?;
+        let preferred = stemmer
+            .map(sanitize_stemmer)
+            .or_else(|| get_meta(&r, META_STEMMER).ok().flatten())
+            .unwrap_or_else(|| DEFAULT_STEMMER.to_string());
+        let gen_state = fts_generation_state(&r)?;
+        let cur_status = fts_status(&r)?;
+        if !gen_state.dirty
+            && let Some(ref st) = cur_status
+            && st.stemmer == preferred
+        {
+            (st.clone(), gen_state.chunks_generation)
+        } else {
+            drop(r);
+            // Upgrade to singleflight write lock only when dirty or uninitialized
+            match store.write() {
+                Ok(mut w) => {
+                    let st = refresh_fts_if_stale_with_stemmer(&mut w, &preferred)?;
+                    let g = chunks_generation(&w)?;
+                    (st, g)
+                }
+                Err(_) => {
+                    // Read-only store (`open_read_only`): score directly without mutating meta!
+                    let r2 = store.read()?;
+                    let g = chunks_generation(&r2)?;
+                    let st = cur_status.unwrap_or(FtsState {
+                        backend: FtsBackend::DuckDbBm25,
+                        stemmer: preferred,
+                    });
+                    (st, g)
+                }
+            }
+        }
+    };
 
-    // The Store connection mutex covers the dirty check plus optional rebuild.
-    // Concurrent stale searches therefore collapse into one refresh.
-    let state = refresh_fts_if_stale_with_stemmer(&conn, &preferred_stemmer)?;
-
+    let r = store.read()?;
     match state.backend {
-        FtsBackend::DuckDbBm25 => match search_duckdb_bm25(&conn, query, top_k, filters) {
-            Ok(hits) => Ok(hits),
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "match_bm25 failed; falling back to term-frequency for this query"
-                );
-                search_tf(&conn, query, top_k, filters)
-            }
-        },
-        FtsBackend::TermFrequency => search_tf(&conn, query, top_k, filters),
+        FtsBackend::DuckDbBm25 => {
+            search_lin_bm25(store, &r, query, top_k, filters, generation, &state.stemmer)
+        }
+        FtsBackend::TermFrequency => search_tf(&r, query, top_k, filters),
     }
 }
 
-// ---------------------------------------------------------------------------
-// DuckDB FTS path
-// ---------------------------------------------------------------------------
+const DOC_BM25_META_COLS: &[&str] = &[
+    "id",
+    "title",
+    "uri",
+    "status",
+    "wing",
+    "room",
+    "layer",
+    "kind",
+    "source_file",
+];
+const DOC_BM25_FILTER_COLS: &[&str] = &[
+    "id",
+    "status",
+    "wing",
+    "room",
+    "layer",
+    "kind",
+    "uri",
+    "source_file",
+];
+const CHUNK_BM25_HYDRATE_COLS: &[&str] = &[
+    "id",
+    "document_id",
+    "chunk_index",
+    "content",
+    "char_start",
+    "char_end",
+];
 
-#[cfg(test)]
-static FTS_CRASH_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-#[cfg(test)]
-fn test_fts_crashpoint(conn: &Connection, phase: &str) {
-    if !FTS_CRASH_ARMED.load(std::sync::atomic::Ordering::SeqCst)
-        || std::env::var("RAG_TEST_FTS_CRASH_PHASE").ok().as_deref() != Some(phase)
-    {
-        return;
+fn lex_scope_cache_signature(filters: &LexFilters) -> String {
+    fn trim_opt(v: Option<&str>) -> &str {
+        v.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("")
     }
-    let path = std::path::PathBuf::from(std::env::var_os("RAG_TEST_FTS_CRASH_DB").unwrap());
-    let state = fts_generation_state(conn).unwrap();
-    std::fs::write(path.with_extension("ready.tmp"),serde_json::to_string(&serde_json::json!({"phase":phase,"extension_available":true,"chunks_generation":state.chunks_generation,"dirty":state.dirty})).unwrap()).unwrap();
-    std::fs::rename(
-        path.with_extension("ready.tmp"),
-        path.with_extension("ready.json"),
+    format!(
+        "d={}\x1fw={}\x1fr={}\x1fl={}\x1fk={}\x1fu={}\x1fs={}\x1fa={}",
+        trim_opt(filters.document_id.as_deref()),
+        trim_opt(filters.wing.as_deref()),
+        trim_opt(filters.room.as_deref()),
+        trim_opt(filters.layer.as_deref()),
+        trim_opt(filters.kind.as_deref()),
+        trim_opt(filters.uri.as_deref()),
+        trim_opt(filters.source_file.as_deref()),
+        u8::from(filters.include_archived),
     )
-    .unwrap();
-    loop {
-        std::thread::park();
-    }
 }
 
-/// Remove only the reserved derived FTS catalog, leaf objects before its schema.
-/// DuckDB's extension overwrite path can log DROP SCHEMA ahead of its dependent
-/// table drops; that WAL cannot replay when the old schema was checkpointed.
-fn drop_derived_fts_catalog(conn: &Connection) -> Result<()> {
-    let mut drops = Vec::new();
+fn collect_matching_doc_ids_for_lex(
+    r: &impl LinReader,
+    filters: &LexFilters,
+) -> Result<HashSet<String>> {
+    fn trim_opt(v: Option<&str>) -> Option<&str> {
+        v.map(str::trim).filter(|s| !s.is_empty())
+    }
+    let want_id = trim_opt(filters.document_id.as_deref());
+    let want_wing = trim_opt(filters.wing.as_deref());
+    let want_room = trim_opt(filters.room.as_deref());
+    let want_layer = trim_opt(filters.layer.as_deref());
+    let want_kind = trim_opt(filters.kind.as_deref());
+    let want_uri = trim_opt(filters.uri.as_deref());
+    let want_src = trim_opt(filters.source_file.as_deref());
+
+    let mut out = HashSet::new();
+    if let Some(id) = want_id {
+        if let Some(doc_row) = r.get_projected_by_id("documents", id, DOC_BM25_FILTER_COLS)?
+            && filters.matches_document_row(&doc_row)
+        {
+            out.insert(id.to_string());
+        }
+        return Ok(out);
+    }
+
+    let eq_preds: [(&str, Option<&str>); 6] = [
+        ("uri", want_uri),
+        ("source_file", want_src),
+        ("room", want_room),
+        ("kind", want_kind),
+        ("layer", want_layer),
+        ("wing", want_wing),
+    ];
+    let active_count = eq_preds.iter().filter(|(_, v)| v.is_some()).count();
+
+    // Zero-`Row`, zero-Zstd fast path when filtering by a single indexed column!
+    if active_count == 1
+        && let Some(&(field, Some(val))) = eq_preds.iter().find(|(_, v)| v.is_some())
     {
-        let mut stmt=conn.prepare("SELECT DISTINCT function_name,function_type FROM duckdb_functions() WHERE schema_name=? ORDER BY function_name")?;
-        let rows = stmt.query_map(params![FTS_SCHEMA], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        })?;
-        for row in rows {
-            let (name, kind) = row?;
-            if kind != "macro" {
-                return Err(AppError::fts(
-                    "unsupported object in reserved FTS schema; refusing partial teardown",
-                ));
-            }
-            drops.push(format!(
-                "DROP MACRO {}.{}",
-                quoted_identifier(FTS_SCHEMA),
-                quoted_identifier(&name)
-            ));
-        }
-        let mut stmt=conn.prepare("SELECT table_name,table_type FROM information_schema.tables WHERE table_schema=? ORDER BY CASE WHEN table_type='VIEW' THEN 0 ELSE 1 END,table_name")?;
-        let rows = stmt.query_map(params![FTS_SCHEMA], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        })?;
-        for row in rows {
-            let (name, kind) = row?;
-            let object = match kind.as_str() {
-                "VIEW" => "VIEW",
-                "BASE TABLE" => "TABLE",
-                _ => return Err(AppError::fts("unsupported relation in reserved FTS schema")),
+        let include_archived = filters.include_archived;
+        r.for_each_by_eq_str3("documents", field, val, "id", "status", None, |id_opt, st_opt, _| {
+            let Some(id) = id_opt else {
+                return Ok(true);
             };
-            drops.push(format!(
-                "DROP {object} {}.{}",
-                quoted_identifier(FTS_SCHEMA),
-                quoted_identifier(&name)
-            ));
-        }
-    }
-    // A killed explicit force-rebuild must not leave a partial but logically
-    // clean index. Invalidate only the derived generation, not chunk/vector data.
-    conn.execute(
-        "DELETE FROM meta WHERE key=?",
-        params![META_INDEX_GENERATION],
-    )?;
-    #[cfg(test)]
-    test_fts_crashpoint(conn, "dirty");
-    while !drops.is_empty() {
-        let before = drops.len();
-        let mut remaining = Vec::new();
-        let mut last_error = None;
-        for ddl in drops {
-            if let Err(error) = conn.execute_batch(&ddl) {
-                last_error = Some(error);
-                remaining.push(ddl);
-            } else {
-                #[cfg(test)]
-                test_fts_crashpoint(conn, "leaf");
+            if !include_archived {
+                let st = st_opt.filter(|s| !s.is_empty()).unwrap_or("active");
+                if st == "archived" || st == "tombstone" {
+                    return Ok(true);
+                }
             }
-        }
-        if remaining.len() == before {
-            return Err(AppError::fts(format!(
-                "FTS leaf teardown could not resolve dependencies: {}",
-                last_error.unwrap()
-            )));
-        }
-        drops = remaining;
-    }
-    #[cfg(test)]
-    test_fts_crashpoint(conn, "leaves");
-    // No CASCADE: replay must see an already empty schema, and unexpected
-    // dependencies must produce an explicit fallback instead of being discarded.
-    conn.execute_batch(&format!(
-        "DROP SCHEMA IF EXISTS {}",
-        quoted_identifier(FTS_SCHEMA)
-    ))?;
-    #[cfg(test)]
-    test_fts_crashpoint(conn, "schema");
-    Ok(())
-}
-fn quoted_identifier(value: &str) -> String {
-    format!("\"{}\"", value.replace('"', "\"\""))
-}
-
-fn try_duckdb_fts_index(conn: &Connection, stemmer: &str) -> Result<()> {
-    // INSTALL may fail when already installed, offline, or extension repo is
-    // unreachable. LOAD is what enables the PRAGMA macros.
-    if !load_fts_extension(conn) {
-        return Err(AppError::fts(
-            "LOAD fts failed (INSTALL/LOAD unavailable on this connection)",
-        ));
+            out.insert(id.to_string());
+            Ok(true)
+        })?;
+        return Ok(out);
     }
 
-    drop_derived_fts_catalog(conn)?;
-    // The old catalog is empty/removed in replay-safe order. Never ask the
-    // extension to cascade-drop a checkpointed schema through overwrite=1.
-    let stopwords = if stemmer == "none" { "none" } else { "english" };
-    let pragma = format!(
-        "PRAGMA create_fts_index(\
-            'chunks', 'id', 'content', \
-            stemmer = '{stemmer}', \
-            stopwords = '{stopwords}', \
-            overwrite = 0\
-        );"
+    if let Some(&(field, Some(val))) = eq_preds.iter().find(|(_, v)| v.is_some()) {
+        r.for_each_by_eq_projected(
+            "documents",
+            field,
+            val,
+            Some(DOC_BM25_FILTER_COLS),
+            |row| {
+                if filters.matches_document_row(row)
+                    && let Some(id) = cell_str(row, "id")
+                {
+                    out.insert(id.to_string());
+                }
+                Ok(true)
+            },
+        )?;
+        return Ok(out);
+    }
+
+    r.scan_each_projected("documents", DOC_BM25_FILTER_COLS, |row| {
+        if filters.matches_document_row(row)
+            && let Some(id) = cell_str(row, "id")
+        {
+            out.insert(id.to_string());
+        }
+        Ok(true)
+    })?;
+    Ok(out)
+}
+
+fn get_or_build_bm25_scope_bitset(
+    store: &Store,
+    r: &impl LinReader,
+    eng: &lin::disk_v2::DiskEngineV2,
+    bm25: &lin::disk_v2::MmapBm25Index,
+    bm25_gen: u64,
+    filters: &LexFilters,
+) -> Result<Option<Arc<Vec<u64>>>> {
+    let key = (
+        store_cache_key(store),
+        eng.manifest.generation,
+        bm25_gen,
+        lex_scope_cache_signature(filters),
     );
-    conn.execute_batch(&pragma)
-        .map_err(|e| AppError::fts(format!("create_fts_index on chunks failed: {e}")))?;
-    #[cfg(test)]
-    test_fts_crashpoint(conn, "built");
-    Ok(())
+    if let Ok(cache) = BM25_SCOPE_BITSET_CACHE.read()
+        && let Some(existing) = cache.get(&key)
+    {
+        return Ok(Some(Arc::clone(existing)));
+    }
+    let allowed_docs = collect_matching_doc_ids_for_lex(r, filters)?;
+    if allowed_docs.is_empty() {
+        let empty = Arc::new(Vec::new());
+        if let Ok(mut cache) = BM25_SCOPE_BITSET_CACHE.write() {
+            if cache.len() >= 32 {
+                cache.clear();
+            }
+            cache.insert(key, Arc::clone(&empty));
+        }
+        return Ok(Some(empty));
+    }
+    let Some(bits) =
+        eng.build_bm25_allow_bitset("chunks", "document_id", bm25, |did| allowed_docs.contains(did))?
+    else {
+        return Ok(None);
+    };
+    let arc_bits = Arc::new(bits);
+    if let Ok(mut cache) = BM25_SCOPE_BITSET_CACHE.write() {
+        if cache.len() >= 32 {
+            cache.clear();
+        }
+        cache.insert(key, Arc::clone(&arc_bits));
+    }
+    Ok(Some(arc_bits))
 }
 
-fn search_duckdb_bm25(
-    conn: &Connection,
-    query: &str,
+fn hydrate_bm25_hits(
+    r: &impl LinReader,
+    raw_scored: Vec<(&str, f32)>,
     top_k: usize,
     filters: &LexFilters,
 ) -> Result<Vec<SearchHit>> {
-    let (where_sql, mut bind) = filters.scope_where_clause("c.document_id");
-    // query first for match_bm25, then filter binds. `top_k` is inlined (usize).
-    let mut all_binds: Vec<String> = Vec::with_capacity(bind.len() + 1);
-    all_binds.push(query.to_string());
-    all_binds.append(&mut bind);
+    if raw_scored.is_empty() || top_k == 0 {
+        return Ok(Vec::new());
+    }
+    let mut hits = Vec::with_capacity(top_k.min(raw_scored.len()));
+    let mut doc_filter_cache: HashMap<String, Option<(String, String)>> = HashMap::new();
+    let scoped = filters.has_explicit_scope();
 
-    // Score chunk ids only, keep the top k, then read content and titles for
-    // those rows: chunk bodies are never scanned for the rest of the corpus.
-    let sql = format!(
-        r#"
-        WITH ranked AS (
-          SELECT c.id AS chunk_id, fts_main_chunks.match_bm25(c.id, ?) AS score
-          FROM chunks c
-          INNER JOIN documents d ON d.id = c.document_id
-          {where_sql}
-        ),
-        top AS (
-          SELECT chunk_id, score FROM ranked
-          WHERE score IS NOT NULL
-          ORDER BY score DESC
-          LIMIT {top_k}
-        )
-        SELECT c.id, c.document_id, d.title, d.uri, c.chunk_index, c.content,
-               c.char_start, c.char_end, top.score
-        FROM top
-        INNER JOIN chunks c ON c.id = top.chunk_id
-        INNER JOIN documents d ON d.id = c.document_id
-        ORDER BY top.score DESC
-        "#
-    );
+    for (chunk_id, score) in raw_scored {
+        if scoped && r.disk_v2().is_some() {
+            let Some(cid_row) = r.get_projected_by_id("chunks", chunk_id, &["document_id"])? else {
+                continue;
+            };
+            let doc_id = cell_string(&cid_row, "document_id");
+            let doc_info = if let Some(cached) = doc_filter_cache.get(&doc_id) {
+                cached.clone()
+            } else {
+                let info = match r.get_projected_by_id("documents", &doc_id, DOC_BM25_FILTER_COLS)? {
+                    Some(f_row) if filters.matches_document_row(&f_row) => {
+                        r.get_projected_by_id("documents", &doc_id, &["title", "uri"])?
+                            .map(|m_row| (cell_string(&m_row, "title"), cell_string(&m_row, "uri")))
+                    }
+                    _ => None,
+                };
+                doc_filter_cache.insert(doc_id.clone(), info.clone());
+                info
+            };
+            let Some((doc_title, doc_uri)) = doc_info else {
+                continue;
+            };
+            let Some(chunk_row) = r.get_projected_by_id("chunks", chunk_id, CHUNK_BM25_HYDRATE_COLS)? else {
+                continue;
+            };
+            let content = cell_string(&chunk_row, "content");
+            let snippet = make_snippet(&content, SNIPPET_CHARS);
+            hits.push(SearchHit {
+                chunk_id: chunk_id.to_string(),
+                document_id: doc_id,
+                document_title: doc_title,
+                document_uri: doc_uri,
+                chunk_index: cell_i64(&chunk_row, "chunk_index", 0) as i32,
+                content,
+                score,
+                score_lex: Some(score),
+                snippet: Some(snippet),
+                char_start: Some(cell_i64(&chunk_row, "char_start", 0) as i32),
+                char_end: Some(cell_i64(&chunk_row, "char_end", 0) as i32),
+                ..Default::default()
+            });
+            if hits.len() >= top_k {
+                break;
+            }
+            continue;
+        }
 
-    let mut stmt = conn
-        .prepare(&sql)
-        .map_err(|e| AppError::fts(format!("prepare match_bm25: {e}")))?;
+        let Some(chunk_row) = r.get_projected_by_id("chunks", chunk_id, CHUNK_BM25_HYDRATE_COLS)? else {
+            continue;
+        };
+        let doc_id = cell_string(&chunk_row, "document_id");
+        let doc_info = if let Some(cached) = doc_filter_cache.get(&doc_id) {
+            cached.clone()
+        } else {
+            let info = match r.get_projected_by_id("documents", &doc_id, DOC_BM25_META_COLS)? {
+                Some(doc_row) if filters.matches_document_row(&doc_row) => Some((
+                    cell_string(&doc_row, "title"),
+                    cell_string(&doc_row, "uri"),
+                )),
+                _ => None,
+            };
+            doc_filter_cache.insert(doc_id.clone(), info.clone());
+            info
+        };
 
-    let mut rows = stmt
-        .query(params_from_iter(all_binds.iter()))
-        .map_err(|e| AppError::fts(format!("query match_bm25: {e}")))?;
+        let Some((doc_title, doc_uri)) = doc_info else {
+            continue;
+        };
 
-    let mut hits = Vec::new();
-    crate::db::rows::visit_rows(&mut rows, |row| {
-        let score: f64 = row.get(8)?;
-        let content: String = row.get(5)?;
-        hits.push(lexical_hit(row, content, score as f32)?);
-        Ok(())
-    })?;
+        let content = cell_string(&chunk_row, "content");
+        let snippet = make_snippet(&content, SNIPPET_CHARS);
+        hits.push(SearchHit {
+            chunk_id: chunk_id.to_string(),
+            document_id: doc_id,
+            document_title: doc_title,
+            document_uri: doc_uri,
+            chunk_index: cell_i64(&chunk_row, "chunk_index", 0) as i32,
+            content,
+            score,
+            score_lex: Some(score),
+            snippet: Some(snippet),
+            char_start: Some(cell_i64(&chunk_row, "char_start", 0) as i32),
+            char_end: Some(cell_i64(&chunk_row, "char_end", 0) as i32),
+            ..Default::default()
+        });
+        if hits.len() >= top_k {
+            break;
+        }
+    }
+
     Ok(hits)
 }
 
-/// One lexical hit from the shared projection
-/// `(chunk id, document id, title, uri, chunk index, content, char_start, char_end)`
-/// used by both the BM25 and the term-frequency paths.
-fn lexical_hit(row: &duckdb::Row<'_>, content: String, score: f32) -> Result<SearchHit> {
-    let snippet = make_snippet(&content, SNIPPET_CHARS);
-    Ok(SearchHit {
-        chunk_id: row.get(0)?,
-        document_id: row.get(1)?,
-        document_title: row.get(2)?,
-        document_uri: row.get(3)?,
-        chunk_index: row.get(4)?,
-        content,
-        score,
-        score_lex: Some(score),
-        snippet: Some(snippet),
-        char_start: Some(row.get(6)?),
-        char_end: Some(row.get(7)?),
-        ..Default::default()
-    })
+fn search_lin_bm25(
+    store: &Store,
+    r: &impl LinReader,
+    query: &str,
+    top_k: usize,
+    filters: &LexFilters,
+    generation: u64,
+    stemmer: &str,
+) -> Result<Vec<SearchHit>> {
+    if top_k == 0 {
+        return Ok(Vec::new());
+    }
+    if let Some(eng) = r.disk_v2()
+        && let Some(mmap_handle) = get_or_open_mmap_bm25(store, r, eng, generation, stemmer)?
+    {
+        let mut q_terms = stem_and_filter_tokens(query, stemmer);
+        q_terms.sort();
+        q_terms.dedup();
+        if q_terms.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Ultra-fast pre-filtered scoped BM25: `97 KiB` `doc_idx` bitset inside posting varint loop!
+        if filters.has_explicit_scope()
+            && let Some(scope_bits) = get_or_build_bm25_scope_bitset(
+                store,
+                r,
+                eng,
+                &mmap_handle.index,
+                generation,
+                filters,
+            )?
+        {
+            if scope_bits.is_empty() {
+                return Ok(Vec::new());
+            }
+            let scored_idxs = mmap_handle.index.score_terms_filtered_top_k(
+                &q_terms,
+                BM25_K1,
+                BM25_B,
+                Some(top_k),
+                Some(scope_bits.as_slice()),
+            );
+            if scored_idxs.is_empty() {
+                return Ok(Vec::new());
+            }
+            let raw_scored: Vec<(&str, f32)> = scored_idxs
+                .into_iter()
+                .filter_map(|(doc_idx, score)| mmap_handle.index.doc_id(doc_idx).map(|id| (id, score)))
+                .collect();
+            return hydrate_bm25_hits(r, raw_scored, top_k, filters);
+        }
+
+        // Progressive O(N) `select_nth` windowing for global queries
+        let initial_window = if filters.has_explicit_scope() {
+            (top_k.saturating_mul(24)).max(512)
+        } else {
+            (top_k.saturating_mul(2)).max(24)
+        };
+        let scored_idxs =
+            mmap_handle
+                .index
+                .score_terms_top_k(&q_terms, BM25_K1, BM25_B, Some(initial_window));
+        if scored_idxs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let exhausted_window = scored_idxs.len() >= initial_window;
+        let raw_scored: Vec<(&str, f32)> = scored_idxs
+            .into_iter()
+            .filter_map(|(doc_idx, score)| mmap_handle.index.doc_id(doc_idx).map(|id| (id, score)))
+            .collect();
+        let hits = hydrate_bm25_hits(r, raw_scored, top_k, filters)?;
+        if hits.len() >= top_k || !exhausted_window {
+            return Ok(hits);
+        }
+
+        // Rare unaligned fallback: rank full candidate list
+        let mut full_idxs = mmap_handle.index.score_terms_top_k(&q_terms, BM25_K1, BM25_B, None);
+        full_idxs.sort_unstable_by(|a, b| {
+            b.1.total_cmp(&a.1)
+                .then_with(|| match (mmap_handle.index.doc_id(a.0), mmap_handle.index.doc_id(b.0)) {
+                    (Some(sa), Some(sb)) => sa.cmp(sb),
+                    _ => a.0.cmp(&b.0),
+                })
+        });
+        let full_raw: Vec<(&str, f32)> = full_idxs
+            .into_iter()
+            .filter_map(|(doc_idx, score)| mmap_handle.index.doc_id(doc_idx).map(|id| (id, score)))
+            .collect();
+        return hydrate_bm25_hits(r, full_raw, top_k, filters);
+    }
+
+    let index = get_or_build_ram_bm25_index(store, r, generation, stemmer)?;
+    let mut raw_scored = index.score_query(query);
+    if raw_scored.is_empty() {
+        return Ok(Vec::new());
+    }
+    raw_scored.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+    hydrate_bm25_hits(r, raw_scored, top_k, filters)
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // Term-frequency fallback
-// ---------------------------------------------------------------------------
+// ============================================================================
 
 fn search_tf(
-    conn: &Connection,
+    r: &impl LinReader,
     query: &str,
     top_k: usize,
     filters: &LexFilters,
 ) -> Result<Vec<SearchHit>> {
     let query_terms = tokenize(query);
-    if query_terms.is_empty() {
+    if query_terms.is_empty() || top_k == 0 {
         return Ok(Vec::new());
     }
 
-    let (where_sql, bind) = filters.scope_where_clause("c.document_id");
-    let sql = format!(
-        r#"
-        SELECT
-          c.id,
-          c.document_id,
-          d.title,
-          d.uri,
-          c.chunk_index,
-          c.content,
-          c.char_start,
-          c.char_end
-        FROM chunks c
-        INNER JOIN documents d ON d.id = c.document_id
-        {where_sql}
-        "#
-    );
+    let mut allowed_docs: HashMap<String, (String, String)> = HashMap::new();
+    r.scan_each_projected(
+        "documents",
+        &[
+            "id",
+            "title",
+            "uri",
+            "wing",
+            "room",
+            "layer",
+            "kind",
+            "source_file",
+            "status",
+        ],
+        |doc_row| {
+            if filters.matches_document_row(doc_row)
+                && let Some(id) = cell_str(doc_row, "id")
+            {
+                allowed_docs.insert(
+                    id.to_string(),
+                    (cell_string(doc_row, "title"), cell_string(doc_row, "uri")),
+                );
+            }
+            Ok(true)
+        },
+    )?;
 
-    let mut stmt = conn.prepare(&sql)?;
-    let mut rows = if bind.is_empty() {
-        stmt.query([])?
-    } else {
-        stmt.query(params_from_iter(bind.iter()))?
-    };
+    if allowed_docs.is_empty() {
+        return Ok(Vec::new());
+    }
 
-    // Bounded top-k: a hit (and its snippet) is built only for rows that
-    // currently rank inside the window, not for every matching chunk.
     let mut best: std::collections::BinaryHeap<std::cmp::Reverse<TfCandidate>> =
         std::collections::BinaryHeap::with_capacity(top_k.saturating_add(1));
     let mut ordinal = 0usize;
-    crate::db::rows::try_visit_rows(&mut rows, |row| {
+
+    r.scan_each_projected(
+        "chunks",
+        &[
+            "id",
+            "document_id",
+            "chunk_index",
+            "content",
+            "char_start",
+            "char_end",
+        ],
+        |chunk_row| {
+        let Some(doc_id) = cell_str(chunk_row, "document_id") else {
+            return Ok(true);
+        };
+        let Some((doc_title, doc_uri)) = allowed_docs.get(doc_id) else {
+            return Ok(true);
+        };
         ordinal += 1;
-        if top_k == 0 {
-            return Ok(std::ops::ControlFlow::Break(()));
-        }
-        let content: String = row.get(5)?;
-        let score = term_frequency_score(&query_terms, &content);
+        let content = cell_str(chunk_row, "content").unwrap_or("");
+        let score = term_frequency_score(&query_terms, content);
         if score <= 0.0 {
-            return Ok(std::ops::ControlFlow::Continue(()));
+            return Ok(true);
         }
         let rank = (score, ordinal);
         if best.len() >= top_k && best.peek().is_some_and(|worst| !worst.0.ranks_below(rank)) {
-            return Ok(std::ops::ControlFlow::Continue(()));
+            return Ok(true);
         }
+        let content_owned = content.to_string();
+        let snippet = make_snippet(&content_owned, SNIPPET_CHARS);
+        let hit = SearchHit {
+            chunk_id: cell_string(chunk_row, "id"),
+            document_id: doc_id.to_string(),
+            document_title: doc_title.clone(),
+            document_uri: doc_uri.clone(),
+            chunk_index: cell_i64(chunk_row, "chunk_index", 0) as i32,
+            content: content_owned,
+            score,
+            score_lex: Some(score),
+            snippet: Some(snippet),
+            char_start: Some(cell_i64(chunk_row, "char_start", 0) as i32),
+            char_end: Some(cell_i64(chunk_row, "char_end", 0) as i32),
+            ..Default::default()
+        };
         best.push(std::cmp::Reverse(TfCandidate {
             score,
             ordinal,
-            hit: lexical_hit(row, content, score)?,
+            hit,
         }));
         if best.len() > top_k {
             best.pop();
         }
-        Ok(std::ops::ControlFlow::Continue(()))
+        Ok(true)
     })?;
 
     let mut ranked: Vec<TfCandidate> = best.into_iter().map(|entry| entry.0).collect();
     ranked.sort_by(|a, b| b.cmp(a));
-    Ok(ranked.into_iter().map(|candidate| candidate.hit).collect())
+    Ok(ranked.into_iter().map(|c| c.hit).collect())
 }
 
-/// TF fallback candidate: higher score first, then earlier row (stable order).
 struct TfCandidate {
     score: f32,
     ordinal: usize,
@@ -1061,7 +1516,6 @@ struct TfCandidate {
 }
 
 impl TfCandidate {
-    /// Whether this candidate ranks below a new `(score, ordinal)`.
     fn ranks_below(&self, (score, ordinal): (f32, usize)) -> bool {
         self.score
             .total_cmp(&score)
@@ -1093,9 +1547,6 @@ impl Ord for TfCandidate {
 }
 
 /// Term-frequency score: sum of occurrences of each query term in `content`.
-///
-/// Not BM25 (no IDF, no k1/b). Used as the lex fallback when DuckDB FTS cannot
-/// load. Ranking is still useful for keyword queries on small corpora.
 pub fn term_frequency_score(query_terms: &[String], content: &str) -> f32 {
     if query_terms.is_empty() {
         return 0.0;
@@ -1136,61 +1587,264 @@ pub fn tokenize(text: &str) -> Vec<String> {
     out
 }
 
-// ---------------------------------------------------------------------------
-// Filters / meta / helpers
-// ---------------------------------------------------------------------------
+// ============================================================================
+// Porter Stemmer & Stopword Filtering
+// ============================================================================
 
-fn persist_state(conn: &Connection, state: &FtsState) -> Result<()> {
-    upsert_meta(conn, META_BACKEND, state.backend.as_str())?;
-    upsert_meta(conn, META_STEMMER, &state.stemmer)?;
-    Ok(())
+fn stem_and_filter_tokens(text: &str, stemmer: &str) -> Vec<String> {
+    let raw = tokenize(text);
+    if stemmer == "none" {
+        return raw;
+    }
+    raw.into_iter()
+        .filter(|tok| ENGLISH_STOPWORDS.binary_search(&tok.as_str()).is_err())
+        .map(|tok| {
+            if tok.is_ascii() && tok.bytes().all(|b| b.is_ascii_lowercase()) {
+                porter_stem(&tok)
+            } else {
+                tok
+            }
+        })
+        .filter(|tok| !tok.is_empty())
+        .collect()
 }
 
-fn upsert_meta(conn: &Connection, key: &str, value: &str) -> Result<()> {
-    conn.execute(
-        r#"
-        INSERT OR REPLACE INTO meta (key, value)
-        VALUES (?, ?)
-        "#,
-        params![key, value],
-    )?;
-    Ok(())
-}
-
-fn read_meta(conn: &Connection, key: &str) -> Result<Option<String>> {
-    let mut stmt = conn.prepare("SELECT value FROM meta WHERE key = ?")?;
-    let mut rows = stmt.query(params![key])?;
-    match rows.next()? {
-        Some(row) => Ok(Some(row.get(0)?)),
-        None => Ok(None),
+fn is_consonant(bytes: &[u8], i: usize) -> bool {
+    match bytes[i] {
+        b'a' | b'e' | b'i' | b'o' | b'u' => false,
+        b'y' => {
+            if i == 0 {
+                true
+            } else {
+                !is_consonant(bytes, i - 1)
+            }
+        }
+        _ => true,
     }
 }
 
-fn read_u64_meta(conn: &Connection, key: &str) -> Result<Option<u64>> {
-    let Some(raw) = read_meta(conn, key)? else {
+fn porter_measure(stem: &str) -> usize {
+    let b = stem.as_bytes();
+    let n = b.len();
+    let mut i = 0;
+    while i < n && is_consonant(b, i) {
+        i += 1;
+    }
+    let mut m = 0;
+    while i < n {
+        while i < n && !is_consonant(b, i) {
+            i += 1;
+        }
+        if i >= n {
+            break;
+        }
+        m += 1;
+        while i < n && is_consonant(b, i) {
+            i += 1;
+        }
+    }
+    m
+}
+
+fn has_vowel(stem: &str) -> bool {
+    let b = stem.as_bytes();
+    (0..b.len()).any(|i| !is_consonant(b, i))
+}
+
+fn ends_double_consonant(stem: &str) -> bool {
+    let b = stem.as_bytes();
+    let n = b.len();
+    n >= 2 && b[n - 1] == b[n - 2] && is_consonant(b, n - 1)
+}
+
+fn ends_cvc(stem: &str) -> bool {
+    let b = stem.as_bytes();
+    let n = b.len();
+    if n < 3 {
+        return false;
+    }
+    is_consonant(b, n - 1)
+        && !is_consonant(b, n - 2)
+        && is_consonant(b, n - 3)
+        && !matches!(b[n - 1], b'w'..=b'y')
+}
+
+/// Classic Martin Porter (1980) English stemmer for ASCII lowercase words.
+pub fn porter_stem(word: &str) -> String {
+    if word.len() <= 2 || !word.is_ascii() {
+        return word.to_string();
+    }
+    let mut s = word.to_string();
+
+    // Step 1a
+    if s.ends_with("sses") || s.ends_with("ies") {
+        s.truncate(s.len() - 2);
+    } else if !s.ends_with("ss") && s.ends_with('s') {
+        s.pop();
+    }
+
+    // Step 1b
+    let mut step1b_extra = false;
+    if let Some(stem) = s.strip_suffix("eed") {
+        if porter_measure(stem) > 0 {
+            s.pop(); // -> "ee"
+        }
+    } else if let Some(stem) = s.strip_suffix("ed") {
+        if has_vowel(stem) {
+            s = stem.to_string();
+            step1b_extra = true;
+        }
+    } else if let Some(stem) = s.strip_suffix("ing")
+        && has_vowel(stem)
+    {
+        s = stem.to_string();
+        step1b_extra = true;
+    }
+
+    if step1b_extra {
+        if s.ends_with("at") || s.ends_with("bl") || s.ends_with("iz") {
+            s.push('e');
+        } else if ends_double_consonant(&s)
+            && !matches!(s.as_bytes().last(), Some(b'l' | b's' | b'z'))
+        {
+            s.pop();
+        } else if porter_measure(&s) == 1 && ends_cvc(&s) {
+            s.push('e');
+        }
+    }
+
+    // Step 1c
+    if let Some(stem) = s.strip_suffix('y')
+        && has_vowel(stem)
+    {
+        s.pop();
+        s.push('i');
+    }
+
+    // Step 2
+    const STEP2: &[(&str, &str)] = &[
+        ("ational", "ate"),
+        ("tional", "tion"),
+        ("enci", "ence"),
+        ("anci", "ance"),
+        ("izer", "ize"),
+        ("bli", "ble"),
+        ("alli", "al"),
+        ("entli", "ent"),
+        ("eli", "e"),
+        ("ousli", "ous"),
+        ("ization", "ize"),
+        ("ation", "ate"),
+        ("ator", "ate"),
+        ("alism", "al"),
+        ("iveness", "ive"),
+        ("fulness", "ful"),
+        ("ousness", "ous"),
+        ("aliti", "al"),
+        ("iviti", "ive"),
+        ("biliti", "ble"),
+        ("logi", "log"),
+    ];
+    for &(suf, rep) in STEP2 {
+        if let Some(stem) = s.strip_suffix(suf) {
+            if porter_measure(stem) > 0 {
+                s = format!("{stem}{rep}");
+            }
+            break;
+        }
+    }
+
+    // Step 3
+    const STEP3: &[(&str, &str)] = &[
+        ("icate", "ic"),
+        ("ative", ""),
+        ("alize", "al"),
+        ("iciti", "ic"),
+        ("ical", "ic"),
+        ("ful", ""),
+        ("ness", ""),
+    ];
+    for &(suf, rep) in STEP3 {
+        if let Some(stem) = s.strip_suffix(suf) {
+            if porter_measure(stem) > 0 {
+                s = format!("{stem}{rep}");
+            }
+            break;
+        }
+    }
+
+    // Step 4
+    const STEP4: &[&str] = &[
+        "al", "ance", "ence", "er", "ic", "able", "ible", "ant", "ement", "ment", "ent", "ion",
+        "ou", "ism", "ate", "iti", "ous", "ive", "ize",
+    ];
+    for &suf in STEP4 {
+        if let Some(stem) = s.strip_suffix(suf) {
+            if suf == "ion" {
+                if stem.ends_with('s') || stem.ends_with('t') {
+                    if porter_measure(stem) > 1 {
+                        s = stem.to_string();
+                    }
+                    break;
+                }
+            } else {
+                if porter_measure(stem) > 1 {
+                    s = stem.to_string();
+                }
+                break;
+            }
+        }
+    }
+
+    // Step 5a
+    if let Some(stem) = s.strip_suffix('e') {
+        let m = porter_measure(stem);
+        if m > 1 || (m == 1 && !ends_cvc(stem)) {
+            s.pop();
+        }
+    }
+
+    // Step 5b
+    if s.ends_with("ll") && porter_measure(&s) > 1 {
+        s.pop();
+    }
+
+    s
+}
+
+// ============================================================================
+// Metadata Helpers & Test Fault Injection
+// ============================================================================
+
+fn persist_state(w: &mut impl LinWriter, state: &FtsState) -> Result<()> {
+    upsert_meta(w, META_BACKEND, state.backend.as_str())?;
+    upsert_meta(w, META_STEMMER, &state.stemmer)?;
+    Ok(())
+}
+
+fn read_u64_meta(r: &impl LinReader, key: &str) -> Result<Option<u64>> {
+    let Some(raw) = get_meta(r, key)? else {
         return Ok(None);
     };
     match raw.parse::<u64>() {
         Ok(value) => Ok(Some(value)),
         Err(e) => {
-            // Treat corrupt lifecycle metadata as absent. That is fail-safe for
-            // generations (it forces refresh) and self-heals on the next write.
             tracing::warn!(meta_key = key, value = %raw, error = %e, "invalid FTS generation metadata");
             Ok(None)
         }
     }
 }
 
-fn increment_rebuild_count(conn: &Connection) -> Result<u64> {
-    let current = read_u64_meta(conn, META_REBUILD_COUNT)?.unwrap_or(0);
+fn increment_rebuild_count(w: &mut impl LinWriter) -> Result<u64> {
+    let current = read_u64_meta(w, META_REBUILD_COUNT)?.unwrap_or(0);
     let next = current
         .checked_add(1)
         .ok_or_else(|| AppError::fts("FTS rebuild counter overflow"))?;
-    upsert_meta(conn, META_REBUILD_COUNT, &next.to_string())?;
+    upsert_meta(w, META_REBUILD_COUNT, &next.to_string())?;
     Ok(next)
 }
 
-/// Allow only ascii alpha / underscore stemmer names (DuckDB language list + none).
+/// Allow only ascii alpha / underscore stemmer names.
 pub(super) fn sanitize_stemmer(raw: &str) -> String {
     let t = raw.trim().to_ascii_lowercase();
     if t.is_empty() {
@@ -1215,10 +1869,6 @@ fn make_snippet(content: &str, max_chars: usize) -> String {
 }
 
 /// Test-only fault injection for derived-index finalization.
-///
-/// A workflow names its finalization site; a test selects that one site by
-/// putting [`test_fault::fail`] or [`test_fault::panic`] into the configured
-/// stemmer. Other sites in the same flow keep the real refresh path.
 #[cfg(test)]
 pub(crate) mod test_fault {
     use crate::error::{AppError, Result};
@@ -1226,17 +1876,14 @@ pub(crate) mod test_fault {
     const FAIL_PREFIX: &str = "__test_fail_finalize_fts__:";
     const PANIC_PREFIX: &str = "__test_panic_finalize_fts__:";
 
-    /// Stemmer value that makes `site`'s finalization return an FTS error.
     pub(crate) fn fail(site: &str) -> String {
         format!("{FAIL_PREFIX}{site}")
     }
 
-    /// Stemmer value that makes `site`'s finalization panic.
     pub(crate) fn panic(site: &str) -> String {
         format!("{PANIC_PREFIX}{site}")
     }
 
-    /// Called at the top of each finalization site.
     pub(crate) fn check(site: &str, stemmer: &str) -> Result<()> {
         if stemmer.strip_prefix(PANIC_PREFIX) == Some(site) {
             panic!("injected {site} FTS finalization panic");
@@ -1253,169 +1900,24 @@ pub(crate) mod test_fault {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{Chunk, Document};
+    use chrono::Utc;
+    use tempfile::TempDir;
 
-    /// dict (term, df), docs (name, len), stats (num_docs, avgdl), postings.
-    type Bm25IndexView = (
-        Vec<(String, i64)>,
-        Vec<(String, i64)>,
-        (i64, f64),
-        Vec<(String, i64)>,
-    );
-
-    /// Index contents that determine BM25 scores, independent of id numbering.
-    fn bm25_index_view(conn: &Connection) -> Bm25IndexView {
-        let pairs = |sql: &str| -> Vec<(String, i64)> {
-            let mut stmt = conn.prepare(sql).unwrap();
-            crate::db::rows::query_vec(&mut stmt, [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap()
-        };
-        let dict = pairs("SELECT term, df FROM fts_main_chunks.dict ORDER BY term");
-        let docs = pairs("SELECT name, len FROM fts_main_chunks.docs ORDER BY name");
-        let stats = conn
-            .query_row(
-                "SELECT num_docs, avgdl FROM fts_main_chunks.stats",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
-        let postings = pairs(
-            "SELECT d.name || ':' || dict.term, COUNT(*) FROM fts_main_chunks.terms t \
-             JOIN fts_main_chunks.docs d ON d.docid = t.docid \
-             JOIN fts_main_chunks.dict dict ON dict.termid = t.termid \
-             GROUP BY 1 ORDER BY 1",
-        );
-        (dict, docs, stats, postings)
+    fn open_store() -> (TempDir, Store) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("fts.lin");
+        let store = Store::open(&path).expect("open");
+        (dir, store)
     }
 
-    fn bm25_scores(conn: &Connection, query: &str) -> Vec<(String, String)> {
-        let mut stmt = conn
-            .prepare(
-                "SELECT id, CAST(ROUND(fts_main_chunks.match_bm25(id, ?), 9) AS VARCHAR) AS s \
-                 FROM chunks WHERE s IS NOT NULL ORDER BY id",
-            )
-            .unwrap();
-        crate::db::rows::query_vec(&mut stmt, [query], |row| Ok((row.get(0)?, row.get(1)?)))
-            .unwrap()
-    }
-
-    #[test]
-    fn forced_rebuild_flag_bypasses_the_incremental_patch_once() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("fts-forced.duckdb")).unwrap();
-        let conn = store.lock().unwrap();
-        if !load_fts_extension(&conn) {
-            eprintln!("skipping: DuckDB FTS extension unavailable");
-            return;
+    fn state(chunks: u64, index: Option<u64>, dirty: bool) -> FtsGenerationState {
+        FtsGenerationState {
+            chunks_generation: chunks,
+            index_generation: index,
+            dirty,
+            rebuild_count: 0,
         }
-        conn.execute_batch(
-            "INSERT INTO documents (id, uri, title, content, metadata_json, created_at, \
-               updated_at, layer, kind, status) \
-             VALUES ('d', 'uri://d', 't', 'b', '{}', now(), now(), 'raw', 'document', 'active'); \
-             INSERT INTO chunks (id, document_id, chunk_index, content, embedding_json, \
-               char_start, char_end, created_at, metadata_json, embedding_digest) \
-             SELECT 'c' || lpad(i::VARCHAR, 3, '0'), 'd', i, 'alpha beta ' || i, '[0.1]', \
-               0, 1, now(), '{}', i FROM range(20) t(i);",
-        )
-        .unwrap();
-        reindex(&conn).unwrap();
-        // Same id, different text: invisible to an id diff.
-        conn.execute_batch(
-            "DELETE FROM chunks WHERE id = 'c005'; \
-             INSERT INTO chunks (id, document_id, chunk_index, content, embedding_json, \
-               char_start, char_end, created_at, metadata_json, embedding_digest) \
-             VALUES ('c005', 'd', 5, 'zebra quokka', '[0.1]', 0, 1, now(), '{}', 5);",
-        )
-        .unwrap();
-        mark_fts_needs_rebuild(&conn).unwrap();
-        refresh_fts_if_stale(&conn).unwrap();
-        let hits: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM chunks \
-                 WHERE fts_main_chunks.match_bm25(id, 'quokka') IS NOT NULL",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(hits, 1, "the rebuilt index sees the replaced text");
-        assert_eq!(
-            read_meta(&conn, META_FORCE_REBUILD).unwrap().as_deref(),
-            Some("0")
-        );
-    }
-
-    #[test]
-    fn incremental_bm25_update_matches_a_full_rebuild() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("fts-incremental.duckdb")).unwrap();
-        let conn = store.lock().unwrap();
-        if !load_fts_extension(&conn) {
-            eprintln!("skipping: DuckDB FTS extension unavailable");
-            return;
-        }
-        conn.execute_batch(
-            "INSERT INTO documents (id, uri, title, content, metadata_json, created_at, \
-               updated_at, layer, kind, status) \
-             SELECT 'd' || i, 'uri://' || i, 't', 'b', '{}', now(), now(), 'raw', \
-               'document', 'active' FROM range(8) t(i); \
-             INSERT INTO chunks (id, document_id, chunk_index, content, embedding_json, \
-               char_start, char_end, created_at, metadata_json, embedding_digest) \
-             SELECT 'c' || lpad(i::VARCHAR, 3, '0'), 'd' || (i % 8), i, \
-               'The runner ' || i || ' was running over ' || (i % 7) || ' hills; café-Résumé \
-               jumping jumps word' || (i % 11) || ' and the end', \
-               '[0.1]', 0, 1, now(), '{}', i FROM range(60) t(i);",
-        )
-        .unwrap();
-        reindex(&conn).unwrap();
-        let docid_of = |conn: &Connection, name: &str| -> i64 {
-            conn.query_row(
-                "SELECT docid FROM fts_main_chunks.docs WHERE name = ?",
-                [name],
-                |row| row.get(0),
-            )
-            .unwrap()
-        };
-        let untouched_docid = docid_of(&conn, "c050");
-
-        // A write burst: remove some chunks, add new ones (incl. empty and
-        // stopword-only text and brand-new terms).
-        conn.execute_batch(
-            "DELETE FROM chunks WHERE id IN ('c003', 'c017', 'c044'); \
-             INSERT INTO chunks (id, document_id, chunk_index, content, embedding_json, \
-               char_start, char_end, created_at, metadata_json, embedding_digest) VALUES \
-             ('n1', 'd1', 100, 'Zebras galloping across savannas, runners running', '[0.1]', 0, 1, now(), '{}', 1), \
-             ('n2', 'd2', 101, '', '[0.1]', 0, 1, now(), '{}', 2), \
-             ('n3', 'd3', 102, 'the and of to', '[0.1]', 0, 1, now(), '{}', 3), \
-             ('n4', 'd4', 103, 'hills hills hills 42 café', '[0.1]', 0, 1, now(), '{}', 4);",
-        )
-        .unwrap();
-        mark_fts_dirty(&conn).unwrap();
-        let state = refresh_fts_if_stale(&conn).unwrap();
-        assert_eq!(state.backend, FtsBackend::DuckDbBm25);
-        assert!(!fts_generation_state(&conn).unwrap().dirty);
-        // Patched in place: a full rebuild would renumber after the deletions.
-        assert_eq!(docid_of(&conn, "c050"), untouched_docid);
-        let incremental = bm25_index_view(&conn);
-        let queries = [
-            "running hills",
-            "zebra savanna",
-            "cafe resume",
-            "word3 jumping",
-            "42",
-        ];
-        let incremental_scores: Vec<_> = queries.iter().map(|q| bm25_scores(&conn, q)).collect();
-
-        reindex(&conn).unwrap();
-        let rebuilt = bm25_index_view(&conn);
-        let rebuilt_scores: Vec<_> = queries.iter().map(|q| bm25_scores(&conn, q)).collect();
-
-        assert_eq!(
-            incremental.0, rebuilt.0,
-            "dict terms and document frequencies"
-        );
-        assert_eq!(incremental.1, rebuilt.1, "documents and lengths");
-        assert_eq!(incremental.2 .0, rebuilt.2 .0, "num_docs");
-        assert!((incremental.2 .1 - rebuilt.2 .1).abs() < 1e-9, "avgdl");
-        assert_eq!(incremental.3, rebuilt.3, "postings");
-        assert_eq!(incremental_scores, rebuilt_scores, "BM25 scores");
     }
 
     #[test]
@@ -1436,40 +1938,14 @@ mod tests {
             "blank scope values are ignored"
         );
     }
-    use crate::db::schema;
-    use crate::models::{Chunk, Document};
-    use chrono::Utc;
-    use tempfile::TempDir;
-
-    fn open_store() -> (TempDir, Store) {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("fts.duckdb");
-        let store = Store::open(&path).expect("open");
-        (dir, store)
-    }
-
-    fn state(chunks: u64, index: Option<u64>, dirty: bool) -> FtsGenerationState {
-        FtsGenerationState {
-            chunks_generation: chunks,
-            index_generation: index,
-            dirty,
-            rebuild_count: 0,
-        }
-    }
 
     #[test]
     fn stale_threshold_policy() {
-        // Clean index never reindexes, whatever the threshold.
         assert!(!fts_stale_needs_reindex(&state(10, Some(10), false), 1));
-        // Disabled threshold never reindexes.
         assert!(!fts_stale_needs_reindex(&state(100, Some(0), true), 0));
-        // Gap below threshold: not yet.
         assert!(!fts_stale_needs_reindex(&state(70, Some(10), true), 64));
-        // Gap at threshold: reindex.
         assert!(fts_stale_needs_reindex(&state(74, Some(10), true), 64));
-        // Dirty with no completed index generation always qualifies.
         assert!(fts_stale_needs_reindex(&state(1, None, true), 64));
-        // Saturating gap arithmetic: index ahead of chunks is gap zero.
         assert_eq!(fts_generation_gap(&state(5, Some(9), false)), Some(0));
         assert_eq!(fts_generation_gap(&state(5, None, true)), None);
     }
@@ -1562,227 +2038,7 @@ mod tests {
     }
 
     fn lifecycle(store: &Store) -> FtsGenerationState {
-        let conn = store.lock().unwrap();
-        fts_generation_state(&conn).unwrap()
-    }
-
-    #[test]
-    fn wal_replay_crash_child() {
-        let Some(path) = std::env::var_os("RAG_TEST_FTS_CRASH_DB") else {
-            return;
-        };
-        let path = std::path::PathBuf::from(path);
-        let store = Store::open(&path).unwrap();
-        let extension_available;
-        {
-            let conn = store.lock().unwrap();
-            extension_available = load_fts_extension(&conn);
-            let state = ensure_fts(&conn).unwrap();
-            if extension_available {
-                assert_eq!(state.backend, FtsBackend::DuckDbBm25);
-            }
-        }
-        // Match production startup: the existing FTS schema is already checkpointed.
-        // Replacing only WAL-created objects does not reproduce the catalog bug.
-        store.checkpoint().unwrap();
-        seed_docs(&store);
-        store
-            .upsert_document(&Document {
-                id: "wal-code".into(),
-                uri: "file:///fixture/main.rs".into(),
-                source_file: Some("/fixture/main.rs".into()),
-                content: "fn preserved() {}".into(),
-                ..Default::default()
-            })
-            .unwrap();
-        store.index_code().unwrap();
-        store
-            .analysis_task_set(
-                "wal",
-                &crate::analysis_tasks::TaskSet {
-                    name: Some("preserved".into()),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-        store
-            .analysis_note(
-                "wal",
-                "fixture",
-                &crate::analysis_tasks::Note {
-                    text: "committed before crash".into(),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-        store
-            .analysis_gate(
-                "wal",
-                &crate::gate::Payload {
-                    hook_event_name: "SessionStart".into(),
-                    ..Default::default()
-                },
-                crate::gate::Mode::Warn,
-                &[],
-            )
-            .unwrap();
-        store.calibrate_confidence(&Default::default()).unwrap();
-        FTS_CRASH_ARMED.store(true, std::sync::atomic::Ordering::SeqCst);
-        let backend;
-        let (tables, functions) = {
-            let conn = store.lock().unwrap();
-            backend = reindex(&conn).unwrap().backend.as_str().to_string();
-            if extension_available {
-                assert_eq!(backend, "duckdb_bm25");
-            }
-            let mut stmt=conn.prepare("SELECT table_name FROM information_schema.tables WHERE table_schema='fts_main_chunks' ORDER BY table_name").unwrap();
-            let tables = stmt
-                .query_map([], |r| r.get::<_, String>(0))
-                .unwrap()
-                .collect::<duckdb::Result<Vec<_>>>()
-                .unwrap();
-            let mut stmt=conn.prepare("SELECT function_name,function_type FROM duckdb_functions() WHERE schema_name='fts_main_chunks' ORDER BY function_name").unwrap();
-            let functions = stmt
-                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-                .unwrap()
-                .collect::<duckdb::Result<Vec<_>>>()
-                .unwrap();
-            (tables, functions)
-        };
-        std::fs::write(path.with_extension("ready.tmp"),serde_json::to_string(&serde_json::json!({"phase":"complete","backend":backend,"extension_available":extension_available,"tables":tables,"functions":functions})).unwrap()).unwrap();
-        std::fs::rename(
-            path.with_extension("ready.tmp"),
-            path.with_extension("ready.json"),
-        )
-        .unwrap();
-        // The parent kills this live process. Neither Rust drops nor C++ atexit
-        // handlers may checkpoint away the WAL under test.
-        loop {
-            std::thread::park();
-        }
-    }
-
-    #[test]
-    fn fts_overwrite_wal_replays_after_abrupt_process_exit_without_losing_commits() {
-        for phase in [
-            "dirty",
-            "leaf",
-            "leaves",
-            "schema",
-            "built",
-            "published",
-            "complete",
-        ] {
-            let dir = tempfile::tempdir().unwrap();
-            let path = dir.path().join("crash.duckdb");
-            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "db::fts::tests::wal_replay_crash_child",
-                    "--nocapture",
-                ])
-                .env("RAG_TEST_FTS_CRASH_DB", &path)
-                .env("RAG_TEST_FTS_CRASH_PHASE", phase)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .unwrap();
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-            while !path.with_extension("ready.json").exists() {
-                if child.try_wait().unwrap().is_some() {
-                    let out = child.wait_with_output().unwrap();
-                    panic!(
-                        "crash child exited before readiness: {}",
-                        String::from_utf8_lossy(&out.stderr)
-                    );
-                }
-                if std::time::Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    panic!("crash child readiness timeout");
-                }
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            child.kill().unwrap();
-            let _ = child.wait_with_output().unwrap();
-            let catalog = std::fs::read_to_string(path.with_extension("ready.json")).unwrap();
-            let checkpoint: serde_json::Value = serde_json::from_str(&catalog).unwrap();
-            let store = Store::open(&path)
-                .unwrap_or_else(|e| panic!("WAL replay failed: {e}; catalog={catalog}"));
-            if checkpoint["extension_available"] == true {
-                assert_eq!(checkpoint["phase"], phase);
-                if let Some(expected) = checkpoint["chunks_generation"].as_u64() {
-                    assert_eq!(lifecycle(&store).chunks_generation, expected);
-                }
-                if !matches!(phase, "published" | "complete") {
-                    assert!(lifecycle(&store).dirty);
-                }
-            }
-            assert_eq!(
-                store.get_document("wal-code").unwrap().unwrap().content,
-                "fn preserved() {}"
-            );
-            assert_eq!(
-                store.analysis_notes("wal", &Default::default()).unwrap()["total_matching"],
-                1
-            );
-            assert_eq!(
-                store
-                    .analysis_task_stats("wal", &Default::default())
-                    .unwrap()["gate"]["decisions"],
-                1
-            );
-            assert_eq!(
-                store.calibration_reports(&Default::default()).unwrap()["items"]
-                    .as_array()
-                    .unwrap()
-                    .len(),
-                1
-            );
-            assert_eq!(store.code_snapshot().unwrap().symbols[0].name, "preserved");
-            let hits = search_bm25(&store, "cat", 10, &LexFilters::default()).unwrap();
-            assert!(!hits.is_empty());
-            {
-                let conn = store.lock().unwrap();
-                let mut stmt = conn
-                    .prepare("SELECT embedding_json FROM chunks ORDER BY id")
-                    .unwrap();
-                let values = stmt
-                    .query_map([], |r| r.get::<_, String>(0))
-                    .unwrap()
-                    .collect::<duckdb::Result<Vec<_>>>()
-                    .unwrap();
-                assert_eq!(values.len(), 4);
-                for value in values {
-                    assert_eq!(
-                        serde_json::from_str::<Vec<f32>>(&value).unwrap(),
-                        vec![0.0; 4]
-                    );
-                }
-                if checkpoint["extension_available"] == true {
-                    let direct: Option<f64> = conn
-                        .query_row(
-                            "SELECT MAX(fts_main_chunks.match_bm25(id,'cat')) FROM chunks",
-                            [],
-                            |r| r.get(0),
-                        )
-                        .unwrap();
-                    assert!(
-                        direct.is_some_and(|score| score > 0.0),
-                        "physical BM25 must work, not just its fallback"
-                    );
-                    assert_eq!(
-                        fts_status(&conn).unwrap().unwrap().backend,
-                        FtsBackend::DuckDbBm25
-                    );
-                }
-            }
-            eprintln!("crash recovery exercised {catalog}");
-            if checkpoint["extension_available"] == false {
-                eprintln!("FTS unavailable; only fallback replay exercised");
-                break;
-            }
-        }
+        store.fts_generation_state().unwrap()
     }
 
     #[test]
@@ -1794,32 +2050,34 @@ mod tests {
     }
 
     #[test]
+    fn porter_stemmer_conflates_english_inflections() {
+        assert_eq!(porter_stem("cats"), porter_stem("cat"));
+        assert_eq!(porter_stem("running"), porter_stem("run"));
+        assert_eq!(porter_stem("runners"), porter_stem("runner"));
+        assert_eq!(porter_stem("jumping"), porter_stem("jumps"));
+    }
+
+    #[test]
     fn term_frequency_ranks_relevant_higher() {
         let q = tokenize("cat mammal");
         let a = term_frequency_score(&q, "The domestic cat is a small carnivorous mammal.");
         let b = term_frequency_score(&q, "Dogs are domesticated descendants of the wolf.");
         assert!(a > b, "expected cat/mammal doc higher: {a} vs {b}");
-        assert!((a - 2.0).abs() < 1e-6); // cat + mammal
+        assert!((a - 2.0).abs() < 1e-6);
         assert_eq!(b, 0.0);
     }
 
     #[test]
     fn ensure_and_reindex_are_idempotent() {
-        let conn = Connection::open_in_memory().unwrap();
-        schema::migrate(&conn).unwrap();
-        // empty chunks table is fine for index create
-        let s1 = ensure_fts(&conn).expect("ensure");
-        let s2 = reindex(&conn).expect("reindex");
+        let store = Store::open_in_memory().unwrap();
+        let mut conn = store.write().unwrap();
+        let s1 = ensure_fts(&mut conn).expect("ensure");
+        let s2 = reindex(&mut conn).expect("reindex");
         assert_eq!(s1.backend, s2.backend);
         assert_eq!(s1.stemmer, s2.stemmer);
         let status = fts_status(&conn).unwrap().expect("status");
         assert_eq!(status.backend, s1.backend);
-        match s1.backend {
-            FtsBackend::DuckDbBm25 => assert!(fts_index_present(&conn)),
-            FtsBackend::TermFrequency => {
-                // schema may be absent under fallback
-            }
-        }
+        assert!(fts_index_present(&conn));
     }
 
     #[test]
@@ -1827,8 +2085,8 @@ mod tests {
         let (_dir, store) = open_store();
         seed_docs(&store);
         {
-            let conn = store.lock().unwrap();
-            ensure_fts(&conn).unwrap();
+            let mut conn = store.write().unwrap();
+            ensure_fts(&mut conn).unwrap();
         }
         let initialized = lifecycle(&store);
         assert!(!initialized.dirty);
@@ -1842,32 +2100,24 @@ mod tests {
         let warm = lifecycle(&store);
         assert_eq!(warm.chunks_generation, initialized.chunks_generation);
         assert_eq!(warm.index_generation, initialized.index_generation);
-        assert_eq!(
-            warm.rebuild_count, initialized.rebuild_count,
-            "a clean warm search must not execute create_fts_index"
-        );
+        assert_eq!(warm.rebuild_count, initialized.rebuild_count);
     }
 
     #[test]
     fn reopened_clean_index_searches_without_rebuild() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("fts-reopen.duckdb");
-        let (before, backend) = {
+        let path = dir.path().join("fts-reopen.lin");
+        let before = {
             let store = Store::open(&path).unwrap();
             seed_docs(&store);
-            let backend = {
-                let conn = store.lock().unwrap();
-                ensure_fts(&conn).unwrap().backend
-            };
-            (lifecycle(&store), backend)
+            {
+                let mut conn = store.write().unwrap();
+                ensure_fts(&mut conn).unwrap();
+            }
+            lifecycle(&store)
         };
 
         let reopened = Store::open(&path).unwrap();
-        if backend == FtsBackend::DuckDbBm25 {
-            let conn = reopened.lock().unwrap();
-            let direct = search_duckdb_bm25(&conn, "cat", 10, &LexFilters::default()).unwrap();
-            assert!(!direct.is_empty());
-        }
         let hits = search_bm25(&reopened, "cat", 10, &LexFilters::default()).unwrap();
         assert!(!hits.is_empty());
         let after = lifecycle(&reopened);
@@ -1877,27 +2127,24 @@ mod tests {
 
     #[test]
     fn dirty_term_frequency_backend_advances_without_fts_ddl_retry() {
-        let conn = Connection::open_in_memory().unwrap();
-        schema::migrate(&conn).unwrap();
+        let store = Store::open_in_memory().unwrap();
+        let mut conn = store.write().unwrap();
         let fallback = FtsState {
             backend: FtsBackend::TermFrequency,
             stemmer: DEFAULT_STEMMER.into(),
         };
-        publish_refreshed_state(&conn, &fallback, 0).unwrap();
-        mark_fts_dirty(&conn).unwrap();
+        publish_refreshed_state(&mut conn, &fallback, 0).unwrap();
+        mark_fts_dirty(&mut conn).unwrap();
         let before = fts_generation_state(&conn).unwrap();
         assert!(before.dirty);
         assert!(!fts_index_present(&conn));
 
-        let refreshed = refresh_fts_if_stale(&conn).unwrap();
+        let refreshed = refresh_fts_if_stale(&mut conn).unwrap();
         assert_eq!(refreshed.backend, FtsBackend::TermFrequency);
         let after = fts_generation_state(&conn).unwrap();
         assert!(!after.dirty);
         assert_eq!(after.rebuild_count, before.rebuild_count + 1);
-        assert!(
-            !fts_index_present(&conn),
-            "dirty TF refresh must not retry create_fts_index"
-        );
+        assert!(!fts_index_present(&conn));
     }
 
     #[test]
@@ -1905,8 +2152,8 @@ mod tests {
         let (_dir, store) = open_store();
         seed_docs(&store);
         {
-            let conn = store.lock().unwrap();
-            ensure_fts(&conn).unwrap();
+            let mut conn = store.write().unwrap();
+            ensure_fts(&mut conn).unwrap();
         }
         let before = lifecycle(&store);
 
@@ -1930,8 +2177,8 @@ mod tests {
         assert_eq!(dirty.index_generation, before.index_generation);
 
         {
-            let conn = store.lock().unwrap();
-            refresh_fts_if_stale(&conn).unwrap();
+            let mut conn = store.write().unwrap();
+            refresh_fts_if_stale(&mut conn).unwrap();
         }
         let refreshed = lifecycle(&store);
         assert!(!refreshed.dirty);
@@ -1943,11 +2190,7 @@ mod tests {
 
         let hits = search_bm25(&store, "quokka", 10, &LexFilters::default()).unwrap();
         assert!(hits.iter().any(|hit| hit.chunk_id == "c5"));
-        assert_eq!(
-            lifecycle(&store).rebuild_count,
-            refreshed.rebuild_count,
-            "search after controlled refresh must stay warm"
-        );
+        assert_eq!(lifecycle(&store).rebuild_count, refreshed.rebuild_count);
     }
 
     #[test]
@@ -1955,9 +2198,9 @@ mod tests {
         let (_dir, store) = open_store();
         seed_docs(&store);
         {
-            let conn = store.lock().unwrap();
-            ensure_fts(&conn).unwrap();
-            mark_fts_dirty(&conn).unwrap();
+            let mut conn = store.write().unwrap();
+            ensure_fts(&mut conn).unwrap();
+            mark_fts_dirty(&mut conn).unwrap();
         }
         let before = lifecycle(&store);
         assert!(before.dirty);
@@ -1985,9 +2228,9 @@ mod tests {
         seed_docs(&store);
 
         {
-            let conn = store.lock().unwrap();
-            ensure_fts(&conn).unwrap();
-            reindex(&conn).unwrap();
+            let mut conn = store.write().unwrap();
+            ensure_fts(&mut conn).unwrap();
+            reindex(&mut conn).unwrap();
         }
 
         let hits = search_bm25(&store, "cat mammal", 10, &LexFilters::default()).unwrap();
@@ -2013,9 +2256,9 @@ mod tests {
         let (_dir, store) = open_store();
         seed_docs(&store);
         {
-            let conn = store.lock().unwrap();
-            ensure_fts(&conn).unwrap();
-            reindex(&conn).unwrap();
+            let mut conn = store.write().unwrap();
+            ensure_fts(&mut conn).unwrap();
+            reindex(&mut conn).unwrap();
         }
 
         let by_doc = search_bm25(&store, "cats", 10, &LexFilters::document_id("d1")).unwrap();
@@ -2049,9 +2292,40 @@ mod tests {
 
     #[test]
     fn stemmer_none_ensure_succeeds() {
-        let conn = Connection::open_in_memory().unwrap();
-        schema::migrate(&conn).unwrap();
-        let state = ensure_fts_with_stemmer(&conn, "none").unwrap();
+        let store = Store::open_in_memory().unwrap();
+        let mut conn = store.write().unwrap();
+        let state = ensure_fts_with_stemmer(&mut conn, "none").unwrap();
         assert_eq!(state.stemmer, "none");
+    }
+
+    #[test]
+    fn disk_v2_mmap_bm25_replaces_legacy_v2_bin_and_vacuum_compacts_segments() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("rag.lin");
+        let store = Store::open(&db_path).unwrap();
+        seed_docs(&store);
+
+        // Simulate a stale legacy v2 heap cache file on disk.
+        let legacy_bin = db_path.join("bm25_porter.v2.bin");
+        std::fs::write(&legacy_bin, b"stale-legacy-bm25-heap-blob").unwrap();
+        assert!(legacy_bin.exists());
+
+        assert!(persist_bm25_disk_cache(&store, "porter").unwrap());
+        let mmap_path = db_path.join("bm25_porter.v3.mmap");
+        assert!(mmap_path.exists(), "expected bm25_porter.v3.mmap to be written");
+        assert!(!legacy_bin.exists(), "expected stale bm25_porter.v2.bin to be deleted");
+
+        // Evict handle and verify cold mmap open + BM25 search returns exact matches.
+        evict_bm25_ram_cache(&store);
+        let hits = search_bm25(&store, "feline mammal", 5, &LexFilters::default()).unwrap();
+        assert!(!hits.is_empty());
+        assert_eq!(hits[0].chunk_id, "c1");
+
+        // Delete a document, checkpoint, and verify vacuum_store compacts tombstones cleanly.
+        assert!(store.delete_document("d2").unwrap());
+        let vac = store.vacuum_store().unwrap();
+        assert!(vac.bytes_after.unwrap_or(0) > 0);
+        let stats = store.stats().unwrap();
+        assert_eq!(stats.0, 2);
     }
 }

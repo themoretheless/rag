@@ -1,0 +1,17 @@
+{
+  "itoa": {
+    "docs/qualification/rust-external-negatives-2026-10-26/controlled-itoa-after/report.json": "8fb945e101101858d67ca42a5eb4f5b80df4478a8a0b64c1d3505055cdc4d351",
+    "docs/qualification/rust-external-negatives-2026-10-26/controlled-itoa-after/scored-cases.json": "770ebe69c8d9008bc2b532208e99735632beaa5f6996b09ec516b2563df9e171",
+    "docs/qualification/rust-external-negatives-2026-10-26/controlled-itoa-after/oracle-labels.json": "6b11bb10011692e7616d5700bca2e68acf45f195a07b69e7187f139def297642"
+  },
+  "ryu": {
+    "docs/qualification/rust-external-negatives-2026-10-26/controlled-ryu-after/report.json": "745ce1fa6296f70c9c54590087a92f097ad85b81f18cd781de252494d15b309c",
+    "docs/qualification/rust-external-negatives-2026-10-26/controlled-ryu-after/scored-cases.json": "291d1860522a1ddb1622ce8e9ca28a64d6813a4d38a1697b7a93a5447f2b9b83",
+    "docs/qualification/rust-external-negatives-2026-10-26/controlled-ryu-after/oracle-labels.json": "d8862ad4cb32901001c41ecd8bae29b9ba7fc907fa98542cb8a88b92396b4c30"
+  },
+  "memchr": {
+    "docs/qualification/rust-external-negatives-2026-10-26/controlled-memchr-after/report.json": "4b5a03934e48178e2f980011e248c303d04d225b024e5daa8080b77f5a36450b",
+    "docs/qualification/rust-external-negatives-2026-10-26/controlled-memchr-after/scored-cases.json": "f41fb5ee7052e81418bf2025840cf0eab6305fa2aba59fa39af787220da38780",
+    "docs/qualification/rust-external-negatives-2026-10-26/controlled-memchr-after/oracle-labels.json": "4b15b56ff5f5c44c1fcce9443428650ecf6b8568acbd1241fa9ce62cd502e2a7"
+  }
+}

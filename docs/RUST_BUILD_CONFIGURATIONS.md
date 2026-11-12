@@ -113,3 +113,12 @@ not implement macro expansion, union-layout typing, tuple/enum field projection,
 complete namespace/alias inference or compiler-wide build semantics.
 
 Evidence: [conditional-member qualification](qualification/rust-cfg-members-2026-10-26/README.md).
+
+
+Format 70 treats union declarations as projectable nominal owners. Conditional
+union fields and conditional same-name union owners retain the existing exact
+owner/anchor and three-valued selection rules; unknown or competing alternatives
+cannot publish a unique field type. Manifest-only feature switches reuse raw
+source extraction while rebinding configured union fields. This is declared type
+projection, not active-member/layout/unsafe validation. Evidence:
+[union field qualification](qualification/rust-union-fields-2026-10-26/README.md).

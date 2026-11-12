@@ -492,11 +492,7 @@ mod tests {
         assert!(matches!(stale, Err(AppError::Conflict(_))));
         assert_eq!(store.get_document("doc-1").unwrap().unwrap().revision, 3);
 
-        store
-            .lock()
-            .unwrap()
-            .execute_batch("DROP TABLE ops_log")
-            .unwrap();
+        crate::db::store::ops_log::TEST_FAIL_OPS_LOG_APPEND.with(|f| f.set(true));
         let restored_without_audit = RevisionService::new(&store, &embedder, &config)
             .restore(RestoreRevisionCommand {
                 document_id: document.id.clone(),
@@ -504,6 +500,7 @@ mod tests {
                 if_match_revision: 3,
             })
             .await;
+        crate::db::store::ops_log::TEST_FAIL_OPS_LOG_APPEND.with(|f| f.set(false));
         assert!(
             restored_without_audit.is_err(),
             "wiki restore requires its audit/journal transaction to commit"

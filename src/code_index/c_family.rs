@@ -195,10 +195,8 @@ fn qualify(scope: &str, name: &str) -> String {
 }
 fn storage(node: Node, source: &str, value: &str) -> bool {
     let mut c = node.walk();
-    let found = node
-        .named_children(&mut c)
-        .any(|n| n.kind() == "storage_class_specifier" && text(n, source) == value);
-    found
+    node.named_children(&mut c)
+        .any(|n| n.kind() == "storage_class_specifier" && text(n, source) == value)
 }
 fn guard(node: Node, source: &str, path: &str) -> bool {
     if !header(path)
@@ -1085,6 +1083,7 @@ pub(super) fn resolve(
     found.sort();
     found.dedup();
     CallEdge {
+        context_evidence: None,
         reference: r.clone(),
         resolution: match found.len() {
             0 => "unresolved",

@@ -47,8 +47,8 @@ Relations default to calls plus bound value/type references, including callbacks
 `calls` excludes value references; `all` also includes inheritance/override
 candidates. Ambiguous edge candidates are retained as possible relationships,
 with their original candidate lists and resolution metadata. Project identity
-is checked at both endpoints. Breadth-first traversal keeps one shortest
-discovered witness per test; steps retain relation type, source revision/hash/
+is checked at both endpoints. Breadth-first traversal keeps separate captured lexical trait states per symbol
+and one shortest discovered witness per test; steps retain relation type, source revision/hash/
 location and definition metadata. A directly changed test has a zero-edge
 `changed_test` witness. This is structural dependence, not execution coverage.
 
@@ -87,3 +87,42 @@ remain explicit in the surrounding impact report. Commands for historical
 sources must be run only against that matching source state; no checkout occurs.
 
 Qualification: [native, real MCP and actual suggested-command execution](qualification/affected-tests-2026-10-26/README.md).
+
+PHPUnit declaration and [effective inherited/trait candidates](PHPUNIT_EFFECTIVE_TESTS.md) from the separate
+[entrypoint catalog](PHPUNIT_ENTRYPOINTS.md) now participate in recommendations.
+The common incoming walker tracks `(symbol, captured lexical consumer)` states;
+paths are reconstructed from those exact states, preserving intermediate class
+frames instead of stitching independently chosen symbol witnesses. Alternative
+consumers can reach the same trait symbol before their own tests are found.
+Class/trait frame definitions are returned as `path.trait_context_symbols`, and
+steps carry `source_context`/`target_context`; `complete_to_seed` requires a
+contiguous path ending in a selected root. Runtime context/coverage proof remains
+false. A changed test keeps a zero-step witness.
+
+Intermediate functions do not consume the returned-test limit. The query applies
+that limit after deterministic discovery, reports total tests found in the
+examined graph and retains independent depth/work/state/metadata diagnostics.
+Graph construction, traversal, context rows, candidate membership checks and the
+depth-bound probe share `max_work`; paths support this query's full depth 20.
+Missing required entry context refuses the branch and marks metadata incomplete.
+`traversal_truncated` and `traversal_metadata_incomplete` report walker limits;
+`trait_context_traversal` retains detailed counters. These are examined-graph
+limits, never a claim of complete program discovery.
+
+PHPUnit package loading, runner configuration/version, exhaustive inherited/trait
+test discovery, data providers and runtime coverage remain open. No PHPUnit argv
+is guessed: `command_status=no_qualified_command_candidate` explains an empty
+command list. Existing Rust/Python candidates retain their prior semantics.
+[Qualification](qualification/affected-php-contexts-2026-10-26/README.md).
+
+Effective PHPUnit recommendations retain host/effective-method identity rather
+than deduplicating every invocation by body ID. See the effective-test contract
+for lexical-owner matching, shared bodies, alias identity and frozen history.
+
+[PHPUnit host dependencies](PHPUNIT_HOST_DEPENDENCIES.md) additionally recommend
+captured invocations for changed classes, bases and traits, including alias-only
+changes with unchanged method bodies. They carry explicit non-call associations
+and can be disabled with `include_host_dependencies=false`. Source-identity joins
+for directly selected hosts are independent of graph traversal budget; indirect
+host matching shares the work/depth limits. These witnesses are separate from
+the ordinary calls/references/all selector.

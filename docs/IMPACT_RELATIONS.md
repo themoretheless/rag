@@ -16,9 +16,10 @@ symbol ID can disambiguate identical names/paths across projects.
 Breadth-first traversal retains one shortest discovered witness per symbol,
 excludes selected seeds from the affected list and handles cycles. Incoming edges
 and frontiers use deterministic ordering. The item limit is 1..500; depth is
-1..10. `truncated` reports refused result items; `depth_limited` reports remaining
-unvisited dependencies at the returned frontier. `traversal_complete` refers only
-to exhausting this selected fresh bound-symbol graph within both limits. It does
+1..10. `truncated` reports refused result items or traversal work/state caps;
+`depth_limited` reports compatible unvisited dependencies at the returned frontier.
+`traversal_complete` refers only to exhausting this selected fresh bound-symbol
+graph within its limits and with encountered required context metadata available. It does
 not prove exhaustive program impact. Invalid relation modes return an explicit
 error object, matching the existing reference-mode validation convention.
 
@@ -27,8 +28,9 @@ Freshness/unindexed/parse diagnostics remain visible. `runtime_impact_proven` an
 unresolved names, dynamic dispatch, SQL/table/file targets, indirect ORM/dataflow,
 reference confidence calibration and stated-versus-derived summary modes remain
 outside this traversal. No source body is added to the response. The declared
-read contract changes no stored extraction facts: index format remains 29 and
-database schema remains 25.
+read query remains non-mutating. Captured PHP trait entry/body frames now qualify
+compatible paths: [contract](PHP_TRAIT_PATHS.md). Database schema remains 25;
+extraction versions are recorded by individual qualification reports.
 
 ## Affected-file summary
 
@@ -114,3 +116,11 @@ handler alternatives do not become source owners. Shared symbol nodes provide
 
 SQL identity disambiguation also now includes schema-only candidates before
 source/access filtering, consistently with references and shared symbol inventory.
+
+Captured PHP trait frame matching: [contract](PHP_TRAIT_PATHS.md), [qualification](qualification/php-trait-paths-2026-10-26/README.md).
+
+Current-source SQL table requalification adds real MCP schema-only identity
+checks before path/access filters and reruns trait-context write-impact cases;
+see [evidence](qualification/sql-impact-phpunit-2026-10-26/README.md).
+Known schema identity with zero captured usage does not establish absence of
+runtime effects.

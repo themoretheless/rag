@@ -1,4 +1,4 @@
-//! Consistent DuckDB backup and portable document bundle recovery.
+//! Consistent `lin` backup and portable document bundle recovery.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -13,9 +13,10 @@ use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
 use std::time::SystemTime;
 
 use chrono::{DateTime, Utc};
-use duckdb::params;
 use serde::{Deserialize, Serialize};
 
+use super::lin_engine::{cell_nonempty_string, cell_str, LinReader, LinWriter, RecBuilder};
+use super::rows;
 use super::store::{embedding_identity_fingerprint, set_embedding_manifest_locked};
 use super::Store;
 use crate::error::{AppError, Result};
@@ -206,14 +207,9 @@ mod import;
 mod publish;
 
 pub use self::bundle::*;
+#[cfg(test)]
 use self::import::*;
 pub use self::publish::*;
-
-/// Bundle timestamps through the shared parser; an unreadable value falls back
-/// to now, since an import must not fail on one malformed legacy row.
-fn parse_ts(value: String) -> DateTime<Utc> {
-    crate::util::parse_db_timestamp(&value).unwrap_or_else(Utc::now)
-}
 
 #[cfg(test)]
 mod tests;

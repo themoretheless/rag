@@ -1,0 +1,28 @@
+{
+  "status": "passed",
+  "checks": [
+    "optional_branch_union",
+    "both_arms_kill_old_type",
+    "returned_arm_exclusion",
+    "loop_fixed_point_and_zero_path",
+    "for_zero_path",
+    "NFKC_local_alias",
+    "partial_known_target_not_certain",
+    "imported_inherited_target_dedup",
+    "dead_code_unknown_root_guard",
+    "impact_both_targets",
+    "source_bytes",
+    "project_isolation",
+    "warm_and_full_resolution_equivalence",
+    "capability_scope",
+    "stale_exclusion",
+    "source_sync_join_change"
+  ],
+  "versions": {
+    "index_format": 89,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "production_database_touched": false,
+  "Python_sources_executed": false
+}

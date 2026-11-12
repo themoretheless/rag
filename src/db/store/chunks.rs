@@ -1,6 +1,7 @@
 //! Chunk reads/writes and embedding snapshots.
 
 use super::*;
+use crate::db::lin_engine::{cell_i64, cell_nonempty_string, cell_opt_string, cell_str, cell_string, cell_vec_f32};
 
 /// Chunk text plus section metadata, without the embedding vector.
 #[derive(Debug, Clone)]
@@ -14,14 +15,11 @@ pub(crate) struct ChunkBody {
 impl Store {
     /// List chunks for a document ordered by `chunk_index`.
     pub fn list_chunks_for_document(&self, doc_id: &str) -> Result<Vec<Chunk>> {
-        let conn = self.lock()?;
-        list_chunks_for_document_locked(&conn, doc_id)
+        let r = self.read()?;
+        list_chunks_for_document_locked(&r, doc_id)
     }
 
     /// Chunk bodies of a document in `chunk_index` order, without embeddings.
-    ///
-    /// Search context expansion needs text and section metadata only; the
-    /// embedding JSON is the bulk of a chunk row and is never parsed here.
     pub(crate) fn list_chunk_bodies_for_document(&self, doc_id: &str) -> Result<Vec<ChunkBody>> {
         self.list_chunk_bodies_in_range(doc_id, i32::MIN, i32::MAX)
     }
@@ -33,28 +31,35 @@ impl Store {
         low: i32,
         high: i32,
     ) -> Result<Vec<ChunkBody>> {
-        let conn = self.lock()?;
-        let mut stmt = conn.prepare_cached(
-            r#"
-            SELECT id, chunk_index, content, metadata_json
-            FROM chunks
-            WHERE document_id = ? AND chunk_index BETWEEN ? AND ?
-            ORDER BY chunk_index ASC, id ASC
-            "#,
+        let r = self.read()?;
+        let mut bodies: Vec<ChunkBody> = Vec::new();
+        r.for_each_by_eq_projected(
+            "chunks",
+            "document_id",
+            doc_id,
+            Some(&["id", "chunk_index", "content", "metadata_json"]),
+            |row| {
+                let idx = cell_i64(row, "chunk_index", 0) as i32;
+                if idx >= low && idx <= high {
+                    bodies.push(ChunkBody {
+                        id: cell_string(row, "id"),
+                        chunk_index: idx,
+                        content: cell_string(row, "content"),
+                        metadata_json: cell_opt_string(row, "metadata_json").unwrap_or_default(),
+                    });
+                }
+                Ok(true)
+            },
         )?;
-        crate::db::rows::query_vec(&mut stmt, params![doc_id, low, high], |row| {
-            Ok(ChunkBody {
-                id: row.get(0)?,
-                chunk_index: row.get(1)?,
-                content: row.get(2)?,
-                metadata_json: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-            })
-        })
+        bodies.sort_by(|a, b| {
+            a.chunk_index
+                .cmp(&b.chunk_index)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        Ok(bodies)
     }
 
-    /// Stored vector for each distinct chunk text of `document_ids`, keyed by
-    /// the text: a re-ingest reuses them for chunks whose text is unchanged
-    /// (the embedding input is the chunk text alone under one manifest).
+    /// Stored vector for each distinct chunk text of `document_ids`, keyed by the text.
     pub(crate) fn chunk_vectors_by_content(
         &self,
         document_ids: &[&str],
@@ -63,50 +68,52 @@ impl Store {
         if document_ids.is_empty() {
             return Ok(out);
         }
-        let placeholders = vec!["?"; document_ids.len()].join(",");
-        let conn = self.lock()?;
-        let mut stmt = conn.prepare(&format!(
-            "SELECT content, embedding_json FROM chunks WHERE document_id IN ({placeholders})"
-        ))?;
-        crate::db::rows::for_each_row(
-            &mut stmt,
-            duckdb::params_from_iter(document_ids.iter()),
-            |row| {
-                let content: String = row.get(0)?;
-                if let std::collections::hash_map::Entry::Vacant(slot) = out.entry(content) {
-                    let raw: String = row.get(1)?;
-                    slot.insert(serde_json::from_str::<Vec<f32>>(&raw)?);
-                }
-                Ok(())
-            },
-        )?;
+        let r = self.read()?;
+        for &doc_id in document_ids {
+            r.for_each_by_eq_projected(
+                "chunks",
+                "document_id",
+                doc_id,
+                Some(&["content", "embedding"]),
+                |row| {
+                    let content = cell_string(row, "content");
+                    if let std::collections::hash_map::Entry::Vacant(slot) = out.entry(content) {
+                        let vec = cell_vec_f32(row, "embedding");
+                        if !vec.is_empty() {
+                            slot.insert(vec);
+                        }
+                    }
+                    Ok(true)
+                },
+            )?;
+        }
         Ok(out)
     }
 
-    /// `metadata_json` for each of `chunk_ids` that exists, in one query.
+    /// `metadata_json` for each of `chunk_ids` that exists, in one read guard.
     pub(crate) fn chunk_metadata_by_ids(
         &self,
         chunk_ids: &[&str],
     ) -> Result<std::collections::HashMap<String, String>> {
+        let mut out = std::collections::HashMap::with_capacity(chunk_ids.len());
         if chunk_ids.is_empty() {
-            return Ok(std::collections::HashMap::new());
+            return Ok(out);
         }
-        let placeholders = vec!["?"; chunk_ids.len()].join(",");
-        let conn = self.lock()?;
-        let mut stmt = conn.prepare(&format!(
-            "SELECT id, metadata_json FROM chunks WHERE id IN ({placeholders})"
-        ))?;
-        let rows = crate::db::rows::query_vec(
-            &mut stmt,
-            duckdb::params_from_iter(chunk_ids.iter()),
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, Option<String>>(1)?.unwrap_or_default(),
-                ))
-            },
-        )?;
-        Ok(rows.into_iter().collect())
+        let r = self.read()?;
+        for &id in chunk_ids {
+            let maybe_row = if let Some(eng) = r.disk_v2() {
+                eng.get_projected_by_id("chunks", id, &["metadata_json"])?
+            } else {
+                r.get_by_id("chunks", id)?
+            };
+            if let Some(row) = maybe_row {
+                out.insert(
+                    id.to_string(),
+                    cell_opt_string(&row, "metadata_json").unwrap_or_default(),
+                );
+            }
+        }
+        Ok(out)
     }
 
     /// Load one representative vector for at most `limit` deterministic
@@ -121,79 +128,95 @@ impl Store {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let active_clause = if active_only {
-            "AND COALESCE(d.status, 'active') NOT IN ('archived', 'tombstone')"
-        } else {
-            ""
-        };
-        let wing_clause = if require_wing {
-            "AND d.wing IS NOT NULL AND TRIM(d.wing) <> ''"
-        } else {
-            ""
-        };
-        let layer_clause = if exclude_system_layers {
-            "AND COALESCE(d.layer, '') NOT IN ('schema', 'index', 'log')"
-        } else {
-            ""
-        };
-        let sql = format!(
-            r#"
-            WITH candidates AS (
-                SELECT d.id, d.title, d.wing, d.room
-                FROM documents d
-                WHERE EXISTS (
-                    SELECT 1 FROM chunks candidate_chunk
-                    WHERE candidate_chunk.document_id = d.id
-                )
-                {active_clause}
-                {wing_clause}
-                {layer_clause}
-                ORDER BY d.id ASC
-                LIMIT ?
-            )
-            -- Pick each candidate's first chunk from narrow columns, then
-            -- read only those chunks' embeddings (measured 2x faster than a
-            -- correlated ORDER BY ... LIMIT 1 per document).
-            , firsts AS (
-                SELECT c.document_id,
-                       arg_min(c.id, {{'chunk_index': c.chunk_index, 'id': c.id}}) AS chunk_id
-                FROM chunks c
-                WHERE c.document_id IN (SELECT id FROM candidates)
-                GROUP BY c.document_id
-            )
-            SELECT d.id, d.title, d.wing, d.room, c.embedding_json
-            FROM candidates d
-            JOIN firsts f ON f.document_id = d.id
-            JOIN chunks c ON c.id = f.chunk_id
-            ORDER BY d.id ASC
-            "#
-        );
-        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        let conn = self.lock()?;
-        let mut statement = conn.prepare(&sql)?;
-        let mut rows = statement.query(params![limit])?;
-        let mut samples = Vec::new();
-        crate::db::rows::visit_rows(&mut rows, |row| {
-            let document_id: String = row.get(0)?;
-            let raw: String = row.get(4)?;
-            let embedding = serde_json::from_str(&raw).map_err(|error| {
-                AppError::db(format!(
-                    "invalid representative embedding JSON for document {document_id}: {error}"
-                ))
-            })?;
-            samples.push(DocumentEmbeddingSample {
-                document_id,
-                title: row.get(1)?,
-                wing: row.get(2)?,
-                room: row.get(3)?,
-                embedding,
-            });
-            Ok(())
+        let r = self.read()?;
+
+        // Gather documents that have at least one chunk
+        let mut docs_with_chunks = std::collections::HashSet::new();
+        r.scan_each_projected("chunks", &["document_id"], |row| {
+            if let Some(doc_id) = cell_str(row, "document_id") {
+                docs_with_chunks.insert(doc_id.to_string());
+            }
+            Ok(true)
         })?;
+
+        let mut candidates: Vec<(String, String, Option<String>, Option<String>)> = Vec::new();
+        r.scan_each_projected(
+            "documents",
+            &["id", "title", "status", "wing", "room", "layer"],
+            |row| {
+                let Some(id) = cell_str(row, "id") else {
+                    return Ok(true);
+                };
+                if !docs_with_chunks.contains(id) {
+                    return Ok(true);
+                }
+                if active_only {
+                    let status =
+                        cell_nonempty_string(row, "status").unwrap_or_else(|| "active".into());
+                    if status == "archived" || status == "tombstone" {
+                        return Ok(true);
+                    }
+                }
+                let wing = cell_opt_string(row, "wing");
+                if require_wing && wing.as_deref().map(str::trim).unwrap_or("").is_empty() {
+                    return Ok(true);
+                }
+                if exclude_system_layers {
+                    let layer = cell_str(row, "layer").unwrap_or("");
+                    if matches!(layer, "schema" | "index" | "log") {
+                        return Ok(true);
+                    }
+                }
+                candidates.push((
+                    id.to_string(),
+                    cell_string(row, "title"),
+                    wing,
+                    cell_opt_string(row, "room"),
+                ));
+                Ok(true)
+            },
+        )?;
+
+        candidates.sort_by(|a, b| a.0.cmp(&b.0));
+        candidates.truncate(limit);
+
+        let mut samples = Vec::with_capacity(candidates.len());
+        for (document_id, title, wing, room) in candidates {
+            let mut best_row: Option<lin::Row> = None;
+            r.for_each_by_eq_projected(
+                "chunks",
+                "document_id",
+                document_id.as_str(),
+                Some(&["id", "chunk_index", "embedding"]),
+                |row| {
+                    let replace = match &best_row {
+                        None => true,
+                        Some(prev) => {
+                            (cell_i64(row, "chunk_index", 0), cell_str(row, "id"))
+                                < (cell_i64(prev, "chunk_index", 0), cell_str(prev, "id"))
+                        }
+                    };
+                    if replace {
+                        best_row = Some(row.clone());
+                    }
+                    Ok(true)
+                },
+            )?;
+            if let Some(first_row) = best_row {
+                let embedding = cell_vec_f32(&first_row, "embedding");
+                samples.push(DocumentEmbeddingSample {
+                    document_id,
+                    title,
+                    wing,
+                    room,
+                    embedding,
+                });
+            }
+        }
         Ok(samples)
     }
 
-    /// First-chunk embedding of each of `document_ids` that has chunks, in one query.
+    /// First-chunk embedding of each of `document_ids` that has chunks.
     pub(crate) fn first_chunk_embeddings(
         &self,
         document_ids: &[&str],
@@ -202,52 +225,44 @@ impl Store {
         if document_ids.is_empty() {
             return Ok(out);
         }
-        let placeholders = vec!["?"; document_ids.len()].join(",");
-        let conn = self.lock()?;
-        let mut stmt = conn.prepare(&format!(
-            r#"
-            WITH firsts AS (
-                SELECT document_id,
-                       arg_min(id, {{'chunk_index': chunk_index, 'id': id}}) AS chunk_id
-                FROM chunks
-                WHERE document_id IN ({placeholders})
-                GROUP BY document_id
-            )
-            SELECT f.document_id, c.embedding_json
-            FROM firsts f
-            JOIN chunks c ON c.id = f.chunk_id
-            "#
-        ))?;
-        crate::db::rows::for_each_row(
-            &mut stmt,
-            duckdb::params_from_iter(document_ids.iter()),
-            |row| {
-                let document_id: String = row.get(0)?;
-                let raw: String = row.get(1)?;
-                let embedding = serde_json::from_str(&raw).map_err(|error| {
-                    AppError::db(format!(
-                        "invalid representative embedding JSON for document {document_id}: {error}"
-                    ))
-                })?;
-                out.insert(document_id, embedding);
-                Ok(())
-            },
-        )?;
+        let r = self.read()?;
+        for &doc_id in document_ids {
+            let mut best_row: Option<lin::Row> = None;
+            r.for_each_by_eq_projected(
+                "chunks",
+                "document_id",
+                doc_id,
+                Some(&["id", "chunk_index", "embedding"]),
+                |row| {
+                    let replace = match &best_row {
+                        None => true,
+                        Some(prev) => {
+                            (cell_i64(row, "chunk_index", 0), cell_str(row, "id"))
+                                < (cell_i64(prev, "chunk_index", 0), cell_str(prev, "id"))
+                        }
+                    };
+                    if replace {
+                        best_row = Some(row.clone());
+                    }
+                    Ok(true)
+                },
+            )?;
+            if let Some(first_row) = best_row {
+                out.insert(doc_id.to_string(), cell_vec_f32(&first_row, "embedding"));
+            }
+        }
         Ok(out)
     }
 
     /// Load every chunk with its embedding (for in-process vector search).
     pub fn all_chunks_with_embeddings(&self) -> Result<Vec<Chunk>> {
-        let conn = self.lock()?;
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT id, document_id, chunk_index, content, embedding_json, char_start, char_end, metadata_json
-            FROM chunks
-            ORDER BY document_id ASC, chunk_index ASC
-            "#,
-        )?;
-
-        let out = crate::db::rows::query_vec(&mut stmt, [], rows::chunk)?;
+        let r = self.read()?;
+        let mut out = r.filter_map_rows("chunks", |row| Ok(Some(rows::chunk(row)?)))?;
+        out.sort_by(|a, b| {
+            a.document_id
+                .cmp(&b.document_id)
+                .then_with(|| a.chunk_index.cmp(&b.chunk_index))
+        });
         Ok(out)
     }
 
@@ -256,27 +271,13 @@ impl Store {
         let embedding_json = embedding_json(chunks)?;
         self.with_tx(|tx| {
             crate::db::fts::mark_chunks_changed_for(tx, &[document_id])?;
-            tx.execute(
-                "DELETE FROM chunks WHERE document_id = ?",
-                params![document_id],
-            )?;
+            tx.delete_where("chunks", lin::query::pred::eq("document_id", document_id))?;
             insert_chunks_locked(tx, chunks, &embedding_json)?;
             Ok(())
         })
     }
 
     /// Atomically replace only the embeddings of an unchanged chunk set.
-    ///
-    /// `expected_chunks` is the snapshot embedded by the caller outside the
-    /// database lock. Both the document revision and every persisted chunk
-    /// field (including the prior vector) form the CAS boundary, so a concurrent
-    /// content write or re-embed cannot be overwritten. Chunk ids, text,
-    /// offsets, metadata, timestamps, and document revision are preserved.
-    ///
-    /// When supplied, `manifest` commits in the same transaction as the new
-    /// vectors. The chunk generation advances to invalidate vector snapshots;
-    /// a clean FTS generation advances with it because indexed text did not
-    /// change, while an already-dirty FTS stays dirty.
     pub(crate) fn update_chunk_embeddings_atomic(
         &self,
         document_id: &str,
@@ -368,19 +369,10 @@ impl Store {
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         self.with_tx(|tx| {
-            let current_revision = match tx.query_row(
-                "SELECT COALESCE(revision, 1) FROM documents WHERE id = ?",
-                params![document_id],
-                |row| row.get::<_, i64>(0),
-            ) {
-                Ok(revision) => revision,
-                Err(duckdb::Error::QueryReturnedNoRows) => {
-                    return Err(AppError::not_found(format!(
-                        "document not found: {document_id}"
-                    )))
-                }
-                Err(error) => return Err(error.into()),
-            };
+            let doc_row = tx.get_by_id("documents", document_id)?.ok_or_else(|| {
+                AppError::not_found(format!("document not found: {document_id}"))
+            })?;
+            let current_revision = cell_i64(&doc_row, "revision", 1).max(1);
             if current_revision != if_match_revision {
                 return Err(AppError::conflict(format!(
                     "etag mismatch for document {document_id}: expected revision {} ({}), current revision {} ({})",
@@ -398,35 +390,57 @@ impl Store {
                 )));
             }
 
-            // A migration marker (or replacement manifest) becomes part of the
-            // transaction before the first vector write. The transaction boundary
-            // keeps it invisible until the vectors commit and rolls it back on any
-            // later failure.
             if let Some(manifest) = manifest {
                 set_embedding_manifest_locked(tx, manifest)?;
             }
             if !expected_chunks.is_empty() {
                 crate::db::fts::mark_embeddings_changed_for(tx, Some(&[document_id]))?;
-                let mut stmt = tx.prepare(
-                    "UPDATE chunks SET embedding_json = ?, embedding_digest = ? WHERE id = ?",
-                )?;
-                for (index, (chunk, embedding_json)) in
-                    expected_chunks.iter().zip(&embedding_json).enumerate()
+                let bridge = tx.bridge_embedder().clone();
+                for (index, ((chunk, new_vec), json)) in expected_chunks
+                    .iter()
+                    .zip(embeddings)
+                    .zip(&embedding_json)
+                    .enumerate()
                 {
-                    let digest = super::embedding_digest(embedding_json);
-                    let updated = stmt.execute(params![embedding_json, digest, chunk.id])?;
-                    if updated != 1 {
-                        return Err(AppError::conflict(format!(
+                    let existing_row = tx.get_by_id("chunks", &chunk.id)?.ok_or_else(|| {
+                        AppError::conflict(format!(
                             "chunk {} changed while re-embedding document {document_id}",
                             chunk.id
-                        )));
+                        ))
+                    })?;
+                    let created_at = cell_opt_string(&existing_row, "created_at")
+                        .unwrap_or_else(|| format_ts(Utc::now()));
+                    let content_hash_val = cell_opt_string(&existing_row, "content_hash");
+                    let parent_chunk_id = cell_opt_string(&existing_row, "parent_chunk_id")
+                        .or_else(|| extract_parent_chunk_id(&chunk.metadata_json));
+                    let digest = super::embedding_digest(json);
+
+                    tx.delete_by_id("chunks", &chunk.id)?;
+                    let has_vec = !new_vec.is_empty();
+                    if has_vec {
+                        bridge.stage(chunk.id.clone(), Arc::from(new_vec.as_slice()));
                     }
+                    tx.insert_one(
+                        "chunks",
+                        RecBuilder::new()
+                            .str("id", &chunk.id)
+                            .str("document_id", &chunk.document_id)
+                            .i64("chunk_index", i64::from(chunk.chunk_index))
+                            .str("content", &chunk.content)
+                            .opt_str("snippet", has_vec.then_some("1"))
+                            .i64("char_start", i64::from(chunk.char_start))
+                            .i64("char_end", i64::from(chunk.char_end))
+                            .str("created_at", created_at)
+                            .opt_string("content_hash", &content_hash_val)
+                            .str("metadata_json", &chunk.metadata_json)
+                            .i64("embedding_digest", digest)
+                            .opt_string("parent_chunk_id", &parent_chunk_id)
+                            .build(),
+                    )?;
                     after_chunk_update(index + 1)?;
                 }
             }
             Ok(expected_chunks.len())
         })
     }
-
-    // --- Karpathy wiki: ops_log + wiki_index + layer helpers ---
 }

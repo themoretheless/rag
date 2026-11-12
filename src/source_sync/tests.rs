@@ -4,6 +4,7 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 
 use super::*;
+use crate::db::lin_engine::LinWriter;
 use crate::embeddings::MockEmbedder;
 use crate::error::Result;
 
@@ -585,8 +586,8 @@ async fn cancellation_between_commits_persists_exactly_the_sorted_prefix() {
     let store = Store::open(&config.db_path).unwrap();
     store.ensure_fts(&config.fts_stemmer).unwrap();
     let generation_before = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     let calls = Arc::new(Mutex::new(Vec::new()));
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(RecordingEmbedder {
@@ -628,8 +629,8 @@ async fn cancellation_between_commits_persists_exactly_the_sorted_prefix() {
     assert_eq!(store.list_documents().unwrap()[0].title, "a.md");
     assert_eq!(calls.lock().unwrap().len(), 1);
     let generation_after_cancel = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert!(generation_after_cancel.dirty);
     assert_eq!(
@@ -667,8 +668,8 @@ async fn cancellation_between_commits_persists_exactly_the_sorted_prefix() {
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].document_title, "a.md");
     let generation_after_search = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert!(!generation_after_search.dirty);
     assert_eq!(
@@ -881,8 +882,8 @@ async fn completed_sync_prepares_fts_before_the_first_user_search() {
     let service = SourceSyncService::new(&store, &embedder, &config);
     store.ensure_fts(&config.fts_stemmer).unwrap();
     let generation_state = || {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     let search = |query: &str| {
         crate::db::search::search(
@@ -1042,8 +1043,8 @@ async fn terminal_fts_failure_preserves_committed_sync_report_and_dirty_fallback
         .unwrap()
         .contains_key(&canonical_source));
     let generation = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert!(generation.dirty, "next lexical read must retry FTS");
     assert!(store
@@ -1085,8 +1086,8 @@ async fn completed_sync_with_file_error_still_prepares_fts() {
     assert_eq!(initial.added.len(), 1);
     assert!(initial.errors.is_empty());
     let generation_before = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
 
     std::fs::write(&source, "needle replacement").unwrap();
@@ -1111,8 +1112,8 @@ async fn completed_sync_with_file_error_still_prepares_fts() {
     );
     assert!(report.errors[0].error.contains("exceeds max_file_bytes"));
     let generation_after_sync = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert!(!generation_after_sync.dirty);
     assert_eq!(
@@ -1143,8 +1144,8 @@ async fn completed_sync_with_file_error_still_prepares_fts() {
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].document_title, "README.md");
     let generation_after_search = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert_eq!(generation_after_search, generation_after_sync);
 }
@@ -1690,7 +1691,7 @@ async fn html_original_survives_style_only_sync_and_repairs_missing_or_corrupt_b
     assert!(!doc.content.contains("color:red"));
     assert!(!doc.metadata_json.contains("code_source_text"));
     assert_eq!(
-        crate::code_index::source::read(&store.lock().unwrap(), &doc.content, &doc.metadata_json)
+        crate::code_index::source::read(&*store.read().unwrap(), &doc.content, &doc.metadata_json)
             .unwrap(),
         first
     );
@@ -1702,7 +1703,7 @@ async fn html_original_survives_style_only_sync_and_repairs_missing_or_corrupt_b
     assert!(updated.revision > doc.revision);
     assert_eq!(
         crate::code_index::source::read(
-            &store.lock().unwrap(),
+            &*store.read().unwrap(),
             &updated.content,
             &updated.metadata_json
         )
@@ -1712,29 +1713,26 @@ async fn html_original_survives_style_only_sync_and_repairs_missing_or_corrupt_b
     for corrupt in [false, true] {
         let hash = crate::util::content_hash(&second);
         if corrupt {
-            store
-                .lock()
-                .unwrap()
-                .execute(
-                    "UPDATE code_index_source_blobs SET content='broken' WHERE content_hash=?",
-                    [&hash],
-                )
-                .unwrap();
+            let mut w = store.write().unwrap();
+            w.upsert_by_id(
+                "code_index_source_blobs",
+                &hash,
+                crate::db::lin_engine::RecBuilder::new()
+                    .id(&hash)
+                    .str("content_hash", &hash)
+                    .str("content", "broken")
+                    .build(),
+            )
+            .unwrap();
         } else {
-            store
-                .lock()
-                .unwrap()
-                .execute(
-                    "DELETE FROM code_index_source_blobs WHERE content_hash=?",
-                    [&hash],
-                )
-                .unwrap();
+            let mut w = store.write().unwrap();
+            w.delete_by_id("code_index_source_blobs", &hash).unwrap();
         }
         let report = service.sync(command.clone()).await.unwrap();
         assert!(report.errors.is_empty(), "{report:?}");
         assert_eq!(
             crate::code_index::source::read(
-                &store.lock().unwrap(),
+                &*store.read().unwrap(),
                 &updated.content,
                 &updated.metadata_json
             )
@@ -1760,9 +1758,7 @@ async fn source_sync_code_index_failure_retains_committed_sources_and_structured
     let store = Store::open(&config.db_path).unwrap();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
     store
-        .lock()
-        .unwrap()
-        .execute_batch("DROP TABLE code_index_documents")
+        .drop_collection_for_test("code_index_documents")
         .unwrap();
     let report = SourceSyncService::new(&store, &embedder, &config)
         .sync(SourceSyncCommand::new(root.path().to_path_buf()))

@@ -24,10 +24,56 @@ fn sample_doc(id: &str, uri: &str) -> Document {
 #[test]
 fn prune_orphans_removes_edges_exposed_by_node_deletion_in_one_pass() {
     let store = open_temp();
+    let now = format_ts(Utc::now());
     {
-        let conn = store.lock().unwrap();
-        conn.execute("INSERT INTO graph_nodes (id, uri, label, kind, document_id, resolved, created_at, updated_at) VALUES ('lost', 'doc://lost', 'Lost', 'document', 'missing', true, current_timestamp, current_timestamp), ('kept', 'tag://kept', 'Kept', 'tag', NULL, true, current_timestamp, current_timestamp)", []).unwrap();
-        conn.execute("INSERT INTO graph_edges (id, source_id, target_id, rel_type, weight, created_at) VALUES ('edge', 'lost', 'kept', 'related', 1.0, current_timestamp)", []).unwrap();
+        let mut w = store.write().unwrap();
+        w.upsert_by_id(
+            "graph_nodes",
+            "lost",
+            RecBuilder::new()
+                .str("id", "lost")
+                .str("uri", "doc://lost")
+                .str("label", "Lost")
+                .str("label_key", "lost")
+                .str("kind", "document")
+                .str("document_id", "missing")
+                .bool("resolved", true)
+                .str("metadata_json", "{}")
+                .str("created_at", &now)
+                .str("updated_at", &now)
+                .build(),
+        )
+        .unwrap();
+        w.upsert_by_id(
+            "graph_nodes",
+            "kept",
+            RecBuilder::new()
+                .str("id", "kept")
+                .str("uri", "tag://kept")
+                .str("label", "Kept")
+                .str("label_key", "kept")
+                .str("kind", "tag")
+                .bool("resolved", true)
+                .str("metadata_json", "{}")
+                .str("created_at", &now)
+                .str("updated_at", &now)
+                .build(),
+        )
+        .unwrap();
+        w.upsert_by_id(
+            "graph_edges",
+            "edge",
+            RecBuilder::new()
+                .str("id", "edge")
+                .str("source_id", "lost")
+                .str("target_id", "kept")
+                .str("rel_type", "related")
+                .f64("weight", 1.0)
+                .str("origin", "explicit")
+                .str("created_at", &now)
+                .build(),
+        )
+        .unwrap();
     }
     let before = store.integrity_counts().unwrap();
     assert_eq!((before.2, before.3), (1, 0));
@@ -41,26 +87,41 @@ fn prune_orphans_removes_edges_exposed_by_node_deletion_in_one_pass() {
 #[test]
 fn prune_orphans_failure_rolls_back_and_releases_the_connection() {
     let store = open_temp();
+    let now = format_ts(Utc::now());
     {
-        let conn = store.lock().unwrap();
-        conn.execute("INSERT INTO graph_nodes (id, uri, label, kind, document_id, resolved, created_at, updated_at) VALUES ('lost', 'doc://lost', 'Lost', 'document', 'missing', true, current_timestamp, current_timestamp)", []).unwrap();
+        let mut w = store.write().unwrap();
+        w.upsert_by_id(
+            "graph_nodes",
+            "lost",
+            RecBuilder::new()
+                .str("id", "lost")
+                .str("uri", "doc://lost")
+                .str("label", "Lost")
+                .str("label_key", "lost")
+                .str("kind", "document")
+                .str("document_id", "missing")
+                .bool("resolved", true)
+                .str("metadata_json", "{}")
+                .str("created_at", &now)
+                .str("updated_at", &now)
+                .build(),
+        )
+        .unwrap();
     }
     // Fail after the graph-node delete has already run in the same unit of work.
     PRUNE_ORPHANS_FAIL_AFTER_NODES.with(|flag| flag.set(true));
     let result = store.prune_orphans(false);
     PRUNE_ORPHANS_FAIL_AFTER_NODES.with(|flag| flag.set(false));
     assert!(result.is_err());
-    let conn = store.lock().unwrap();
-    let lost: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM graph_nodes WHERE id = 'lost'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(lost, 1, "partial prune must roll back");
-    conn.execute_batch("BEGIN TRANSACTION; COMMIT;")
-        .expect("connection must not be left inside an open transaction");
+    let r = store.read().unwrap();
+    assert!(
+        r.get_by_id("graph_nodes", "lost").unwrap().is_some(),
+        "partial prune must roll back"
+    );
+    drop(r);
+    let mut w = store.write().unwrap();
+    let tx = w.begin_tx().expect("store must not be left locked");
+    tx.commit().unwrap();
 }
 
 #[test]
@@ -153,8 +214,10 @@ fn read_only_open_supports_queries_rejects_writes_and_preserves_backup_bytes() {
     writer
         .upsert_document(&sample_doc("kept", "recovery://kept"))
         .expect("seed source");
+    writer
+        .backup_database(&backup, false, true)
+        .expect("export portable backup");
     drop(writer);
-    std::fs::copy(&source, &backup).expect("copy backup");
     let bytes_before = std::fs::read(&backup).expect("backup bytes");
     let modified_before = std::fs::metadata(&backup)
         .expect("backup metadata")
@@ -197,17 +260,28 @@ fn read_only_open_supports_queries_rejects_writes_and_preserves_backup_bytes() {
 #[test]
 fn read_only_open_rejects_old_schema_without_migrating_it() {
     let root = tempfile::tempdir().expect("tempdir");
+    let old_dir = root.path().join("old-dir.lin");
     let old = root.path().join("old.duckdb");
-    drop(Store::open(&old).expect("create current DB"));
-    let conn = Connection::open(&old).expect("open old fixture for setup");
-    conn.execute("DELETE FROM schema_version", [])
-        .expect("remove current version");
-    conn.execute(
-            "INSERT INTO schema_version (version, applied_at, note) VALUES (?, CURRENT_TIMESTAMP, 'old fixture')",
-            params![schema::SCHEMA_VERSION - 1],
+    let store = Store::open(&old_dir).expect("create current DB");
+    {
+        let mut w = store.write().expect("open old fixture for setup");
+        w.delete_where("schema_version", crate::db::lin_engine::pred_all())
+            .expect("remove current version");
+        let old_ver = i64::from(schema::SCHEMA_VERSION - 1);
+        w.insert_one(
+            "schema_version",
+            RecBuilder::new()
+                .id(old_ver.to_string())
+                .i64("version", old_ver)
+                .str("applied_at", format_ts(Utc::now()))
+                .str("note", "old fixture")
+                .build(),
         )
         .expect("record old version");
-    drop(conn);
+        let snap = w.capture_portable_snapshot().expect("capture old snapshot");
+        lin::persist::write_backup(&old, &snap).expect("write old backup file");
+    }
+    drop(store);
     let bytes_before = std::fs::read(&old).expect("old DB bytes");
 
     let error = match Store::open_read_only(&old) {
@@ -314,8 +388,8 @@ fn graph_label_refresh_keeps_label_key_in_sync() {
     doc.title = "  Renamed   TITLE ".into();
     let key = crate::graph::normalize::label_key(&doc.title);
     {
-        let conn = store.lock().unwrap();
-        refresh_document_graph_label_locked(&conn, &doc).unwrap();
+        let mut w = store.write().unwrap();
+        refresh_document_graph_label_locked(&mut *w, &doc).unwrap();
     }
 
     let node = store.find_node_by_id("n1").unwrap().expect("node");
@@ -457,8 +531,8 @@ fn atomic_document_write_rolls_back_document_chunks_and_graph_on_graph_fault() {
         .expect("initial atomic write");
     assert_eq!(initial.revision, 1);
     let generation_after_initial = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::chunks_generation(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::chunks_generation(&*r).unwrap()
     };
     assert_eq!(generation_after_initial, 1);
     let node_id = initial.node_id.expect("document node");
@@ -472,14 +546,7 @@ fn atomic_document_write_rolls_back_document_chunks_and_graph_on_graph_fault() {
 
     // The unique key is a test-only fault injector: the rebuilt graph gets
     // as far as its second identical edge, after document/chunk mutations.
-    store
-        .lock()
-        .unwrap()
-        .execute(
-            "CREATE UNIQUE INDEX rollback_edge_key ON graph_edges(source_id, target_id, rel_type)",
-            [],
-        )
-        .expect("fault index");
+    store.set_fail_derived_edge_duplicate_for_test(true);
 
     let mut updated = original.clone();
     updated.title = "Updated title".into();
@@ -496,13 +563,13 @@ fn atomic_document_write_rolls_back_document_chunks_and_graph_on_graph_fault() {
         char_end: updated.content.chars().count() as i32,
         metadata_json: "{}".into(),
     };
-    let error = store
-        .write_document_atomic(
-            &updated,
-            Some(initial.revision),
-            DocumentDerivedWrite::ReplaceChunksAndGraph(std::slice::from_ref(&replacement_chunk)),
-        )
-        .expect_err("duplicate graph edge must fail the transaction");
+    let res = store.write_document_atomic(
+        &updated,
+        Some(initial.revision),
+        DocumentDerivedWrite::ReplaceChunksAndGraph(std::slice::from_ref(&replacement_chunk)),
+    );
+    store.set_fail_derived_edge_duplicate_for_test(false);
+    let error = res.expect_err("duplicate graph edge must fail the transaction");
     assert!(
         error.to_string().contains("duplicate")
             || error.to_string().contains("constraint")
@@ -543,8 +610,8 @@ fn atomic_document_write_rolls_back_document_chunks_and_graph_on_graph_fault() {
         .unwrap()
         .is_empty());
     let generation_after_rollback = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::chunks_generation(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::chunks_generation(&*r).unwrap()
     };
     assert_eq!(generation_after_rollback, generation_after_initial);
 }
@@ -1308,20 +1375,25 @@ fn embedding_only_update_preserves_rows_and_clean_fts_without_rebuild() {
     let persisted_doc = store.get_document(&doc.id).unwrap().unwrap();
     let expected = store.list_chunks_for_document(&doc.id).unwrap();
     let created_before: Vec<String> = {
-        let conn = store.lock().unwrap();
-        let mut stmt = conn
-                .prepare(
-                    "SELECT CAST(created_at AS VARCHAR) FROM chunks WHERE document_id = ? ORDER BY chunk_index, id",
+        let r = store.read().unwrap();
+        let mut rows: Vec<(i64, String, String)> = r
+            .find_by_eq("chunks", "document_id", doc.id.as_str())
+            .unwrap()
+            .into_iter()
+            .map(|rec| {
+                (
+                    cell_i64(&rec, "chunk_index", 0),
+                    cell_str(&rec, "id").unwrap_or("").to_string(),
+                    cell_str(&rec, "created_at").unwrap_or("").to_string(),
                 )
-                .unwrap();
-        stmt.query_map(params![doc.id], |row| row.get(0))
-            .unwrap()
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .unwrap()
+            })
+            .collect();
+        rows.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+        rows.into_iter().map(|(_, _, c)| c).collect()
     };
     let fts_before = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert!(!fts_before.dirty);
 
@@ -1358,16 +1430,21 @@ fn embedding_only_update_preserves_rows_and_clean_fts_without_rebuild() {
     assert_eq!(current[1].content, expected[1].content);
     assert_eq!(current[1].embedding, vec![0.75, 0.25]);
     let created_after: Vec<String> = {
-        let conn = store.lock().unwrap();
-        let mut stmt = conn
-                .prepare(
-                    "SELECT CAST(created_at AS VARCHAR) FROM chunks WHERE document_id = ? ORDER BY chunk_index, id",
+        let r = store.read().unwrap();
+        let mut rows: Vec<(i64, String, String)> = r
+            .find_by_eq("chunks", "document_id", doc.id.as_str())
+            .unwrap()
+            .into_iter()
+            .map(|rec| {
+                (
+                    cell_i64(&rec, "chunk_index", 0),
+                    cell_str(&rec, "id").unwrap_or("").to_string(),
+                    cell_str(&rec, "created_at").unwrap_or("").to_string(),
                 )
-                .unwrap();
-        stmt.query_map(params![doc.id], |row| row.get(0))
-            .unwrap()
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .unwrap()
+            })
+            .collect();
+        rows.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+        rows.into_iter().map(|(_, _, c)| c).collect()
     };
     assert_eq!(created_after, created_before);
     let stored_manifest = store.get_embedding_manifest().unwrap().unwrap();
@@ -1378,8 +1455,8 @@ fn embedding_only_update_preserves_rows_and_clean_fts_without_rebuild() {
     );
 
     let fts_after = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert!(!fts_after.dirty);
     assert_eq!(
@@ -1415,12 +1492,12 @@ fn embedding_only_update_keeps_dirty_fts_dirty_and_rejects_stale_snapshots() {
     let original = store.list_chunks_for_document(&doc.id).unwrap();
 
     {
-        let conn = store.lock().unwrap();
-        crate::db::fts::mark_fts_dirty(&conn).unwrap();
+        let mut w = store.write().unwrap();
+        crate::db::fts::mark_fts_dirty(&mut *w).unwrap();
     }
     let dirty_before = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert!(dirty_before.dirty);
     store
@@ -1433,8 +1510,8 @@ fn embedding_only_update_keeps_dirty_fts_dirty_and_rejects_stale_snapshots() {
         )
         .unwrap();
     let dirty_after = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert!(dirty_after.dirty);
     assert_eq!(
@@ -1478,8 +1555,8 @@ fn embedding_only_update_keeps_dirty_fts_dirty_and_rejects_stale_snapshots() {
         manifest_before.model
     );
     let generation_after_conflict = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::chunks_generation(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::chunks_generation(&*r).unwrap()
     };
     assert_eq!(generation_after_conflict, generation_before_conflict);
 
@@ -1557,8 +1634,8 @@ fn embedding_only_update_rolls_back_partial_vectors_generation_and_manifest() {
     let persisted = store.get_document(&doc.id).unwrap().unwrap();
     let original_chunks = store.list_chunks_for_document(&doc.id).unwrap();
     let generation_before = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
 
     let error = store
@@ -1588,8 +1665,8 @@ fn embedding_only_update_rolls_back_partial_vectors_generation_and_manifest() {
         original_manifest.model
     );
     let generation_after = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert_eq!(generation_after, generation_before);
 }
@@ -2128,10 +2205,11 @@ fn list_wiki_page_metas_filters_order_metadata_and_revision() {
     }
     // upsert_document coerces empty kind to "document"; force empty for fallback path.
     {
-        let conn = store.lock().unwrap();
-        conn.execute(
-            "UPDATE documents SET kind = '' WHERE id = ?",
-            params!["w-beta"],
+        let mut w = store.write().unwrap();
+        w.update_where(
+            "documents",
+            lin::query::pred::eq("id", "w-beta"),
+            RecBuilder::new().str("kind", "").build(),
         )
         .unwrap();
     }
@@ -2720,9 +2798,56 @@ fn list_uncompiled_raw_sample_excludes_raw_linked_from_a_wiki_page() {
         .uri("wiki://page")
         .insert(&store);
     {
-        let conn = store.lock().unwrap();
-        conn.execute("INSERT INTO graph_nodes (id, uri, label, kind, document_id, resolved, created_at, updated_at) VALUES ('n-wiki', 'wiki://page', 'Wiki', 'wiki', 'w', true, current_timestamp, current_timestamp), ('n-raw', 'text://a', 'A', 'document', 'r-a', true, current_timestamp, current_timestamp)", []).unwrap();
-        conn.execute("INSERT INTO graph_edges (id, source_id, target_id, rel_type, weight, created_at) VALUES ('e-compiled', 'n-wiki', 'n-raw', 'derived_from', 1.0, current_timestamp)", []).unwrap();
+        let now = format_ts(Utc::now());
+        let mut w = store.write().unwrap();
+        w.upsert_by_id(
+            "graph_nodes",
+            "n-wiki",
+            RecBuilder::new()
+                .str("id", "n-wiki")
+                .str("uri", "wiki://page")
+                .str("label", "Wiki")
+                .str("label_key", "wiki")
+                .str("kind", "wiki")
+                .str("document_id", "w")
+                .bool("resolved", true)
+                .str("metadata_json", "{}")
+                .str("created_at", &now)
+                .str("updated_at", &now)
+                .build(),
+        )
+        .unwrap();
+        w.upsert_by_id(
+            "graph_nodes",
+            "n-raw",
+            RecBuilder::new()
+                .str("id", "n-raw")
+                .str("uri", "text://a")
+                .str("label", "A")
+                .str("label_key", "a")
+                .str("kind", "document")
+                .str("document_id", "r-a")
+                .bool("resolved", true)
+                .str("metadata_json", "{}")
+                .str("created_at", &now)
+                .str("updated_at", &now)
+                .build(),
+        )
+        .unwrap();
+        w.upsert_by_id(
+            "graph_edges",
+            "e-compiled",
+            RecBuilder::new()
+                .str("id", "e-compiled")
+                .str("source_id", "n-wiki")
+                .str("target_id", "n-raw")
+                .str("rel_type", "derived_from")
+                .f64("weight", 1.0)
+                .str("origin", "explicit")
+                .str("created_at", &now)
+                .build(),
+        )
+        .unwrap();
     }
     let remaining = store.list_uncompiled_raw_sample(10).unwrap();
     let ids: Vec<&str> = remaining.iter().map(|s| s.document_id.as_str()).collect();

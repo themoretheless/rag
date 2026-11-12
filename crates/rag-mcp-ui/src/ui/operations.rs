@@ -209,7 +209,7 @@ pub fn draw_maintenance(
                     ui.add_space(6.0);
                     ui.add(
                         egui::TextEdit::singleline(&mut backup.path)
-                            .hint_text("/разрешённый/путь/rag-backup.duckdb")
+                            .hint_text("/разрешённый/путь/rag-backup.lin")
                             .desired_width(f32::INFINITY),
                     );
                     ui.horizontal_wrapped(|ui| {

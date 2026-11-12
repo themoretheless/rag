@@ -153,12 +153,9 @@ impl Store {
                 "expected_view_token is required for nonzero routes offset".into(),
             ));
         }
-        let mut connection = self.lock()?;
-        let transaction = connection.transaction()?;
-        let snapshot = snapshot_locked(&transaction, q.project.as_deref())?;
-        let result = render(&snapshot, q)?;
-        transaction.commit()?;
-        Ok(result)
+        let r = self.read()?;
+        let snapshot = snapshot_locked(&*r, q.project.as_deref())?;
+        render(&snapshot, q)
     }
 }
 
@@ -281,14 +278,18 @@ mod tests {
     #[test]
     fn scoped_cache_decode_excludes_foreign_corruption_and_parameter_injection() {
         let (_root, store) = setup();
-        store
-            .lock()
-            .unwrap()
-            .execute(
-                "UPDATE code_index_documents SET payload='broken' WHERE document_id='b'",
-                [],
+        {
+            let mut w = store.write().unwrap();
+            w.upsert_by_id(
+                "code_index_documents",
+                "b",
+                RecBuilder::new()
+                    .str("document_id", "b")
+                    .str("payload", "broken")
+                    .build(),
             )
             .unwrap();
+        }
         let q = RouteQuery {
             project: Some("alpha".into()),
             selection: CodeQuery {

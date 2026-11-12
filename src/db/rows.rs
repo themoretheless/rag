@@ -1,192 +1,164 @@
-//! Aggregate row codecs. SQL projection order remains owned by each repository.
+//! Aggregate `lin::Row` codecs for core `rag-mcp` domain models.
 
-use crate::error::{AppError, Result};
-use crate::models::{Chunk, Document, EmbeddingManifest};
-use crate::util::parse_db_timestamp;
+use lin::Row;
 
-pub(crate) fn timestamp(value: &str) -> Result<chrono::DateTime<chrono::Utc>> {
-    parse_db_timestamp(value)
-        .ok_or_else(|| AppError::db(format!("invalid timestamp value: {}", value.trim())))
+use crate::db::lin_engine::{
+    cell_bool, cell_f64, cell_f64_opt, cell_i64, cell_nonempty_string, cell_opt_string,
+    cell_opt_ts, cell_string, cell_ts, cell_vec_f32,
+};
+use crate::error::Result;
+use crate::models::{
+    Chunk, Document, EmbeddingManifest, GraphEdge, GraphNode, KgFact, OpsLogEntry, WikiIndexEntry,
+};
+
+pub(crate) fn document(row: &Row) -> Result<Document> {
+    document_with_body(row, true)
 }
 
-/// Rows per multi-row `INSERT ... VALUES (..), (..)` statement.
-const INSERT_BATCH_ROWS: usize = 64;
-
-/// Insert `items` with multi-row `VALUES` statements of up to
-/// [`INSERT_BATCH_ROWS`] rows each.
-///
-/// `head` is the `INSERT INTO t (cols) VALUES` prefix, `row` one row's
-/// placeholder tuple, and `bind` pushes that row's values in tuple order.
-/// DuckDB executes each statement as a full query, so one statement per 64
-/// rows is several times faster than re-executing a one-row statement.
-pub(crate) fn insert_rows<'a, T>(
-    conn: &duckdb::Connection,
-    head: &str,
-    row: &str,
-    items: &'a [T],
-    mut bind: impl FnMut(&'a T, &mut Vec<&'a dyn duckdb::ToSql>),
-) -> Result<()> {
-    let mut values: Vec<&'a dyn duckdb::ToSql> = Vec::new();
-    for batch in items.chunks(INSERT_BATCH_ROWS) {
-        values.clear();
-        for item in batch {
-            bind(item, &mut values);
-        }
-        let tuples = vec![row; batch.len()].join(", ");
-        let mut stmt = conn.prepare(&format!("{head} {tuples}"))?;
-        stmt.execute(duckdb::params_from_iter(values.iter()))?;
-    }
-    Ok(())
+pub(crate) fn document_without_body(row: &Row) -> Result<Document> {
+    document_with_body(row, false)
 }
 
-/// Run `stmt` with `params` and map every row with `map`.
-///
-/// Replaces the hand-written `while let Some(row) = rows.next()?` push loops.
-pub(crate) fn query_vec<T, P: duckdb::Params>(
-    stmt: &mut duckdb::Statement<'_>,
-    params: P,
-    mut map: impl FnMut(&duckdb::Row<'_>) -> Result<T>,
-) -> Result<Vec<T>> {
-    let mut rows = stmt.query(params)?;
-    let mut out = Vec::new();
-    while let Some(row) = rows.next()? {
-        out.push(map(row)?);
-    }
-    Ok(out)
-}
-
-/// Call `visit` for every remaining row of an open query, in order.
-pub(crate) fn visit_rows(
-    rows: &mut duckdb::Rows<'_>,
-    mut visit: impl FnMut(&duckdb::Row<'_>) -> Result<()>,
-) -> Result<()> {
-    while let Some(row) = rows.next()? {
-        visit(row)?;
-    }
-    Ok(())
-}
-
-/// Like [`visit_rows`], but `visit` can stop early with `ControlFlow::Break`.
-pub(crate) fn try_visit_rows(
-    rows: &mut duckdb::Rows<'_>,
-    mut visit: impl FnMut(&duckdb::Row<'_>) -> Result<std::ops::ControlFlow<()>>,
-) -> Result<()> {
-    while let Some(row) = rows.next()? {
-        if visit(row)?.is_break() {
-            break;
-        }
-    }
-    Ok(())
-}
-
-/// Run `stmt` with `params` and call `visit` for every row, in order.
-///
-/// For loops that filter, fill maps or aggregate; collecting into a `Vec`
-/// uses [`query_vec`]. `return Ok(())` inside `visit` skips to the next row.
-pub(crate) fn for_each_row<P: duckdb::Params>(
-    stmt: &mut duckdb::Statement<'_>,
-    params: P,
-    mut visit: impl FnMut(&duckdb::Row<'_>) -> Result<()>,
-) -> Result<()> {
-    let mut rows = stmt.query(params)?;
-    while let Some(row) = rows.next()? {
-        visit(row)?;
-    }
-    Ok(())
-}
-
-pub(crate) fn document(row: &duckdb::Row<'_>) -> Result<Document> {
-    let created_raw: String = row.get(11)?;
-    let updated_raw: String = row.get(12)?;
+fn document_with_body(row: &Row, include_body: bool) -> Result<Document> {
+    let metadata_json = cell_nonempty_string(row, "metadata_json").unwrap_or_else(|| "{}".into());
+    let layer = cell_nonempty_string(row, "layer").unwrap_or_else(|| "raw".into());
+    let kind = cell_nonempty_string(row, "kind")
+        .unwrap_or_else(|| "document".into())
+        .into();
+    let status = cell_nonempty_string(row, "status").unwrap_or_else(|| "active".into());
+    let revision = cell_i64(row, "revision", 1).max(1);
     Ok(Document {
-        id: row.get(0)?,
-        uri: row.get(1)?,
-        title: row.get(2)?,
-        content: row.get(3)?,
-        metadata_json: row.get(4)?,
-        content_hash: row.get(5)?,
-        wing: row.get(6)?,
-        room: row.get(7)?,
-        source_file: row.get(8)?,
-        layer: row
-            .get::<_, Option<String>>(9)?
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "raw".into()),
-        kind: row
-            .get::<_, Option<String>>(10)?
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "document".into())
-            .into(),
-        created_at: timestamp(&created_raw)?,
-        updated_at: timestamp(&updated_raw)?,
-        status: row
-            .get::<_, Option<String>>(13)?
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "active".into()),
-        pinned: row.get::<_, Option<bool>>(14)?.unwrap_or(false),
-        boost: row.get::<_, Option<f64>>(15)?.unwrap_or(1.0),
-        revision: row.get::<_, Option<i64>>(16)?.unwrap_or(1),
+        id: cell_string(row, "id"),
+        uri: cell_string(row, "uri"),
+        title: cell_string(row, "title"),
+        content: if include_body {
+            cell_string(row, "content")
+        } else {
+            String::new()
+        },
+        metadata_json,
+        content_hash: cell_opt_string(row, "content_hash"),
+        wing: cell_opt_string(row, "wing"),
+        room: cell_opt_string(row, "room"),
+        source_file: cell_opt_string(row, "source_file"),
+        layer,
+        kind,
+        created_at: cell_ts(row, "created_at")?,
+        updated_at: cell_ts(row, "updated_at")?,
+        status,
+        pinned: cell_bool(row, "pinned", false),
+        boost: cell_f64(row, "boost", 1.0),
+        revision,
     })
 }
 
-pub(crate) fn chunk(row: &duckdb::Row<'_>) -> Result<Chunk> {
-    let embedding_json: String = row.get(4)?;
+pub(crate) fn document_revision(row: &Row) -> Result<Document> {
+    let id = cell_nonempty_string(row, "document_id").unwrap_or_else(|| cell_string(row, "id"));
+    let mut doc = document(row)?;
+    doc.id = id;
+    Ok(doc)
+}
+
+pub(crate) fn chunk(row: &Row) -> Result<Chunk> {
     Ok(Chunk {
-        id: row.get(0)?,
-        document_id: row.get(1)?,
-        chunk_index: row.get(2)?,
-        content: row.get(3)?,
-        embedding: serde_json::from_str(&embedding_json)?,
-        char_start: row.get(5)?,
-        char_end: row.get(6)?,
-        metadata_json: row
-            .get::<_, Option<String>>(7)?
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "{}".into()),
+        id: cell_string(row, "id"),
+        document_id: cell_string(row, "document_id"),
+        chunk_index: cell_i64(row, "chunk_index", 0) as i32,
+        content: cell_string(row, "content"),
+        embedding: cell_vec_f32(row, "embedding"),
+        char_start: cell_i64(row, "char_start", 0) as i32,
+        char_end: cell_i64(row, "char_end", 0) as i32,
+        metadata_json: cell_nonempty_string(row, "metadata_json").unwrap_or_else(|| "{}".into()),
     })
 }
 
-pub(crate) fn embedding_manifest(row: &duckdb::Row<'_>) -> Result<EmbeddingManifest> {
-    let updated_raw: String = row.get(6)?;
+pub(crate) fn embedding_manifest(row: &Row) -> Result<EmbeddingManifest> {
     Ok(EmbeddingManifest {
-        id: row.get(0)?,
-        provider: row.get(1)?,
-        model: row.get(2)?,
-        dims: row.get(3)?,
-        base_url: row.get(4)?,
-        content_fingerprint: row.get(5)?,
-        updated_at: timestamp(&updated_raw)?,
+        id: cell_string(row, "id"),
+        provider: cell_string(row, "provider"),
+        model: cell_string(row, "model"),
+        dims: cell_i64(row, "dims", 0) as i32,
+        base_url: cell_opt_string(row, "base_url"),
+        content_fingerprint: cell_nonempty_string(row, "content_fingerprint"),
+        updated_at: cell_ts(row, "updated_at")?,
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use std::ops::ControlFlow;
+pub(crate) fn graph_node(row: &Row) -> Result<GraphNode> {
+    Ok(GraphNode {
+        id: cell_string(row, "id"),
+        kind: cell_string(row, "kind"),
+        label: cell_string(row, "label"),
+        document_id: cell_opt_string(row, "document_id"),
+        uri: cell_opt_string(row, "uri"),
+        resolved: cell_bool(row, "resolved", true),
+        metadata_json: cell_nonempty_string(row, "metadata_json").unwrap_or_else(|| "{}".into()),
+    })
+}
 
-    #[test]
-    fn row_helpers_visit_in_order_and_stop_on_break() {
-        let conn = duckdb::Connection::open_in_memory().unwrap();
-        let mut stmt = conn
-            .prepare("SELECT * FROM range(5) AS t(n) ORDER BY n")
-            .unwrap();
-        let all = super::query_vec(&mut stmt, [], |row| Ok(row.get::<_, i64>(0)?)).unwrap();
-        assert_eq!(all, vec![0, 1, 2, 3, 4]);
+pub(crate) fn graph_edge(row: &Row) -> Result<GraphEdge> {
+    Ok(GraphEdge {
+        id: cell_string(row, "id"),
+        source_id: cell_string(row, "source_id"),
+        target_id: cell_string(row, "target_id"),
+        rel_type: cell_string(row, "rel_type"),
+        weight: cell_f64(row, "weight", 1.0),
+        context: cell_opt_string(row, "context"),
+    })
+}
 
-        let mut seen = Vec::new();
-        let mut rows = stmt.query([]).unwrap();
-        super::try_visit_rows(&mut rows, |row| {
-            let n: i64 = row.get(0)?;
-            if n == 1 {
-                return Ok(ControlFlow::Continue(()));
-            }
-            seen.push(n);
-            Ok(if n == 3 {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(())
-            })
-        })
-        .unwrap();
-        assert_eq!(seen, vec![0, 2, 3]);
-    }
+pub(crate) fn kg_fact(row: &Row) -> Result<KgFact> {
+    Ok(KgFact {
+        id: cell_string(row, "id"),
+        subject: cell_string(row, "subject"),
+        predicate: cell_string(row, "predicate"),
+        object: cell_string(row, "object"),
+        valid_from: cell_opt_ts(row, "valid_from")?,
+        valid_to: cell_opt_ts(row, "valid_to")?,
+        status: cell_nonempty_string(row, "status").unwrap_or_else(|| "active".into()),
+        superseded_by: cell_opt_string(row, "superseded_by"),
+        source_document_id: cell_opt_string(row, "source_document_id"),
+        source: cell_opt_string(row, "source"),
+        confidence: cell_f64_opt(row, "confidence"),
+        metadata_json: cell_nonempty_string(row, "metadata_json").unwrap_or_else(|| "{}".into()),
+        created_at: cell_ts(row, "created_at")?,
+        updated_at: cell_ts(row, "updated_at")?,
+        invalidated_at: cell_opt_ts(row, "invalidated_at")?,
+    })
+}
+
+pub(crate) fn ops_log_entry(row: &Row) -> Result<OpsLogEntry> {
+    Ok(OpsLogEntry {
+        id: cell_string(row, "id"),
+        seq: cell_i64(row, "seq", 0),
+        ts: cell_ts(row, "ts")?,
+        op: cell_string(row, "op"),
+        prefix: cell_opt_string(row, "prefix"),
+        message: cell_string(row, "message"),
+        entity_id: cell_opt_string(row, "entity_id"),
+        entity_kind: cell_opt_string(row, "entity_kind"),
+        payload_json: cell_nonempty_string(row, "payload_json").unwrap_or_else(|| "{}".into()),
+        agent_name: cell_opt_string(row, "agent_name"),
+    })
+}
+
+pub(crate) fn wiki_index_entry(row: &Row) -> Result<WikiIndexEntry> {
+    let page_id = cell_nonempty_string(row, "page_id")
+        .or_else(|| cell_nonempty_string(row, "document_id"));
+    let title = cell_nonempty_string(row, "title")
+        .or_else(|| cell_nonempty_string(row, "label"))
+        .unwrap_or_else(|| cell_string(row, "id"));
+    let slug = cell_nonempty_string(row, "slug")
+        .or_else(|| cell_nonempty_string(row, "label"))
+        .unwrap_or_else(|| cell_string(row, "id"));
+    Ok(WikiIndexEntry {
+        id: cell_string(row, "id"),
+        slug,
+        title,
+        kind: cell_nonempty_string(row, "kind").unwrap_or_else(|| "wiki".into()),
+        category: cell_opt_string(row, "category"),
+        summary: cell_opt_string(row, "summary"),
+        page_id,
+        updated_at: cell_ts(row, "updated_at")?,
+    })
 }

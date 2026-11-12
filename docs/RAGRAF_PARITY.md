@@ -537,3 +537,97 @@ PHP/PHTML named callable symbols now retain structured stated parameter contract
 ### Complete traversal of bounded source reads
 
 [Source cursors](CODE_SOURCE_PAGINATION.md) resume record/character/segment pages against a checked current view. UTF-8 byte windows and delimited IDs extend navigation; canonical partitions preserve unique bytes across pages. This improves large/single-line source reads while leaving historical snapshots, other source modes, styles and representative scale open.
+
+### PHP namespace candidates (2026-10-26)
+
+PHP/PHTML namespace regions, domain-separated imports and direct declared-method
+candidates now feed the shared graph; callable values remain separate from calls.
+See [contract and boundaries](PHP_NAMESPACE_BINDINGS.md). This closes a bounded
+binding gap, not PHP compiler/runtime or full RAGRAF parity.
+
+### PHP inherited method candidates (2026-10-26)
+
+Captured namespace-resolved class bases now feed inherited call/reference targets,
+`parent::`, inheritance and separate override candidates. Trait composition, late
+static/runtime subtype dispatch and compiler compatibility remain open.
+[Contract and verification](PHP_INHERITANCE.md).
+
+### PHP trait method composition (2026-10-26)
+
+Captured nested trait providers and explicit insteadof/as adaptations now feed
+method candidates and separate trait-use dependency relations. Original declaration
+identities and effective consumer visibility are preserved. Full compiler/runtime
+semantics and consumer-specific trait-body contexts remain open.
+[Contract and qualification](PHP_TRAIT_COMPOSITION.md).
+
+### PHP trait-body contexts (2026-10-26)
+
+Original trait body references now preserve per-consumer bindings and uncertainty
+in callers/callees/references/impact. Frozen context relations detect owner-target
+swaps even with unchanged aggregate call edges; legacy metadata is qualified.
+Runtime flow and full-path correlation remain open.
+[Contract and verification](PHP_TRAIT_CONTEXTS.md).
+
+### Captured PHP trait impact paths (2026-10-26)
+
+Impact now matches captured trait entry/body lexical consumer states, preserving
+valid alternate contexts while pruning incompatible class branches. SQL-table
+impact shares the matching traversal. Compiler/runtime path completeness and
+other analyses remain open. [Contract and verification](PHP_TRAIT_PATHS.md).
+
+### Git trait-context witnesses (2026-10-26)
+
+Git source impact now retains exact per-consumer predecessor paths and includes
+normalized contexts in binding-change detection. Shared symbols no longer cause
+witness stitching between different class consumers. Runtime/compiler/scale
+qualification remains open. [Contract and verification](GIT_TRAIT_CONTEXTS.md).
+
+### Trait-aware symbol trace paths (2026-10-26)
+
+Symbol path search now applies captured trait frames in every direction, with
+conditional consumer identities, per-context target ambiguity and bounded fresh
+metadata checks. Runtime/dataflow completeness remains open.
+[Contract and qualification](TRACE_TRAIT_CONTEXTS.md).
+
+[PHPUnit declaration candidates](PHPUNIT_ENTRYPOINTS.md) extend entrypoint discovery
+with imported TestCase ancestry, direct public instance test names and Test
+attributes. Cached capability repair and legacy-qualified frozen entrypoint diffs
+are included. [Affected test recommendations](AFFECTED_TESTS.md) now consume these
+direct candidates with coherent captured trait states and per-state witness
+reconstruction. PHPUnit execution/configuration, inherited or trait-provided tests
+and runtime coverage remain unverified.
+
+[Effective PHPUnit candidates](PHPUNIT_EFFECTIVE_TESTS.md) add captured inherited
+and trait-provided test methods, preserving concrete host/effective name and
+actual body provenance. Recommendations and frozen history preserve invocation
+identity. Framework execution/configuration, datasets and exhaustive runtime test
+discovery remain unverified; this does not establish full parity.
+
+[PHPUnit host availability witnesses](PHPUNIT_HOST_DEPENDENCIES.md) extend related
+tests to class/base/trait changes with unchanged method bodies. They preserve
+source/host identities, use separate non-call evidence, and support alias-only
+Git before/after recommendations. Runtime discovery/configuration and complete
+impact/test coverage remain unverified.
+
+[Native Python value slices](PYTHON_DATA_FLOW.md) add a bounded first data-flow
+backend alongside structural slice, with versioned local definitions/uses and
+matched positional argument/return boundaries. It does not close complete CPG,
+control/heap/alias flow, other languages or representative quality/scale. Frozen
+facts are captured; normalized value-relation history comparison remains explicit
+unavailable.
+
+Python canonical identifier binding and SQL impact requalification (format 83): [evidence](qualification/python-bindings-2026-10-26/README.md). SQL passed all 15 MCP scenarios on the same build as the Python scope/normalization changes; workspace 1632 passed, strict Clippy and eight MCP scripts passed. Unsupported Python binder forms remain explicit unknowns; full data-flow/CPG and compiler/runtime parity remain open.
+
+Python branch value-flow follow-up (format 84/value capture 4): [evidence](qualification/python-branch-flow-2026-10-26/README.md). If/elif/else merges, early-return exclusion and condition dependencies passed native regressions and 27 MCP value-flow checks. Final workspace: 1637 passed, 0 failed, 1 ignored; strict Clippy/build and eight MCP scripts passed. Predicate feasibility/correlation, complete CFG/loops/exceptions/alias flow and full CPG remain open.
+
+Python loop value-flow and checked cyclic edge follow-up (format 85/value capture 5): [evidence](qualification/python-loop-flow-2026-10-26/README.md). While/for headers, backedges, abstract iteration values, zero-iteration alternatives and break/continue/else are qualified; plain-for bindings no longer block unrelated imports. Returned edges now retain checked reachable cycles with an explicit 2000-edge cap. Workspace: 1646 passed, 0 failed, 1 ignored; strict Clippy/build and eight MCP scripts passed, including 35 Python value-flow checks and 15 SQL-impact scenarios. Complete CFG/exception/alias and feasibility/termination proofs remain open.
+
+Frozen Python value-history comparison: [evidence](qualification/python-value-diff-2026-10-26/README.md). Compatible capture-5 graphs now expose normalized node syntax changes, local/cyclic edges and unique positional call/return candidate changes, independent of source offsets and ordinary comments/spacing. Legacy/incomplete/unsupported/inventory/provenance guards are qualified. Workspace: 1655 passed, 0 failed, 1 ignored; strict Clippy/build and nine MCP scripts passed, including 12 value-diff checks, 35 value-slice checks and 15 SQL-impact scenarios. Runtime/semantic proof, minimal edit matching, full CFG/exception/alias flow and full CPG remain open.
+
+Python finally completion-flow follow-up (extraction 86/value capture 6): [evidence](qualification/python-finally-flow-2026-10-26/README.md). Saved return values, updated break/continue states, overriding explicit completions and protected expression-error prefixes are qualified with context-specific finalizer nodes/call frames. Frozen diff normalization 2 supports capture 5/6. Workspace: 1671 passed, 0 failed, 1 ignored; strict Clippy/build and ten MCP scripts passed, including 20 finalizer checks, 35 value-slice checks, 12 value-diff checks and 15 SQL-impact scenarios. Except/type matching, full exception/CFG/alias and runtime/CPG semantics remain open.
+
+Python handler/else completion-flow follow-up (extraction 87/capture 7): [evidence](qualification/python-except-flow-2026-10-26/README.md). Bare and unproven typed handler alternatives, normal-only else, alias object values/cleanup, captured re-raise, sibling escape boundaries and finalizer precedence are qualified. Scope capture 3 shares the real alias AST adapter; normalization 3 accepts captures 5..7 with contextual version guards. Workspace: 1685 passed, 0 failed, 1 ignored; strict Clippy/build and eleven MCP scripts passed, including 20 handler, 20 finalizer, 35 value-slice, 12 value-diff and 15 SQL-impact checks. Type/filter execution proof and full CFG/alias/compiler/runtime/CPG coverage remain open.
+
+Python assignment-order follow-up (extraction 88/scope capture 4): [evidence](qualification/python-assignment-order-2026-10-26/README.md). A retained failing regression proves the prior RHS receiver-type error; deferred commit, annotation-only locals, augmented-result invalidation and source refresh are now qualified. Workspace: 1691 passed, 0 failed, 1 ignored; strict Clippy/build and twelve MCP scripts passed, including 15 assignment-order and 15 SQL-impact checks. Branch-sensitive type alternatives, complete compiler/runtime and full CPG semantics remain open.
+
+Python receiver-origin follow-up (extraction 89/scope capture 5): [evidence](qualification/python-receiver-joins-2026-10-26/README.md). Bounded ordinary branch/loop joins, returned-arm exclusion, aliases, imported/inherited body deduplication and partial-known uncertainty are qualified, including dead-code/test safety accounting and missing flow inventory guards. Workspace: 1700 passed, 0 failed, 1 ignored; strict Clippy/build and thirteen MCP scripts passed, including 16 receiver-join and 15 SQL-impact checks. Precise exception/closure/heap/type/runtime contexts and full compiler/CFG/CPG acceptance remain open.

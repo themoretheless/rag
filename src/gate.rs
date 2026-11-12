@@ -2,29 +2,26 @@
 //! This is not a sandbox, an authorization engine or a command executor.
 use crate::{
     analysis_tasks,
-    db::Store,
+    db::{
+        lin_engine::{
+            cell_bool_opt, cell_i64, cell_i64_opt, cell_str, cell_string, LinReader, LinWriter,
+            RecBuilder,
+        },
+        Store,
+    },
     error::{AppError, Result},
     util::content_hash,
 };
-use duckdb::{params, Connection, OptionalExt};
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use tree_sitter::{Node, Parser};
 const WINDOW_MS: i64 = 900_000;
 const MAX_FILES: usize = 256;
 const MAX_BYTES: usize = 16 * 1024 * 1024;
-pub(crate) const DDL: &str = r#"
-CREATE TABLE IF NOT EXISTS analysis_gate_decisions (
- seq BIGINT PRIMARY KEY, id VARCHAR UNIQUE NOT NULL, session_id VARCHAR NOT NULL,
- task VARCHAR NOT NULL, index_rev BIGINT, created_ms BIGINT NOT NULL,
- mode VARCHAR NOT NULL, kind VARCHAR NOT NULL, verdict VARCHAR NOT NULL,
- rule VARCHAR NOT NULL, facts_json VARCHAR NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_analysis_gate_task ON analysis_gate_decisions(task,seq);
-CREATE INDEX IF NOT EXISTS idx_analysis_gate_session ON analysis_gate_decisions(session_id,seq);
-"#;
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GateQuery {
     /// Hook object or JSON string: tool_name, tool_input, cwd, session_id, hook_event_name.
@@ -377,15 +374,69 @@ struct Facts {
     bytes: usize,
     reasons: Vec<&'static str>,
 }
-fn stored_changes(conn: &Connection, rev: i64, root: &str) -> Result<i64> {
+fn stored_changes(r: &impl LinReader, rev: i64, root: &str) -> Result<i64> {
     let prefix = format!(
         "{}{}",
         root.trim_end_matches(std::path::MAIN_SEPARATOR),
         std::path::MAIN_SEPARATOR
     );
-    let changed:i64=conn.query_row("SELECT COUNT(*) FROM code_index_revision_files f LEFT JOIN documents d ON d.id=f.document_id WHERE f.index_revision=? AND (f.path=? OR starts_with(f.path,?)) AND (d.id IS NULL OR COALESCE(d.status,'active') IN ('archived','tombstone','consolidated') OR COALESCE(d.revision,1)<>f.document_revision OR COALESCE(d.source_file,d.uri)<>f.path)",params![rev,root,prefix],|r|r.get(0))?;
-    let new:i64=conn.query_row("SELECT COUNT(*) FROM documents d WHERE COALESCE(d.status,'active') NOT IN ('archived','tombstone','consolidated') AND (COALESCE(d.source_file,d.uri)=? OR starts_with(COALESCE(d.source_file,d.uri),?)) AND NOT EXISTS(SELECT 1 FROM code_index_revision_files f WHERE f.index_revision=? AND f.document_id=d.id)",params![root,prefix,rev],|r|r.get(0))?;
+    let rev_rows = r.find_by_eq("code_index_revision_files", "index_revision", rev)?;
+    let mut rev_doc_ids = HashSet::with_capacity(rev_rows.len());
+    let mut changed = 0i64;
+    for row in &rev_rows {
+        let doc_id = cell_string(row, "document_id");
+        rev_doc_ids.insert(doc_id.clone());
+        let path = cell_str(row, "path").unwrap_or_default();
+        if path != root && !path.starts_with(&prefix) {
+            continue;
+        }
+        let doc_rev = cell_i64(row, "document_revision", 1);
+        let stale = match r.get_by_id("documents", &doc_id)? {
+            None => true,
+            Some(d) => {
+                let status = cell_str(&d, "status").unwrap_or("active");
+                let d_rev = cell_i64(&d, "revision", 1);
+                let d_path = cell_str(&d, "source_file")
+                    .or_else(|| cell_str(&d, "uri"))
+                    .unwrap_or_default();
+                matches!(status, "archived" | "tombstone" | "consolidated")
+                    || d_rev != doc_rev
+                    || d_path != path
+            }
+        };
+        if stale {
+            changed += 1;
+        }
+    }
+    let mut new = 0i64;
+    r.scan_each("documents", |d| {
+        let status = cell_str(d, "status").unwrap_or("active");
+        if matches!(status, "archived" | "tombstone" | "consolidated") {
+            return Ok(true);
+        }
+        let d_path = cell_str(d, "source_file")
+            .or_else(|| cell_str(d, "uri"))
+            .unwrap_or_default();
+        if (d_path == root || d_path.starts_with(&prefix))
+            && !rev_doc_ids.contains(cell_str(d, "id").unwrap_or_default())
+        {
+            new += 1;
+        }
+        Ok(true)
+    })?;
     Ok(changed + new)
+}
+fn latest_revision_with_graph(r: &impl LinReader) -> Result<Option<(i64, String)>> {
+    let mut latest: Option<(i64, String)> = None;
+    r.scan_each("code_index_revisions", |row| {
+        if let Some(rev) = cell_i64_opt(row, "rev_id")
+            && latest.as_ref().is_none_or(|(prev, _)| rev > *prev)
+        {
+            latest = Some((rev, cell_string(row, "graph_json")));
+        }
+        Ok(true)
+    })?;
+    Ok(latest)
 }
 fn freshness(store: &Store, cwd: &str, roots: &[PathBuf]) -> Result<Facts> {
     let mut f = Facts {
@@ -406,23 +457,22 @@ fn freshness(store: &Store, cwd: &str, roots: &[PathBuf]) -> Result<Facts> {
         return Ok(f);
     };
     let (files, changed, format_matches) = {
-        let conn = store.lock()?;
-        let mut stmt=conn.prepare("SELECT DISTINCT canonical_root FROM source_manifest ORDER BY length(canonical_root) DESC,canonical_root")?;
-        let all = stmt
-            .query_map([], |r| r.get::<_, String>(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        f.corpus = all.into_iter().find(|r| cwd.starts_with(Path::new(r)));
+        let r = store.read()?;
+        let mut distinct_roots: HashSet<String> = HashSet::new();
+        r.scan_each("source_manifest", |row| {
+            let cr = cell_string(row, "canonical_root");
+            if !cr.is_empty() {
+                distinct_roots.insert(cr);
+            }
+            Ok(true)
+        })?;
+        let mut all: Vec<String> = distinct_roots.into_iter().collect();
+        all.sort_by(|a, b| b.chars().count().cmp(&a.chars().count()).then_with(|| a.cmp(b)));
+        f.corpus = all.into_iter().find(|root| cwd.starts_with(Path::new(root)));
         let Some(root) = f.corpus.as_ref() else {
             return Ok(f);
         };
-        let latest: Option<(i64, String)> = conn
-            .query_row(
-                "SELECT id,graph_json FROM code_index_revisions ORDER BY id DESC LIMIT 1",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()?;
-        let Some((rev, graph)) = latest else {
+        let Some((rev, graph)) = latest_revision_with_graph(&*r)? else {
             f.fresh = Some(false);
             f.reasons.push("INDEX_MISSING");
             return Ok(f);
@@ -437,13 +487,21 @@ fn freshness(store: &Store, cwd: &str, roots: &[PathBuf]) -> Result<Facts> {
             root.trim_end_matches(std::path::MAIN_SEPARATOR),
             std::path::MAIN_SEPARATOR
         );
-        let mut stmt=conn.prepare("SELECT f.path,f.content_hash FROM code_index_revision_files f WHERE f.index_revision=? AND (f.path=? OR starts_with(f.path,?)) ORDER BY f.path LIMIT ?")?;
-        let files = stmt
-            .query_map(params![rev, root, prefix, MAX_FILES as i64 + 1], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        let changed = stored_changes(&conn, rev, root)?;
+        let mut files: Vec<(String, String)> = r
+            .find_by_eq("code_index_revision_files", "index_revision", rev)?
+            .into_iter()
+            .filter_map(|row| {
+                let p = cell_string(&row, "path");
+                if p == *root || p.starts_with(&prefix) {
+                    Some((p, cell_string(&row, "content_hash")))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        files.sort_by(|a, b| a.0.cmp(&b.0));
+        files.truncate(MAX_FILES + 1);
+        let changed = stored_changes(&*r, rev, root)?;
         (files, changed, format_matches)
     };
     if !format_matches || changed > 0 {
@@ -489,10 +547,7 @@ fn freshness(store: &Store, cwd: &str, roots: &[PathBuf]) -> Result<Facts> {
         f.fresh = Some(true);
     }
     // Do not certify a revision that changed during the unlocked bounded live reads.
-    let current: Option<i64> =
-        store
-            .lock()?
-            .query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| r.get(0))?;
+    let current = analysis_tasks::latest_code_index_rev(&*store.read()?)?;
     if current != f.rev {
         f.fresh = None;
         f.reasons.push("INDEX_REVISION_CHANGED_DURING_CHECK");
@@ -568,7 +623,7 @@ impl Store {
     ) -> Result<Value> {
         let session = analysis_tasks::session(session_id)?;
         let at = chrono::Utc::now().timestamp_millis();
-        let task = analysis_tasks::active(&*self.lock()?, &session, at)?.0;
+        let task = analysis_tasks::active(&*self.read()?, &session, at)?.0;
         let c = if mode == Mode::Off {
             Classification {
                 kind: "off",
@@ -595,94 +650,157 @@ impl Store {
                     reasons: vec![],
                 }
             };
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let rev: Option<i64> =
-            tx.query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| r.get(0))?;
-        if f.rev.is_some() && f.rev != rev {
-            f.fresh = None;
-            f.reasons.push("INDEX_REVISION_CHANGED_BEFORE_DECISION");
-        }
-        if f.rev == rev {
-            if let (Some(rev), Some(root)) = (rev, f.corpus.as_deref()) {
-                if stored_changes(&tx, rev, root)? > 0 {
-                    f.fresh = Some(false);
-                    f.reasons.push("STORED_INPUTS_CHANGED_BEFORE_DECISION");
+
+        let (id, seq, rev, d, counters) = self.with_tx(|tx| {
+            let rev = analysis_tasks::latest_code_index_rev(tx)?;
+            if f.rev.is_some() && f.rev != rev {
+                f.fresh = None;
+                f.reasons.push("INDEX_REVISION_CHANGED_BEFORE_DECISION");
+            }
+            if f.rev == rev {
+                if let (Some(rev), Some(root)) = (rev, f.corpus.as_deref()) {
+                    if stored_changes(tx, rev, root)? > 0 {
+                        f.fresh = Some(false);
+                        f.reasons.push("STORED_INPUTS_CHANGED_BEFORE_DECISION");
+                    }
                 }
             }
-        }
-        let epoch:Option<(i64,String)>=tx.query_row("SELECT seq,facts_json FROM analysis_gate_decisions WHERE session_id=? AND kind='session_start' ORDER BY seq DESC LIMIT 1",[&session],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
-        let epoch_gate = epoch.as_ref().map_or(0, |e| e.0);
-        let epoch_call = epoch
-            .as_ref()
-            .map(|e| serde_json::from_str::<Value>(&e.1))
-            .transpose()?
-            .and_then(|v| v["index_use_barrier_seq"].as_i64())
-            .unwrap_or(0);
-        let used:i64=tx.query_row("SELECT COUNT(*) FROM analysis_calls WHERE session_id=? AND task=? AND ok=true AND finished_ms>=? AND started_ms<=? AND index_rev IS NOT DISTINCT FROM ? AND evidence_count>0 AND seq>?",params![session,task,at-WINDOW_MS,at,rev,epoch_call],|r|r.get(0))?;
-        let prev:i64=tx.query_row("SELECT COUNT(*) FROM analysis_gate_decisions WHERE session_id=? AND task=? AND index_rev IS NOT DISTINCT FROM ? AND created_ms>=? AND mode='ask' AND verdict IN ('ask','deny') AND seq>?",params![session,task,rev,at-WINDOW_MS,epoch_gate],|r|r.get(0))?;
-        let mut d = decide(&c, &f, mode, used > 0, prev == 0);
-        d.facts = json!({"kind":c.kind,"classification_uncertain":c.uncertain,"corpus_root":f.corpus,"fresh":f.fresh,"index_rev":f.rev.or(rev),"freshness_scope":"indexed_manifest_inputs_only_no_new_file_discovery","checked_files":f.checked,"checked_bytes":f.bytes,"checked_bytes_basis":"original_file_bytes","checksum_scope":"decoded_source_utf8","freshness_reasons":f.reasons,"index_used":used>0,"index_use_scope":"same_database_task_session_revision_at_call_start_successful_nonempty","first_offence":prev==0,"mode":mode,"budgets":{"files":MAX_FILES,"total_bytes":MAX_BYTES,"per_file_bytes":4*1024*1024}});
-        if c.kind == "session_start" {
-            let barrier: i64 =
-                tx.query_row("SELECT COALESCE(MAX(seq),0) FROM analysis_calls", [], |r| {
-                    r.get(0)
-                })?;
-            d.facts["index_use_barrier_seq"] = json!(barrier);
-        }
-        let seq: i64 = tx.query_row(
-            "SELECT COALESCE(MAX(seq),0)+1 FROM analysis_gate_decisions",
-            [],
-            |r| r.get(0),
-        )?;
-        let id = uuid::Uuid::new_v4().to_string();
-        tx.execute(
-            "INSERT INTO analysis_gate_decisions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            params![
-                seq,
-                id,
-                session,
-                task,
-                rev,
-                at,
-                mode.as_str(),
-                c.kind,
-                d.verdict,
-                d.rule,
-                serde_json::to_string(&d.facts)?
-            ],
-        )?;
-        let counters = summary(&tx, Some(&task), 5)?;
-        tx.commit()?;
+            let mut epoch: Option<(i64, String)> = None;
+            tx.scan_each("analysis_gate_decisions", |row| {
+                if cell_str(row, "session_id") == Some(session.as_str())
+                    && cell_str(row, "kind") == Some("session_start")
+                {
+                    let row_seq = cell_i64(row, "seq", 0);
+                    if epoch.as_ref().is_none_or(|(prev, _)| row_seq > *prev) {
+                        epoch = Some((row_seq, cell_string(row, "facts_json")));
+                    }
+                }
+                Ok(true)
+            })?;
+            let epoch_gate = epoch.as_ref().map_or(0, |e| e.0);
+            let epoch_call = epoch
+                .as_ref()
+                .map(|e| serde_json::from_str::<Value>(&e.1))
+                .transpose()?
+                .and_then(|v| v["index_use_barrier_seq"].as_i64())
+                .unwrap_or(0);
+
+            let mut used = 0i64;
+            let mut max_call_seq = 0i64;
+            tx.scan_each("analysis_calls", |row| {
+                let row_seq = cell_i64(row, "seq", 0);
+                if row_seq > max_call_seq {
+                    max_call_seq = row_seq;
+                }
+                if cell_str(row, "session_id") == Some(session.as_str())
+                    && cell_str(row, "task") == Some(task.as_str())
+                    && cell_bool_opt(row, "ok") == Some(true)
+                    && cell_i64_opt(row, "finished_ms").is_some_and(|fin| fin >= at - WINDOW_MS)
+                    && cell_i64(row, "started_ms", i64::MAX) <= at
+                    && cell_i64_opt(row, "index_rev") == rev
+                    && cell_i64_opt(row, "evidence_count").is_some_and(|ev| ev > 0)
+                    && row_seq > epoch_call
+                {
+                    used += 1;
+                }
+                Ok(true)
+            })?;
+
+            let mut prev = 0i64;
+            tx.scan_each("analysis_gate_decisions", |row| {
+                let row_seq = cell_i64(row, "seq", 0);
+                let verdict = cell_str(row, "verdict").unwrap_or_default();
+                if cell_str(row, "session_id") == Some(session.as_str())
+                    && cell_str(row, "task") == Some(task.as_str())
+                    && cell_i64_opt(row, "index_rev") == rev
+                    && cell_i64(row, "created_ms", 0) >= at - WINDOW_MS
+                    && cell_str(row, "mode") == Some("ask")
+                    && matches!(verdict, "ask" | "deny")
+                    && row_seq > epoch_gate
+                {
+                    prev += 1;
+                }
+                Ok(true)
+            })?;
+
+            let mut d = decide(&c, &f, mode, used > 0, prev == 0);
+            d.facts = json!({"kind":c.kind,"classification_uncertain":c.uncertain,"corpus_root":f.corpus,"fresh":f.fresh,"index_rev":f.rev.or(rev),"freshness_scope":"indexed_manifest_inputs_only_no_new_file_discovery","checked_files":f.checked,"checked_bytes":f.bytes,"checked_bytes_basis":"original_file_bytes","checksum_scope":"decoded_source_utf8","freshness_reasons":f.reasons,"index_used":used>0,"index_use_scope":"same_database_task_session_revision_at_call_start_successful_nonempty","first_offence":prev==0,"mode":mode,"budgets":{"files":MAX_FILES,"total_bytes":MAX_BYTES,"per_file_bytes":4*1024*1024}});
+            if c.kind == "session_start" {
+                d.facts["index_use_barrier_seq"] = json!(max_call_seq);
+            }
+            let seq = analysis_tasks::next_seq(tx, "analysis_gate_decisions")?;
+            let id = uuid::Uuid::new_v4().to_string();
+            tx.insert_one(
+                "analysis_gate_decisions",
+                RecBuilder::new()
+                    .id(seq.to_string())
+                    .i64("seq", seq)
+                    .str("decision_id", &id)
+                    .str("session_id", &session)
+                    .str("task", &task)
+                    .opt_i64("index_rev", rev)
+                    .i64("created_ms", at)
+                    .str("mode", mode.as_str())
+                    .str("kind", c.kind)
+                    .str("verdict", &d.verdict)
+                    .str("rule", &d.rule)
+                    .str("facts_json", serde_json::to_string(&d.facts)?)
+                    .build(),
+            )?;
+            let counters = summary(tx, Some(&task), 5)?;
+            Ok((id, seq, rev, d, counters))
+        })?;
         Ok(
             json!({"decision_id":id,"seq":seq,"session_id":session,"task":task,"index_rev":rev,"verdict":d.verdict,"rule":d.rule,"reason":d.reason,"context":d.context,"facts":d.facts,"hook":d.hook(),"counters":counters,"command_executed":false,"client_hook_installed":false,"not_checked":["command_safety","runtime_authorization","unindexed_new_files","whether_prior_queries_covered_target_project"]}),
         )
     }
 }
-pub(crate) fn summary(conn: &Connection, task: Option<&str>, limit: usize) -> Result<Value> {
-    let mut stmt=conn.prepare("SELECT verdict,COUNT(*) FROM analysis_gate_decisions WHERE (? IS NULL OR task=?) GROUP BY verdict ORDER BY verdict")?;
-    let rows = stmt.query_map(params![task, task], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+pub(crate) fn summary(r: &impl LinReader, task: Option<&str>, limit: usize) -> Result<Value> {
+    let mut by_verdict: BTreeMap<String, i64> = BTreeMap::new();
+    let mut recent_rows: Vec<(i64, Value)> = Vec::new();
+    r.scan_each("analysis_gate_decisions", |row| {
+        if let Some(t) = task
+            && cell_str(row, "task") != Some(t)
+        {
+            return Ok(true);
+        }
+        let verdict = cell_string(row, "verdict");
+        *by_verdict.entry(verdict.clone()).or_insert(0) += 1;
+        let seq = cell_i64(row, "seq", 0);
+        recent_rows.push((
+            seq,
+            json!({
+                "seq": seq,
+                "session_id": cell_string(row, "session_id"),
+                "index_rev": cell_i64_opt(row, "index_rev"),
+                "created_ms": cell_i64(row, "created_ms", 0),
+                "mode": cell_string(row, "mode"),
+                "kind": cell_string(row, "kind"),
+                "verdict": verdict,
+                "rule": cell_string(row, "rule"),
+            }),
+        ));
+        Ok(true)
     })?;
     let mut counters = json!({"allow":0,"ask":0,"deny":0,"off":0});
-    let mut total = 0;
-    for row in rows {
-        let (k, n) = row?;
+    let mut total = 0i64;
+    for (k, n) in by_verdict {
         counters[k] = json!(n);
         total += n;
     }
-    let mut stmt=conn.prepare("SELECT seq,session_id,index_rev,created_ms,mode,kind,verdict,rule FROM analysis_gate_decisions WHERE (? IS NULL OR task=?) ORDER BY seq DESC LIMIT ?")?;
-    let rows=stmt.query_map(params![task,task,limit.min(50) as i64],|r|Ok(json!({"seq":r.get::<_,i64>(0)?,"session_id":r.get::<_,String>(1)?,"index_rev":r.get::<_,Option<i64>>(2)?,"created_ms":r.get::<_,i64>(3)?,"mode":r.get::<_,String>(4)?,"kind":r.get::<_,String>(5)?,"verdict":r.get::<_,String>(6)?,"rule":r.get::<_,String>(7)?})))?;
-    let recent = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+    let cap = limit.min(50);
+    recent_rows.sort_by_key(|a| std::cmp::Reverse(a.0));
+    recent_rows.truncate(cap);
+    let recent: Vec<Value> = recent_rows.into_iter().map(|(_, v)| v).collect();
     Ok(
-        json!({"decisions":total,"counters":counters,"recent":recent,"recent_truncated":total>limit.min(50) as i64,"effectiveness_measured":false}),
+        json!({"decisions":total,"counters":counters,"recent":recent,"recent_truncated":total>cap as i64,"effectiveness_measured":false}),
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{analysis_tasks::TaskSet, models::Document};
+    use crate::{analysis_tasks::TaskSet, db::SourceManifestWrite, models::Document};
     struct Fixture {
         _root: tempfile::TempDir,
         _db: tempfile::TempDir,
@@ -697,7 +815,7 @@ mod tests {
             let path = root.join("main.rs");
             std::fs::write(&path, "fn main() {}\n").unwrap();
             let db = tempfile::tempdir().unwrap();
-            let store = Store::open(&db.path().join("gate.duckdb")).unwrap();
+            let store = Store::open(&db.path().join("gate.lin")).unwrap();
             store
                 .upsert_document(&Document {
                     id: "file".into(),
@@ -707,7 +825,19 @@ mod tests {
                     ..Default::default()
                 })
                 .unwrap();
-            store.lock().unwrap().execute("INSERT INTO source_manifest VALUES (?,?,13,0,?,'file',current_timestamp,current_timestamp)",params![path.display().to_string(),root.display().to_string(),content_hash("fn main() {}\n")]).unwrap();
+            let path_s = path.display().to_string();
+            let root_s = root.display().to_string();
+            let hash_s = content_hash("fn main() {}\n");
+            store
+                .upsert_source_manifest(SourceManifestWrite {
+                    canonical_path: &path_s,
+                    canonical_root: &root_s,
+                    size_bytes: 13,
+                    mtime_ns: 0,
+                    content_hash: &hash_s,
+                    document_id: "file",
+                })
+                .unwrap();
             store.index_code().unwrap();
             store
                 .analysis_task_set(
@@ -830,16 +960,20 @@ mod tests {
             .unwrap();
         assert_eq!(stats["gate"]["decisions"], 2);
         assert_eq!(stats["gate"]["counters"]["ask"], 1);
-        let text: String = f
-            .store
-            .lock()
-            .unwrap()
-            .query_row(
-                "SELECT facts_json FROM analysis_gate_decisions ORDER BY seq DESC LIMIT 1",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let text: String = {
+            let r_guard = f.store.read().unwrap();
+            let mut latest: Option<(i64, String)> = None;
+            r_guard
+                .scan_each("analysis_gate_decisions", |row| {
+                    let s = cell_i64(row, "seq", 0);
+                    if latest.as_ref().is_none_or(|(prev, _)| s > *prev) {
+                        latest = Some((s, cell_string(row, "facts_json")));
+                    }
+                    Ok(true)
+                })
+                .unwrap();
+            latest.unwrap().1
+        };
         assert!(!text.contains("SECRET_COMMAND_INPUT"));
         f.store
             .analysis_gate(
@@ -929,9 +1063,13 @@ mod tests {
         let f = Fixture::new();
         f.use_index(true, Some(1));
         f.store
-            .lock()
+            .write()
             .unwrap()
-            .execute("UPDATE analysis_calls SET finished_ms=0", [])
+            .update_where(
+                "analysis_calls",
+                lin::query::pred::gt("seq", 0i64),
+                RecBuilder::new().i64("finished_ms", 0).build(),
+            )
             .unwrap();
         assert_eq!(f.call(Mode::Deny)["rule"], "index_unused");
         std::fs::remove_file(&f.path).unwrap();

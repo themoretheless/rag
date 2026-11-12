@@ -1,0 +1,6 @@
+{
+  "Python_version": "3.15.1 (main, Oct 21 2026, 05:55:12) [Clang 21.0.0 (clang-2100.3.34.2)]",
+  "source": "def f(x):\n    𝒙 = 7\n    return x\n",
+  "AST_assignment_binding": "x",
+  "source_executed": false
+}

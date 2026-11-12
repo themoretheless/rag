@@ -379,12 +379,13 @@ async fn run(args: Args) -> Result<()> {
     }
     let dataset = load_dataset(&args.dataset)?;
     let dataset_hash = dataset_content_hash(&args.dataset).map_err(|e| anyhow::anyhow!(e))?;
-    let db_path = std::env::temp_dir().join(format!("rag-eval-{}.duckdb", std::process::id()));
+    let db_path = std::env::temp_dir().join(format!("rag-eval-{}.lin", std::process::id()));
+    let _ = std::fs::remove_dir_all(&db_path);
     let _ = std::fs::remove_file(&db_path);
     if args.settings_a.is_some() {
         let result = evaluate_compare(&args, dataset, &dataset_hash, &db_path).await;
+        let _ = std::fs::remove_dir_all(&db_path);
         let _ = std::fs::remove_file(&db_path);
-        let _ = std::fs::remove_file(db_path.with_extension("duckdb.wal"));
         let report = result?;
         if let Some(path) = &args.compare_out {
             std::fs::write(path, serde_json::to_string_pretty(&report)?)
@@ -413,8 +414,8 @@ async fn run(args: Args) -> Result<()> {
         return Ok(());
     }
     let result = evaluate(&args, dataset, &dataset_hash, &db_path).await;
+    let _ = std::fs::remove_dir_all(&db_path);
     let _ = std::fs::remove_file(&db_path);
-    let _ = std::fs::remove_file(db_path.with_extension("duckdb.wal"));
     let report = result?;
     if let Some(path) = &args.triad_out {
         write_triad_report(path, &report)?;
@@ -1230,7 +1231,7 @@ fn ms(started: Instant) -> f64 {
 
 fn measured_throughput_qps(samples: usize, total_search_ms: f64) -> Option<f64> {
     (samples > 0 && total_search_ms.is_finite() && total_search_ms > 0.0)
-        .then(|| samples as f64 * 1_000.0 / total_search_ms)
+        .then_some(samples as f64 * 1_000.0 / total_search_ms)
 }
 
 #[cfg(any(target_os = "linux", test))]

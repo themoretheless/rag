@@ -1,0 +1,17 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+error[E0603]: module `analysis` is private
+   --> src/mcp/analysis.rs:437:59
+    |
+437 |         Parameters(params): Parameters<crate::code_index::analysis::EntryPointsQuery>,
+    |                                                           ^^^^^^^^  ---------------- struct `EntryPointsQuery` is not publicly re-exported
+    |                                                           |
+    |                                                           private module
+    |
+note: the module `analysis` is defined here
+   --> src/code_index.rs:4:1
+    |
+  4 | mod analysis;
+    | ^^^^^^^^^^^^^
+
+For more information about this error, try `rustc --explain E0603`.
+error: could not compile `rag-mcp` (lib test) due to 1 previous error

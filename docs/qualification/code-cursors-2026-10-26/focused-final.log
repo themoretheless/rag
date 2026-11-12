@@ -1,0 +1,16 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 35.74s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 8 tests
+test code_index::code_read::tests::code_cursor_corrupt_child_boundary_returns_error_without_poisoning_store ... ok
+test code_index::code_read::tests::code_cursor_byte_windows_reject_split_utf8_and_support_empty_boundary ... ok
+test code_index::code_read::tests::code_cursor_delimited_ids_match_array_and_have_bounded_parsing ... ok
+test code_index::code_read::tests::code_cursor_single_large_line_resumes_with_changed_page_budget ... ok
+test code_index::code_read::tests::code_cursor_rechunk_changes_or_deleted_ids_conflict_without_source_revision_change ... ok
+test code_index::code_read::tests::code_cursor_changed_queries_or_stale_sources_conflict_before_lookup ... ok
+test code_index::code_read::tests::code_cursor_partially_overlapping_chunks_do_not_repeat_across_pages ... ok
+test code_index::code_read::tests::code_cursor_segment_limit_and_container_metadata_resume_without_missing_bytes ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1271 filtered out; finished in 1.83s
+

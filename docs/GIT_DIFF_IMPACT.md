@@ -81,6 +81,10 @@ as an indirect impact. Candidate/static relationships retain their uncertainty;
 `relations=references` also admits bound values/types and `all` admits
 inheritance/override candidates. Runtime impact and absence are never proven.
 
+Analysis contract 2 preserves each path's exact captured trait-consumer states
+and compares normalized context bindings across source sides. See
+[context paths and binding comparison](GIT_TRAIT_CONTEXTS.md).
+
 Limits are explicit and clamped: source captures across both sides default to
 2000 files (cap 10000) and 8 MiB (1 KiB..128 MiB), with 4 MiB per file. Source
 revalidation adds reads; skip-worktree projection may add object capture work.

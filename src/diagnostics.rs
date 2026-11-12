@@ -1050,8 +1050,8 @@ mod tests {
             .unwrap()
             .is_empty());
         let generation = {
-            let conn = store.lock().unwrap();
-            crate::db::fts_generation_state(&conn).unwrap()
+            let r = store.read().unwrap();
+            crate::db::fts_generation_state(&r).unwrap()
         };
         assert!(generation.dirty, "next lexical read must retry FTS");
         assert!(store

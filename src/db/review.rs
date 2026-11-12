@@ -1,12 +1,14 @@
-//! Durable, local review drafts. Acceptance participates in the wiki transaction.
+//! Durable, local review drafts over `lin`. Acceptance participates in the wiki transaction.
+
+use serde::{Deserialize, Serialize};
+
+use super::lin_engine::{cell_i64_opt, cell_opt_string, cell_string, LinReader, LinWriter, RecBuilder};
 use crate::{
     db::Store,
     error::{AppError, Result},
     models::Document,
     util::content_hash,
 };
-use duckdb::{params, Connection, OptionalExt};
-use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReviewSource {
@@ -15,6 +17,7 @@ pub struct ReviewSource {
     pub content_hash: Option<String>,
     pub content: Option<String>,
 }
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Proposal {
     pub id: String,
@@ -25,37 +28,45 @@ pub struct Proposal {
     pub status: String,
 }
 
-fn read(conn: &Connection, id: &str) -> Result<Proposal> {
-    let payload: Option<String> = conn
-        .query_row(
-            "SELECT payload FROM wiki_proposals WHERE id = ?",
-            [id],
-            |r| r.get(0),
-        )
-        .optional()?;
-    Ok(serde_json::from_str(&payload.ok_or_else(|| {
-        AppError::not_found("proposal not found")
-    })?)?)
+fn read(r: &impl LinReader, id: &str) -> Result<Proposal> {
+    let payload = r
+        .get_by_id("wiki_proposals", id)?
+        .and_then(|row| cell_opt_string(&row, "payload"))
+        .ok_or_else(|| AppError::not_found("proposal not found"))?;
+    Ok(serde_json::from_str(&payload)?)
 }
-fn save(conn: &Connection, proposal: &Proposal) -> Result<()> {
-    conn.execute(
-        "INSERT INTO wiki_proposals VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET payload \
-    = excluded.payload",
-        params![proposal.id, serde_json::to_string(proposal)?],
-    )?;
-    Ok(())
+
+fn save(w: &mut impl LinWriter, proposal: &Proposal) -> Result<()> {
+    let payload = serde_json::to_string(proposal)?;
+    let rec = RecBuilder::new()
+        .id(&proposal.id)
+        .str("payload", &payload)
+        .build();
+    w.upsert("wiki_proposals", rec)
 }
+
 /// Load one wiki review proposal by id.
 pub fn get(store: &Store, id: &str) -> Result<Proposal> {
-    read(&*store.lock()?, id)
+    let r = store.read()?;
+    read(&r, id)
 }
+
 /// All wiki review proposals, ordered by id.
 pub fn list(store: &Store) -> Result<Vec<Proposal>> {
-    let conn = store.lock()?;
-    let mut stmt = conn.prepare("SELECT payload FROM wiki_proposals ORDER BY id")?;
-    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
-    rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect()
+    let r = store.read()?;
+    let mut pairs = r.filter_map_rows("wiki_proposals", |row| {
+        Ok(Some((
+            cell_string(row, "id"),
+            cell_string(row, "payload"),
+        )))
+    })?;
+    pairs.sort_by(|a, b| a.0.cmp(&b.0));
+    pairs
+        .into_iter()
+        .map(|(_, raw)| Ok(serde_json::from_str(&raw)?))
+        .collect()
 }
+
 /// Store a new pending proposal for `base` with its source snapshots.
 /// Building those snapshots is wiki policy (`wiki::create_review_proposal`).
 pub fn insert_new(store: &Store, base: Document, sources: Vec<ReviewSource>) -> Result<Proposal> {
@@ -67,9 +78,11 @@ pub fn insert_new(store: &Store, base: Document, sources: Vec<ReviewSource>) -> 
         revision: 1,
         status: "pending".into(),
     };
-    save(&*store.lock()?, &proposal)?;
+    let mut w = store.write()?;
+    save(&mut w, &proposal)?;
     Ok(proposal)
 }
+
 /// Replace a pending proposal's content (optionally rejecting it); fails
 /// with a conflict unless it is still pending at `revision`.
 pub fn update(
@@ -79,8 +92,8 @@ pub fn update(
     content: String,
     reject: bool,
 ) -> Result<Proposal> {
-    let conn = store.lock()?;
-    let mut proposal = read(&conn, id)?;
+    let mut w = store.write()?;
+    let mut proposal = read(&w, id)?;
     if proposal.status != "pending" || proposal.revision != revision {
         return Err(AppError::conflict("proposal changed; reload it"));
     }
@@ -89,13 +102,13 @@ pub fn update(
     if reject {
         proposal.status = "rejected".into();
     }
-    save(&conn, &proposal)?;
+    save(&mut w, &proposal)?;
     Ok(proposal)
 }
 
 /// Called with the document transaction open. Any later error rolls acceptance back.
 pub(crate) fn accept_locked(
-    conn: &Connection,
+    w: &mut impl LinWriter,
     doc: &Document,
     audit: &crate::models::OpsLogEntry,
 ) -> Result<()> {
@@ -106,7 +119,7 @@ pub(crate) fn accept_locked(
     let id = payload["proposal_id"]
         .as_str()
         .ok_or_else(|| AppError::config("proposal id missing"))?;
-    let mut proposal = read(conn, id)?;
+    let mut proposal = read(w, id)?;
     if proposal.status != "pending"
         || payload["proposal_revision"].as_i64() != Some(proposal.revision)
         || proposal.base.id != doc.id
@@ -115,31 +128,29 @@ pub(crate) fn accept_locked(
     {
         return Err(AppError::conflict("proposal changed; reload it"));
     }
-    let revision: Option<i64> = conn
-        .query_row(
-            "SELECT revision FROM documents WHERE id = ?",
-            [&doc.id],
-            |r| r.get(0),
-        )
-        .optional()?;
+    let revision = w
+        .get_by_id("documents", &doc.id)?
+        .and_then(|row| cell_i64_opt(&row, "revision"));
     if revision != Some(proposal.base.revision) {
         return Err(AppError::conflict("article changed after review started"));
     }
     for source in &proposal.sources {
-        let body: Option<String> = conn
-            .query_row(
-                "SELECT content FROM documents WHERE id = ? OR (? <> '' AND uri = ?) ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END LIMIT 1",
-                params![source.document_id, source.uri, source.uri, source.document_id],
-                |r| r.get(0),
-            )
-            .optional()?;
+        let body: Option<String> = if let Some(row) = w.get_by_id("documents", &source.document_id)? {
+            Some(cell_string(&row, "content"))
+        } else if !source.uri.is_empty() {
+            w.find_by_eq("documents", "uri", &source.uri)?
+                .first()
+                .map(|row| cell_string(row, "content"))
+        } else {
+            None
+        };
         if body.as_deref().map(content_hash) != source.content_hash {
             return Err(AppError::conflict("source changed after review started"));
         }
     }
     proposal.status = "accepted".into();
     proposal.revision += 1;
-    save(conn, &proposal)
+    save(w, &proposal)
 }
 
 #[cfg(test)]

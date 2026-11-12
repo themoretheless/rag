@@ -1,0 +1,18 @@
+{
+  "status": "verified_release_quality_pair",
+  "server_binary_sha256": "dab96adb738e01528410810122a0a7002edfa5ae1090761963be0201be3ea3fe",
+  "helper_binary_sha256": "441b15167a0901a8f342877af431f23c0943ca578d22e03ba93f23a8cbbff7e5",
+  "source_tree_sha256": "06d514e6540b8df962ca84333f75e5e8f6a2660904e6dc9150d7e5f25c248659",
+  "helper_manifest_sha256": "e29fc493d3186e9c8893f92a8d9d140fa4303e2f4d39fa4db93f7d0d56a8d4a3",
+  "compiled_library_inputs": 838,
+  "same_original_cargo_runtime_libraries": true,
+  "full_metadata_and_objects_explicit": true,
+  "no_dependency_feature_rebuild": true,
+  "production_database_opened": false,
+  "corpus_quality_qualified": false,
+  "performance_qualified": false,
+  "limitations": [
+    "same compiled server libraries, not identical final executable instructions after thin LTO",
+    "toolchain/SDK external inputs remain subject to the server build provenance limits"
+  ]
+}

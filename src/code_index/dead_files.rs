@@ -1,11 +1,124 @@
 //! Stored-source file candidates and positive literal refutations. Never deletion proof.
 use super::*;
+use crate::db::lin_engine::{cell_i64_opt, cell_opt_string, cell_str, cell_string, LinReader};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 const PER_SOURCE_BYTES: usize = 2 * 1024 * 1024;
-pub(super) const SOURCES: &str = "FROM documents d LEFT JOIN code_index_source_blobs b ON b.content_hash=json_extract_string(try_cast(d.metadata_json AS JSON),'$.code_source_hash') WHERE d.source_file IS NOT NULL AND COALESCE(d.status,'active') NOT IN ('archived','tombstone','consolidated') AND (CAST(? AS VARCHAR) IS NULL OR d.wing=?)";
-pub(super) const TEXT: &str = "CASE WHEN json_extract_string(try_cast(d.metadata_json AS JSON),'$.code_source_hash') IS NOT NULL THEN b.content ELSE d.content END";
+
+pub(super) struct StoredSourceMeta {
+    pub id: String,
+    pub path: String,
+    pub project: Option<String>,
+    pub revision: i64,
+    pub preserved: Option<String>,
+    pub bytes: Option<usize>,
+    pub metadata_valid: bool,
+    pub shebang: bool,
+}
+
+pub(super) fn list_stored_source_meta(
+    r: &impl LinReader,
+    project: Option<&str>,
+) -> Result<Vec<StoredSourceMeta>> {
+    let mut list = Vec::new();
+    r.scan_each("documents", |row| {
+        let Some(source_file) = cell_opt_string(row, "source_file") else {
+            return Ok(true);
+        };
+        let status = cell_str(row, "status").unwrap_or("active");
+        if matches!(status, "archived" | "tombstone" | "consolidated") {
+            return Ok(true);
+        }
+        let wing = cell_opt_string(row, "wing");
+        if let Some(p) = project
+            && wing.as_deref() != Some(p)
+        {
+            return Ok(true);
+        }
+        let id = cell_string(row, "id");
+        let revision = cell_i64_opt(row, "revision").unwrap_or(1);
+        let meta_raw = cell_str(row, "metadata_json").unwrap_or("{}");
+        let parsed_meta = serde_json::from_str::<serde_json::Value>(meta_raw);
+        let metadata_valid = parsed_meta.is_ok();
+        let preserved = parsed_meta
+            .ok()
+            .and_then(|v| v.get("code_source_hash").and_then(|h| h.as_str()).map(str::to_string));
+
+        let (bytes, shebang) = if let Some(ref hash) = preserved {
+            if let Some(blob) = r.get_by_id("code_index_source_blobs", hash)?
+                && let Some(content) = cell_str(&blob, "content")
+            {
+                (Some(content.len()), content.starts_with("#!"))
+            } else {
+                (None, false)
+            }
+        } else {
+            let content = cell_str(row, "content").unwrap_or("");
+            (Some(content.len()), content.starts_with("#!"))
+        };
+
+        list.push(StoredSourceMeta {
+            id,
+            path: source_file,
+            project: wing,
+            revision,
+            preserved,
+            bytes,
+            metadata_valid,
+            shebang,
+        });
+        Ok(true)
+    })?;
+    list.sort_by(|a, b| (&a.path, &a.id).cmp(&(&b.path, &b.id)));
+    Ok(list)
+}
+
+pub(super) fn read_stored_source_bounded(
+    r: &impl LinReader,
+    doc_id: &str,
+    project: Option<&str>,
+    max_bytes: usize,
+) -> Result<Option<String>> {
+    let Some(row) = r.get_by_id("documents", doc_id)? else {
+        return Ok(None);
+    };
+    if cell_str(&row, "source_file").is_none() {
+        return Ok(None);
+    }
+    let status = cell_str(&row, "status").unwrap_or("active");
+    if matches!(status, "archived" | "tombstone" | "consolidated") {
+        return Ok(None);
+    }
+    if let Some(p) = project
+        && cell_str(&row, "wing") != Some(p)
+    {
+        return Ok(None);
+    }
+    let meta_raw = cell_str(&row, "metadata_json").unwrap_or("{}");
+    let preserved = serde_json::from_str::<serde_json::Value>(meta_raw)
+        .ok()
+        .and_then(|v| v.get("code_source_hash").and_then(|h| h.as_str()).map(str::to_string));
+    if let Some(hash) = preserved {
+        let Some(blob) = r.get_by_id("code_index_source_blobs", &hash)? else {
+            return Ok(None);
+        };
+        let Some(content) = cell_str(&blob, "content") else {
+            return Ok(None);
+        };
+        if content.len() > max_bytes {
+            return Ok(None);
+        }
+        Ok(Some(content.to_string()))
+    } else {
+        let content = cell_str(&row, "content").unwrap_or("");
+        if content.len() > max_bytes {
+            return Ok(None);
+        }
+        Ok(Some(content.to_string()))
+    }
+}
+
 #[derive(Serialize)]
 struct File {
     document_id: String,
@@ -51,30 +164,25 @@ impl Store {
             .dead_code_max_bytes
             .unwrap_or(8 * 1024 * 1024)
             .clamp(1, 64 * 1024 * 1024);
-        let mut connection = self.lock()?;
-        let tx = connection.transaction()?;
+        let guard = self.read()?;
+        let r = &*guard;
         // This existing source/checksum validation phase is deliberately outside
         // the literal-scan budget. Do not present that budget as total query IO/RSS.
-        let snapshot = snapshot_locked(&tx, q.dead_code_project.as_deref())?;
-        let sql=format!("SELECT d.id,d.source_file,d.wing,COALESCE(d.revision,1),json_extract_string(try_cast(d.metadata_json AS JSON),'$.code_source_hash'),octet_length(encode({TEXT})),json_valid(d.metadata_json),COALESCE(starts_with({TEXT},'#!'),false) {SOURCES} ORDER BY d.source_file,d.id");
-        let mut stmt = tx.prepare(&sql)?;
-        let rows = stmt.query_map(params![q.dead_code_project, q.dead_code_project], |r| {
-            Ok(File {
-                document_id: r.get(0)?,
-                path: r.get(1)?,
-                project: r.get(2)?,
-                revision: r.get(3)?,
-                preserved: r.get(4)?,
-                bytes: r
-                    .get::<_, Option<i64>>(5)?
-                    .and_then(|n| usize::try_from(n).ok()),
-                metadata_valid: r.get(6)?,
-                shebang: r.get(7)?,
+        let snapshot = snapshot_locked(r, q.dead_code_project.as_deref())?;
+        let mut files: Vec<File> = list_stored_source_meta(r, q.dead_code_project.as_deref())?
+            .into_iter()
+            .map(|m| File {
+                document_id: m.id,
+                path: m.path,
+                project: m.project,
+                revision: m.revision,
+                preserved: m.preserved,
+                bytes: m.bytes,
+                metadata_valid: m.metadata_valid,
+                shebang: m.shebang,
                 content_hash: None,
             })
-        })?;
-        let mut files = rows.collect::<std::result::Result<Vec<_>, _>>()?;
-        drop(stmt);
+            .collect();
         let by_id: HashMap<_, _> = files
             .iter()
             .enumerate()
@@ -236,7 +344,6 @@ impl Store {
         let mut bytes = 0usize;
         let mut read = 0usize;
         let mut unavailable = 0usize;
-        let source_sql=format!("SELECT CASE WHEN octet_length(encode({TEXT}))<=? THEN {TEXT} ELSE NULL END {SOURCES} AND d.id=?");
         for i in 0..files.len() {
             let f = &files[i];
             let size = f.bytes.unwrap_or(usize::MAX);
@@ -250,15 +357,11 @@ impl Store {
                 continue;
             }
             read += 1;
-            let source: Option<String> = tx.query_row(
-                &source_sql,
-                params![
-                    PER_SOURCE_BYTES as i64,
-                    q.dead_code_project,
-                    q.dead_code_project,
-                    f.document_id
-                ],
-                |r| r.get(0),
+            let source = read_stored_source_bounded(
+                r,
+                &f.document_id,
+                q.dead_code_project.as_deref(),
+                PER_SOURCE_BYTES,
             )?;
             let Some(source) = source else {
                 complete.insert(f.project.clone(), false);
@@ -345,7 +448,6 @@ impl Store {
             || !snapshot.parse_errors.is_empty()
             || snapshot.file_resource_targets.iter().any(|t| !t.fresh());
         let result = serde_json::json!({"view":"files","query_contract_version":1,"index_rev":snapshot.index_revision,"items":items.iter().take(limit).collect::<Vec<_>>(),"total":items.len(),"truncated":items.len()>limit,"refuted":refuted.iter().take(limit).collect::<Vec<_>>(),"refuted_total":refuted.len(),"refuted_truncated":refuted.len()>limit,"not_checked":unknown.iter().take(limit).collect::<Vec<_>>(),"not_checked_total":unknown.len(),"not_checked_truncated":unknown.len()>limit,"files_candidates":candidates.len(),"files_fully_checked":fully_checked,"protected_files":protected.len(),"protected":protected.iter().take(limit).collect::<Vec<_>>(),"protected_truncated":protected.len()>limit,"static_analysis_only":true,"analysis_incomplete":incomplete,"literal_source_documents":files.len(),"literal_source_reads":read,"literal_bytes_loaded":bytes,"literal_sources_unavailable_or_skipped":unavailable,"literal_source_projects_complete":complete.iter().map(|(p,c)|serde_json::json!({"project":p,"complete":c})).collect::<Vec<_>>(),"budgets":{"candidate_checks":checks,"source_reads":max_docs,"literal_decoded_bytes":max_bytes,"per_source_bytes":PER_SOURCE_BYTES,"graph_source_validation_included":false},"source":"active_stored_source_file_documents","observation_consistency":"single_read_transaction","text_included":false,"runtime_usage_proven":false,"deletion_safe":false,"graph_extraction_exhaustive":false,"stale_documents":snapshot.stale_documents,"unindexed_documents":snapshot.unindexed_documents,"parse_errors":snapshot.parse_errors,"resource_target_inventory_available":snapshot.resource_target_inventory_available,"resource_target_diagnostics":resource_targets::diagnostics(&snapshot.file_resource_targets,limit)});
-        tx.commit()?;
         Ok(result)
     }
 }

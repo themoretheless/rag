@@ -1,0 +1,53 @@
+{
+  "status": "passed",
+  "workspace": {
+    "passed": 1623,
+    "failed": 0,
+    "ignored": 1
+  },
+  "mcp_exit_codes": {
+    "python_data_flow": 0,
+    "phpunit_host_impact": 0,
+    "phpunit_effective": 0,
+    "affected_php_contexts": 0,
+    "affected_tests": 0,
+    "table_impact": 0,
+    "trace_php_contexts": 0,
+    "git_php_contexts": 0
+  },
+  "binary_sha256_before": "d347f752a8728dbda34aff2784b253fbc4a908a66443fd0dd4339296f1cbca5c",
+  "binary_sha256_after": "d347f752a8728dbda34aff2784b253fbc4a908a66443fd0dd4339296f1cbca5c",
+  "source_hashes_before": {
+    "src/code_index.rs": "6c78b576f2c7bc40a459d570bec07d89f7f64224294f4bb7db50898027c38df0",
+    "src/code_index/data_flow.rs": "8b0f957878b246423d932a233327c6d357c73751b3938a208aa8a056d2ebe71d",
+    "src/code_index/data_flow/capture.rs": "64c38bd6c90054ee70e5fbe6b055d38779bacf6a5e97b718a67bc94c6f36260f",
+    "src/code_index/data_flow/query.rs": "b1ddc3e16869dae9700d1211f526f985cc9848a59efecc708ab85f416947deb9",
+    "src/code_index/data_flow/tests.rs": "53e411181d8f7cd64ddcddfd1d2226a386bb8be7ff2c3119995b7adfa758572c",
+    "src/code_index/history.rs": "2f91c0d66b8b94a54107c0687af70278daef31d593b95d62096ff8be8d67fd47",
+    "src/code_index/status.rs": "e1228b269ceb85bbfe412aad71d2ea77d4043c56ba85fdaa366b0bd8283b19af",
+    "src/mcp/analysis.rs": "af6f78951ed7fc18ee9138dacd749a134c14cacc2ab461580443654b2acecf64",
+    "src/access.rs": "fce43d418b8bfcdfead4d37e02eb4a2306ad12a4df5fd9d92e90fb452639cca7",
+    "src/analysis_tasks.rs": "ce0da592b4fc44b12f9e41b5d7371d92a9c3781d7730ff7b2a929c63a6cf7732",
+    "src/telemetry.rs": "561fae710e5279d7069ebc07da7dfcd5506771bc3296cdb2468658ca5ea7a202",
+    "scripts/smoke_python_data_flow.py": "7df27ce89a3eea5f53e3f7e1bdb57f4b04e62577aee1ac6486e7a956010e00b3"
+  },
+  "source_hashes_after": {
+    "src/code_index.rs": "6c78b576f2c7bc40a459d570bec07d89f7f64224294f4bb7db50898027c38df0",
+    "src/code_index/data_flow.rs": "8b0f957878b246423d932a233327c6d357c73751b3938a208aa8a056d2ebe71d",
+    "src/code_index/data_flow/capture.rs": "64c38bd6c90054ee70e5fbe6b055d38779bacf6a5e97b718a67bc94c6f36260f",
+    "src/code_index/data_flow/query.rs": "b1ddc3e16869dae9700d1211f526f985cc9848a59efecc708ab85f416947deb9",
+    "src/code_index/data_flow/tests.rs": "53e411181d8f7cd64ddcddfd1d2226a386bb8be7ff2c3119995b7adfa758572c",
+    "src/code_index/history.rs": "2f91c0d66b8b94a54107c0687af70278daef31d593b95d62096ff8be8d67fd47",
+    "src/code_index/status.rs": "e1228b269ceb85bbfe412aad71d2ea77d4043c56ba85fdaa366b0bd8283b19af",
+    "src/mcp/analysis.rs": "af6f78951ed7fc18ee9138dacd749a134c14cacc2ab461580443654b2acecf64",
+    "src/access.rs": "fce43d418b8bfcdfead4d37e02eb4a2306ad12a4df5fd9d92e90fb452639cca7",
+    "src/analysis_tasks.rs": "ce0da592b4fc44b12f9e41b5d7371d92a9c3781d7730ff7b2a929c63a6cf7732",
+    "src/telemetry.rs": "561fae710e5279d7069ebc07da7dfcd5506771bc3296cdb2468658ca5ea7a202",
+    "scripts/smoke_python_data_flow.py": "7df27ce89a3eea5f53e3f7e1bdb57f4b04e62577aee1ac6486e7a956010e00b3"
+  },
+  "shared_checkout": true,
+  "frozen_source_checkout": false,
+  "analyzed_Python_PHP_SQL_executed": false,
+  "production_database_touched": false,
+  "full_RAGRAF_parity_proven": false
+}

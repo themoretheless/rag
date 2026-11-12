@@ -90,7 +90,7 @@ async fn run(mode: Mode) -> anyhow::Result<Value> {
     if config.http_bind.is_some() {
         return remote(&config, &p, mode).await;
     }
-    if !config.db_path.is_file() {
+    if !config.db_path.exists() {
         let d = Decision {
             verdict: if mode == Mode::Off { "off" } else { "allow" }.into(),
             rule: "no_local_database".into(),

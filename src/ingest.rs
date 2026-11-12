@@ -1179,14 +1179,10 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let config = test_config(temp.path().join("source-manifest-atomic.duckdb"));
         let store = Store::open(&config.db_path).expect("store");
-        store
-            .lock()
-            .unwrap()
-            .execute_batch("DROP TABLE source_manifest")
-            .unwrap();
         let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
 
-        let error = IngestService::new(&store, &embedder, &config)
+        crate::db::source_manifest::TEST_FAIL_SOURCE_MANIFEST_UPSERT.with(|f| f.set(true));
+        let res = IngestService::new(&store, &embedder, &config)
             .ingest_source(
                 IngestCommand {
                     source_file: Some("/sources/atomic.md".into()),
@@ -1201,8 +1197,9 @@ mod tests {
                     mtime_ns: 1,
                 },
             )
-            .await
-            .expect_err("manifest write must fail");
+            .await;
+        crate::db::source_manifest::TEST_FAIL_SOURCE_MANIFEST_UPSERT.with(|f| f.set(false));
+        let error = res.expect_err("manifest write must fail");
 
         assert!(error.to_string().contains("source_manifest"));
         assert!(store.list_documents().unwrap().is_empty());

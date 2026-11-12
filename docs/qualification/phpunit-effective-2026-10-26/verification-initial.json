@@ -1,0 +1,51 @@
+{
+  "status": "failed",
+  "workspace": {
+    "passed": 1612,
+    "failed": 0,
+    "ignored": 1
+  },
+  "mcp_exit_codes": {
+    "phpunit_effective": 1,
+    "phpunit_entrypoints": 0,
+    "affected_php_contexts": 0,
+    "affected_tests": 0,
+    "table_impact": 0,
+    "php_trait_paths": 0,
+    "trace_php_contexts": 0,
+    "git_php_contexts": 0
+  },
+  "binary_sha256_before": "df4e15a8cfb4162d1ab465b31d63694a241ceb98dd53bfa522a599cd013a711d",
+  "binary_sha256_after": "df4e15a8cfb4162d1ab465b31d63694a241ceb98dd53bfa522a599cd013a711d",
+  "source_hashes_before": {
+    "src/code_index.rs": "4fd4a26fbc333511f4565c9fedeff99e42285089bd3728fe6c038a350d2d39f5",
+    "src/code_index/analysis.rs": "38f6ed41eaabee71bae788c024a0b59aebb5fc1b116adc418dabeb5717052fcf",
+    "src/code_index/affected_tests.rs": "200ea7192677fc804bd3986ac3414465e9af1b1e3d946e0f56745996871d8866",
+    "src/code_index/impact.rs": "f7ec9deff386922b005a020e7947cb2902b6e250c7edf64d9972189dd1905888",
+    "src/code_index/impact/context_walk.rs": "f1861383bdc1948e9d267fef9942e267cc74dcb8d1e7ba8aa972fa5a66d044ce",
+    "src/code_index/php_names/phpunit.rs": "87c71fb651d8dfb42dce85ba04d5993841b14527b58c7be9be6c53fdfb1f65e0",
+    "src/code_index/php_names/tests.rs": "4ad3f937a5691284979eda5b18c320833b5ff1f72fcc2eacde7039d0029a969f",
+    "src/code_index/history.rs": "9681e4c25d6cea56589d5756b1dfb7d5b8f7f2b8c846a585dddcb4d3d089b6a0",
+    "src/mcp/analysis.rs": "452943520522c183e4c39bd234986dc1068b70533df7a53739e7856fa695cab4",
+    "scripts/smoke_phpunit_effective.py": "0e4738a3acb32a686da242f27624124008fbd78f26276f42efec904aaad4f212",
+    "scripts/smoke_phpunit_entrypoints.py": "57537932410e9968db409ef2ddf3f1cd051042d64c13a406377e32a70831f42c"
+  },
+  "source_hashes_after": {
+    "src/code_index.rs": "4fd4a26fbc333511f4565c9fedeff99e42285089bd3728fe6c038a350d2d39f5",
+    "src/code_index/analysis.rs": "38f6ed41eaabee71bae788c024a0b59aebb5fc1b116adc418dabeb5717052fcf",
+    "src/code_index/affected_tests.rs": "200ea7192677fc804bd3986ac3414465e9af1b1e3d946e0f56745996871d8866",
+    "src/code_index/impact.rs": "f7ec9deff386922b005a020e7947cb2902b6e250c7edf64d9972189dd1905888",
+    "src/code_index/impact/context_walk.rs": "f1861383bdc1948e9d267fef9942e267cc74dcb8d1e7ba8aa972fa5a66d044ce",
+    "src/code_index/php_names/phpunit.rs": "87c71fb651d8dfb42dce85ba04d5993841b14527b58c7be9be6c53fdfb1f65e0",
+    "src/code_index/php_names/tests.rs": "4ad3f937a5691284979eda5b18c320833b5ff1f72fcc2eacde7039d0029a969f",
+    "src/code_index/history.rs": "9681e4c25d6cea56589d5756b1dfb7d5b8f7f2b8c846a585dddcb4d3d089b6a0",
+    "src/mcp/analysis.rs": "452943520522c183e4c39bd234986dc1068b70533df7a53739e7856fa695cab4",
+    "scripts/smoke_phpunit_effective.py": "0e4738a3acb32a686da242f27624124008fbd78f26276f42efec904aaad4f212",
+    "scripts/smoke_phpunit_entrypoints.py": "57537932410e9968db409ef2ddf3f1cd051042d64c13a406377e32a70831f42c"
+  },
+  "shared_checkout": true,
+  "frozen_source_checkout": false,
+  "PHP_or_SQL_executed": false,
+  "production_database_touched": false,
+  "full_RAGRAF_parity_proven": false
+}

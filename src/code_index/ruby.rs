@@ -991,6 +991,7 @@ impl<'a> Resolver<'a> {
         candidates.sort();
         candidates.dedup();
         CallEdge {
+            context_evidence: None,
             reference: r.clone(),
             resolution: match candidates.len() {
                 0 => "unresolved",
@@ -1456,22 +1457,10 @@ mod integration_tests {
         store.upsert_document(&client).unwrap();
         store.index_code().unwrap();
         assert_eq!(store.code_index_diff(&dq).unwrap(), diff);
-        let c = store.lock().unwrap();
-        let raw: String = c
-            .query_row(
-                "SELECT graph_json FROM code_index_revisions WHERE id=1",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let raw = crate::code_index::test_get_rev_graph_json(&store, 1);
         let mut graph: serde_json::Value = serde_json::from_str(&raw).unwrap();
         graph.as_object_mut().unwrap().remove("ruby_syntax_format");
-        c.execute(
-            "UPDATE code_index_revisions SET graph_json=? WHERE id=1",
-            [graph.to_string()],
-        )
-        .unwrap();
-        drop(c);
+        crate::code_index::test_set_rev_graph_json(&store, 1, &graph.to_string());
         let legacy = store.code_index_diff(&dq).unwrap();
         assert_eq!(legacy["ruby_relations_available"], false);
         assert!(!legacy["relations_removed"]

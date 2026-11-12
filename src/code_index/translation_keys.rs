@@ -576,25 +576,10 @@ mod cache_tests {
             })
             .unwrap();
         store.index_code().unwrap();
-        let payload: String = store
-            .lock()
-            .unwrap()
-            .query_row(
-                "SELECT payload FROM code_index_documents WHERE document_id='a'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let payload = crate::code_index::test_get_code_doc_payload(&store, "a");
         let mut json: serde_json::Value = serde_json::from_str(&payload).unwrap();
         json.as_object_mut().unwrap().remove("translation_keys");
-        store
-            .lock()
-            .unwrap()
-            .execute(
-                "UPDATE code_index_documents SET payload=? WHERE document_id='a'",
-                [json.to_string()],
-            )
-            .unwrap();
+        crate::code_index::test_set_code_doc_payload(&store, "a", &json.to_string());
         let query = ReferenceQuery {
             key: Some("key".into()),
             project: Some("p".into()),

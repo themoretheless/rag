@@ -1,0 +1,515 @@
+{
+  "contract_version": 1,
+  "status": "failed_qualification",
+  "qualification_only": true,
+  "binary_sha256": "dab96adb738e01528410810122a0a7002edfa5ae1090761963be0201be3ea3fe",
+  "runner_sha256": "677409a904bde5eba6be3bfdac9cb54ee34fc5e8674ebb09f4cbb888bf7676c7",
+  "client_sha256": "78f44eb3b5812426c7d78f0d3f919258c5e7a732c071de17dc73716a2dff3309",
+  "build_manifest": {
+    "contract_version": 1,
+    "status": "built_verified",
+    "profile": "release",
+    "binary_path": "/private/tmp/rag-index-release-20261026/bin/rag-mcp",
+    "binary_sha256": "dab96adb738e01528410810122a0a7002edfa5ae1090761963be0201be3ea3fe",
+    "source_tree_sha256": "06d514e6540b8df962ca84333f75e5e8f6a2660904e6dc9150d7e5f25c248659",
+    "source_inputs_sha256": "4aa3a01ad66bdcb0ed9cdc1cba3bab374de603b577abc39b51132bc1895ae9cf",
+    "cargo_lock_sha256": "bec738712304fba10e5fc85af59ca588df50024c39b85c70fadcc9665266363b",
+    "compiler_artifact": {
+      "reason": "compiler-artifact",
+      "package_id": "path+file:///private/tmp/rag-index-release-20261026/source-0#rag-mcp@0.1.0",
+      "manifest_path": "/private/tmp/rag-index-release-20261026/source-0/Cargo.toml",
+      "target": {
+        "kind": [
+          "bin"
+        ],
+        "crate_types": [
+          "bin"
+        ],
+        "name": "rag-mcp",
+        "src_path": "/private/tmp/rag-index-release-20261026/source-0/src/main.rs",
+        "edition": "2021",
+        "doc": true,
+        "doctest": false,
+        "test": true
+      },
+      "profile": {
+        "opt_level": "3",
+        "debuginfo": 0,
+        "debug_assertions": false,
+        "overflow_checks": false,
+        "test": false
+      },
+      "features": [
+        "default",
+        "tokenizers"
+      ],
+      "filenames": [
+        "/private/tmp/rag-index-release-20261026/target/release/rag-mcp"
+      ],
+      "executable": "/private/tmp/rag-index-release-20261026/target/release/rag-mcp",
+      "fresh": false
+    },
+    "command": [
+      "/Users/themoretheless/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/cargo",
+      "--config",
+      "build.rustflags=[]",
+      "--config",
+      "build.rustc-wrapper=\"\"",
+      "--config",
+      "build.rustc-workspace-wrapper=\"\"",
+      "--config",
+      "profile.release.opt-level=3",
+      "--config",
+      "profile.release.debug-assertions=false",
+      "--config",
+      "profile.release.lto=\"thin\"",
+      "--config",
+      "profile.release.codegen-units=1",
+      "--config",
+      "profile.release.strip=\"debuginfo\"",
+      "build",
+      "--release",
+      "--locked",
+      "--offline",
+      "--bin",
+      "rag-mcp",
+      "--message-format=json-render-diagnostics",
+      "--jobs",
+      "2",
+      "--target-dir",
+      "/private/tmp/rag-index-release-20261026/target"
+    ],
+    "tools": {
+      "cargo": {
+        "path": "/Users/themoretheless/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/cargo",
+        "sha256": "4a558ead373f1b3f995d542cecd76e8455e9ff334344a2f480c8cb4387976174"
+      },
+      "rustc": {
+        "path": "/Users/themoretheless/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/rustc",
+        "sha256": "39d1222c09ff1b6d63097d7c143c8bcc9cfd2323d894f109bb360347d053b368"
+      },
+      "rustdoc": {
+        "path": "/Users/themoretheless/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/rustdoc",
+        "sha256": "2a6f0907f3f94ce68ce4aac4559f17c70d6c17f913eedf930b1db4de9531cce3"
+      }
+    },
+    "rustc_verbose_version": "rustc 1.101.0-nightly (4ebd25825 2026-10-15)\nbinary: rustc\ncommit-hash: 4ebd258257737d5b7635c116fa7d281627a7e937\ncommit-date: 2026-10-15\nhost: aarch64-apple-darwin\nrelease: 1.101.0-nightly\nLLVM version: 23.1.4",
+    "cargo_version": "cargo 1.101.0-nightly (3960fa69b 2026-10-12)",
+    "cargo_json_sha256": "fb3c8aa8abaeaa0854ba5f27a6cfda5ddf3245c7d83056e0c7a3070a18aee684",
+    "cargo_stderr_sha256": "12f6c7c97e84f8a844b3045bfe767c21694053e34c044d6369d3faa7806db0a0",
+    "source_unchanged_during_build": true,
+    "compiler_executables_unchanged": true,
+    "driver_sha256": "9dc7c4db0077d14b4d9143bd10ca2418de23fcb1835ae8beda04b7bd54581ef9",
+    "runtime_qualified": false,
+    "performance_qualified": false,
+    "production_binary_replaced": false,
+    "limitations": [
+      "source content identity, not a clean-commit or hermetic bit-reproducibility claim",
+      "registry dependencies use locked cached Cargo inputs; external SDK and native toolchain are not fully hashed",
+      "successful release build is not runtime/workload/performance qualification"
+    ]
+  },
+  "release_manifest_identity_matches": true,
+  "recipe_sha256": "01f2e11b776f6ef1fdacaf1781920be09c2c29af6140f2a610ecd908452d7bfd",
+  "recipe": {
+    "contract_version": 1,
+    "name": "itoa-1577ed901354d0d7448ac162328f9dbf5183124c",
+    "upstream_commit": "1577ed901354d0d7448ac162328f9dbf5183124c",
+    "input_recipe": "Cargo.toml and src/**/*.rs; captured default-feature library configuration",
+    "expected_inputs": {
+      "Cargo.toml": "3727dc5bf842fd5a6b100a3dae94b5dfcb4ec33f20dd8f2eceac3d175d782101",
+      "src/lib.rs": "e962338e1886873aa7c3399ec89aa5378ccbfed712b9690f043628079390a34f",
+      "src/u128_ext.rs": "498cc94f13805e551248fd82f47cc318f51d953a5002a9f8698858cd12fbae3c"
+    },
+    "phases": [
+      {
+        "name": "body",
+        "edits": [
+          {
+            "path": "src/u128_ext.rs",
+            "before": "u128::from(x_hi) * u128::from(y_hi) + high1 + high2",
+            "after": "(u128::from(x_hi) * u128::from(y_hi) + high1) + high2"
+          }
+        ]
+      },
+      {
+        "name": "signature",
+        "edits": [
+          {
+            "path": "src/u128_ext.rs",
+            "before": "fn mulhi(x: u128, y: u128)",
+            "after": "fn mulhi(x: u128, y: u128, _benchmark_tag: ())"
+          },
+          {
+            "path": "src/lib.rs",
+            "before": "u128_ext::mulhi(n, M_HIGH)",
+            "after": "u128_ext::mulhi(n, M_HIGH, ())"
+          }
+        ]
+      },
+      {
+        "name": "manifest_metadata",
+        "edits": [
+          {
+            "path": "Cargo.toml",
+            "append": "\n[package.metadata.index_benchmark]\nnonce=1\n"
+          }
+        ]
+      }
+    ],
+    "compiler_arguments": [
+      "--not-a-cargo-option"
+    ]
+  },
+  "source_inputs": {
+    "Cargo.toml": "3727dc5bf842fd5a6b100a3dae94b5dfcb4ec33f20dd8f2eceac3d175d782101",
+    "src/lib.rs": "e962338e1886873aa7c3399ec89aa5378ccbfed712b9690f043628079390a34f",
+    "src/u128_ext.rs": "498cc94f13805e551248fd82f47cc318f51d953a5002a9f8698858cd12fbae3c"
+  },
+  "mode": "incremental",
+  "preflight": {
+    "blocking_processes": [
+      {
+        "pid": 411,
+        "cpu_percent": 43.7,
+        "command": "WindowServer",
+        "compiler": false
+      },
+      {
+        "pid": 525,
+        "cpu_percent": 79.6,
+        "command": "mds_stores",
+        "compiler": false
+      },
+      {
+        "pid": 5262,
+        "cpu_percent": 104.7,
+        "command": "rag-mcp",
+        "compiler": false
+      },
+      {
+        "pid": 62493,
+        "cpu_percent": 41.5,
+        "command": "Kimi Helper (Renderer)",
+        "compiler": false
+      },
+      {
+        "pid": 94044,
+        "cpu_percent": 50.3,
+        "command": "Antigravity Helper (Renderer)",
+        "compiler": false
+      }
+    ],
+    "quiet": false,
+    "sampled_at_unix": 1792985269.3972769,
+    "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+  },
+  "controls": [
+    {
+      "case": "cold_ingest_and_index",
+      "before": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 41.1,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 525,
+            "cpu_percent": 82.3,
+            "command": "mds_stores",
+            "compiler": false
+          },
+          {
+            "pid": 5262,
+            "cpu_percent": 132.4,
+            "command": "rag-mcp",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 41.5,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 50.3,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985269.5090828,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "after": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 47.1,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 525,
+            "cpu_percent": 81.7,
+            "command": "mds_stores",
+            "compiler": false
+          },
+          {
+            "pid": 5262,
+            "cpu_percent": 118.1,
+            "command": "rag-mcp",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 41.6,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 44.5,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985269.650312,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      }
+    }
+  ],
+  "records": [
+    {
+      "case": "cold_ingest_and_index",
+      "steps": [
+        {
+          "operation": "ingest_file",
+          "path": "Cargo.toml",
+          "ms": 25.976417,
+          "result": {
+            "document_id": "7bc624dc-2273-4e7e-b0ba-e136548f9e94",
+            "chunk_count": 4,
+            "node_id": "5a58eeba-9f50-4f42-b242-1f22439b471a",
+            "edge_count": 2,
+            "content_hash": "2b0f3478f5ad00073d774b21ce88acc66ce9631f5d020306930a3ae5148db5fc",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/lib.rs",
+          "ms": 13.003042,
+          "result": {
+            "document_id": "1e6e628d-5eb2-4fce-94bc-f63e433676dd",
+            "chunk_count": 51,
+            "node_id": "b9afdaac-e370-4fc8-8882-164ea6fd6699",
+            "edge_count": 2,
+            "content_hash": "100307a5f55fc826aff32bc52377aaa470cc9ec20762780c6a3c63694821cb3e",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/u128_ext.rs",
+          "ms": 8.009958,
+          "result": {
+            "document_id": "044c5812-bcc6-4e76-b1a1-8344cd46e8af",
+            "chunk_count": 3,
+            "node_id": "23f56616-0be2-417d-beff-c92a101ea6c0",
+            "edge_count": 2,
+            "content_hash": "c547af59d513302d24cc4e6b5da842f3f3af9b67a120547353e80f2945033d98",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "index_code",
+          "arguments": {},
+          "ms": 43.524916,
+          "result": {
+            "indexed": 3,
+            "unchanged": 0,
+            "unsupported": 0,
+            "parse_errors": [],
+            "index_revision": 1,
+            "revision_created": true,
+            "stage_timings": {
+              "contract_version": 1,
+              "run_id": "911ae9be-58fd-4268-8f59-79a4cfa776e4",
+              "lock_wait_ms": 8.4e-05,
+              "source_load_decode_ms": 0.262667,
+              "cache_parse_serialize_ms": 29.777583,
+              "cache_replace_ms": 2.7842919999999998,
+              "revision_publish_ms": 8.872625000000001,
+              "transaction_body_ms": 41.726084,
+              "before_metrics_write_ms": 41.726209,
+              "documents_loaded": 3,
+              "cache_hits": 0,
+              "cache_misses": 3,
+              "unsupported_documents": 0,
+              "parse_error_documents": 0,
+              "commit_included": false,
+              "metrics_write_included": false,
+              "embedding_fts_included": false
+            },
+            "resolution": {
+              "contract_version": 1,
+              "documents_total": 3,
+              "documents_resolved": 3,
+              "documents_reused": 0,
+              "reference_sites_resolved": 503,
+              "reference_sites_reused": 0,
+              "rust_package_scopes": 2,
+              "project_fallback_scopes": 0,
+              "empty_reference_documents": 1,
+              "dependency_inputs_hashed": 6,
+              "invalid_cache_entries": 0,
+              "forced_full": false,
+              "cache_available": false,
+              "no_resolution_required": false,
+              "resolution_ms": 3.0586670000000002,
+              "equivalent_to_existing": null
+            },
+            "completion": {
+              "contract_version": 1,
+              "native_total_ms": 43.237875,
+              "commit_ms": 1.1015409999999999,
+              "metrics_write_ms": 0.410042,
+              "commit_included": true,
+              "process_lifetime_peak_rss_bytes": 121126912
+            }
+          }
+        }
+      ],
+      "inputs": {
+        "Cargo.toml": "3727dc5bf842fd5a6b100a3dae94b5dfcb4ec33f20dd8f2eceac3d175d782101",
+        "src/lib.rs": "e962338e1886873aa7c3399ec89aa5378ccbfed712b9690f043628079390a34f",
+        "src/u128_ext.rs": "498cc94f13805e551248fd82f47cc318f51d953a5002a9f8698858cd12fbae3c"
+      },
+      "ordinary_noop": false,
+      "environment": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 41.1,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 525,
+            "cpu_percent": 82.3,
+            "command": "mds_stores",
+            "compiler": false
+          },
+          {
+            "pid": 5262,
+            "cpu_percent": 132.4,
+            "command": "rag-mcp",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 41.5,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 50.3,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985269.5090828,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "end_to_end_mcp_ms": 90.524209,
+      "sampled_worker_peak_rss_bytes": 106332160,
+      "rss_samples": 2,
+      "rss_sample_period_seconds": 0.05,
+      "environment_after": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 47.1,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 525,
+            "cpu_percent": 81.7,
+            "command": "mds_stores",
+            "compiler": false
+          },
+          {
+            "pid": 5262,
+            "cpu_percent": 118.1,
+            "command": "rag-mcp",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 41.6,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 44.5,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985269.650312,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      }
+    }
+  ],
+  "correctness_audits": [],
+  "compiler_checks": [
+    {
+      "case": "cold_ingest_and_index",
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--not-a-cargo-option",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-x34jl8rv/sources/Cargo.toml"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "error: unexpected argument '--not-a-cargo-option' found\n\nUsage: cargo check --offline\n\nFor more information, try '--help'.\n"
+    }
+  ],
+  "production_database_used": false,
+  "performance_qualified": false,
+  "limitations": [
+    "small real-library workload; no representative scale claim",
+    "mock embeddings (16 dimensions), local FTS/document writes and code graph; no model cost",
+    "startup, source-copy, compiler and equivalence audits excluded from timing",
+    "sampled worker RSS is a lower bound, not exact physical operation peak",
+    "full binding control is an internal algorithm control, not a competitor",
+    "manifest_metadata changes metadata, not Cargo feature/dependency semantics",
+    "release profile is supplied by an external manifest; this runner checks identity, not compiler provenance"
+  ],
+  "isolated_stderr": "",
+  "error": {
+    "type": "AssertionError",
+    "message": "error: unexpected argument '--not-a-cargo-option' found\n\nUsage: cargo check --offline\n\nFor more information, try '--help'.\n"
+  },
+  "original_source_unchanged": true,
+  "binary_unchanged": true
+}

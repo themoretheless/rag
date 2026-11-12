@@ -1,0 +1,34 @@
+{
+  "workspace_tests": {
+    "passed": 1576,
+    "failed": 0,
+    "ignored": 1
+  },
+  "focused_php_tests_passed": 40,
+  "mcp_suites_passed": 8,
+  "trait_path_checks_passed": 15,
+  "versions": {
+    "index_format": 78,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "source_sha256": {
+    "src/code_index.rs": "0689cb164450e39a7464472841093b12e8b9edf9ee52369c940586a4b27cd913",
+    "src/code_index/impact.rs": "ff912707fcb9866c97d5b2da3ff141591b3fb702530840eb744b8a94b5729439",
+    "src/code_index/impact/context_walk.rs": "1856bb4f7376fcd4394f0f0d193aaca1b0dda678dcf405cae741c13b8b1ee237",
+    "src/code_index/history.rs": "0284077146735f5cf56e2a694ae02a0475a1d9a786e65b66a185b9b80ddd472b",
+    "src/code_index/resolution_cache.rs": "e13bd588882266c53753344d64453bf916258ef3726f1110642e4ad855e15755",
+    "src/code_index/php_names.rs": "4980e1f0659584f007ca6bf471500b0cee24437cae86c3fda0813a0eb57dc78d",
+    "src/code_index/php_names/hierarchy.rs": "20072bec926f6ea773b4eb12bb89737dd8a7aa50a23d3c94689de4e9ad84896c",
+    "src/code_index/php_names/resolve.rs": "c82efa46d1d2ce3f959cdcd7640e1d1dbe47ca3f54d0a159e3e6f095f3c87509",
+    "src/code_index/php_names/contexts.rs": "cc3227ab5238807e0f92ec88adda5d1b09c443d6c149b6e88836f122d1922391",
+    "src/code_index/php_names/tests.rs": "eb1c1b7fd8ed23416dd2916002798365e5befd9bad27083482713f36725c26ce",
+    "src/code_index/php_names/traits.rs": "c1817e253208be7ba9b895b36a476e2c90907ac0798c665610e0131e7c89e206",
+    "src/code_index/php_names/capture.rs": "c218c36e590c9f51334c9789159eef6bcd81cd1c02510e732b6ac393c23ccee8",
+    "scripts/smoke_php_trait_paths.py": "70932206f18017f1756fce2835c744e2f4e5e70f5f65a74c772225b21cd1ccfc"
+  },
+  "shared_checkout": true,
+  "frozen_checkout_proven": false,
+  "deployment_proven": false,
+  "runtime_context_correlation_proven": false
+}

@@ -1,0 +1,49 @@
+{
+  "status": "release_source_and_index_workflows_qualified",
+  "source_files": 1880,
+  "binary_sha256": "dab96adb738e01528410810122a0a7002edfa5ae1090761963be0201be3ea3fe",
+  "source_tree_sha256": "06d514e6540b8df962ca84333f75e5e8f6a2660904e6dc9150d7e5f25c248659",
+  "release_profile": {
+    "opt_level": "3",
+    "debuginfo": 0,
+    "debug_assertions": false,
+    "overflow_checks": false,
+    "test": false
+  },
+  "repos": [
+    "itoa",
+    "memchr"
+  ],
+  "modes_per_repo": 2,
+  "phases_per_mode": 5,
+  "compiler_checks_passed": 20,
+  "full_equivalence_audits_passed": 20,
+  "input_counts": {
+    "itoa": [
+      3,
+      0,
+      1,
+      2,
+      1
+    ],
+    "memchr": [
+      46,
+      0,
+      1,
+      2,
+      1
+    ]
+  },
+  "build_guard_tests_passed": 2,
+  "bench_guard_tests_passed": 3,
+  "provenance_corruption_cases_rejected": 5,
+  "valid_release_performance_probe_rejected": true,
+  "release_source_profile_qualified": true,
+  "runtime_index_workloads_qualified": true,
+  "runtime_all_api_qualified": false,
+  "performance_qualified": false,
+  "competitor_comparison": false,
+  "production_binary_replaced": false,
+  "production_database_used_for_qualification": false,
+  "full_plan_complete": false
+}

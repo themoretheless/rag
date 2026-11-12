@@ -184,26 +184,36 @@ fn recovery_cli_rejects_oversized_input_before_opening_target_database() {
 
 #[test]
 fn recovery_cli_export_preflight_leaves_no_artifact() {
+    use rag_mcp::db::lin_engine::{LinWriter, RecBuilder};
+
     let root = tempfile::tempdir().unwrap();
-    let db = root.path().join("large.duckdb");
+    let db = root.path().join("large.lin");
     let output_path = root.path().join("must-not-exist.json");
-    drop(Store::open(&db).unwrap());
-    let conn = duckdb::Connection::open(&db).unwrap();
-    conn.execute(
-        r#"
-        INSERT INTO documents (
-            id, uri, title, content, metadata_json, created_at, updated_at
-        )
-        SELECT
-            'portable-limit-' || CAST(i AS VARCHAR),
-            'recovery://portable-limit/' || CAST(i AS VARCHAR),
-            'limit', '', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-        FROM range(0, ?) AS generated(i)
-        "#,
-        [i64::try_from(PORTABLE_RECOVERY_MAX_DOCUMENTS + 1).unwrap()],
-    )
-    .unwrap();
-    drop(conn);
+    {
+        let store = Store::open(&db).unwrap();
+        let mut w = store.write().unwrap();
+        let mut tx = w.begin_tx().unwrap();
+        let now = "2026-11-11T00:00:00Z";
+        for i in 0..=PORTABLE_RECOVERY_MAX_DOCUMENTS {
+            let id = format!("portable-limit-{i}");
+            let uri = format!("recovery://portable-limit/{i}");
+            tx.upsert_by_id(
+                "documents",
+                &id,
+                RecBuilder::new()
+                    .str("id", &id)
+                    .str("uri", &uri)
+                    .str("title", "limit")
+                    .str("content", "")
+                    .str("metadata_json", "{}")
+                    .str("created_at", now)
+                    .str("updated_at", now)
+                    .build(),
+            )
+            .unwrap();
+        }
+        tx.commit().unwrap();
+    }
 
     let output = Command::new(env!("CARGO_BIN_EXE_recovery"))
         .args([

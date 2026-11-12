@@ -1,0 +1,23 @@
+{
+  "status": "passed",
+  "versions": {
+    "index_format": 81,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "checks": [
+    "base_alias",
+    "indirect_abstract_base",
+    "attribute_alias",
+    "public_instance_only",
+    "framework_base_required",
+    "source_identity",
+    "warm_equivalence",
+    "stale_exclusion",
+    "sync_removes_candidates"
+  ],
+  "PHP_executed": false,
+  "PHPUnit_executed": false,
+  "runtime_test_discovery_complete": false,
+  "affected_tests_trait_contexts_exercised": false
+}

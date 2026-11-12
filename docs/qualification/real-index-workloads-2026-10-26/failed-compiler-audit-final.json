@@ -1,0 +1,514 @@
+{
+  "contract_version": 1,
+  "status": "failed_qualification",
+  "qualification_only": true,
+  "binary_sha256": "edb5c3ea69692f46690b1b974f98bf4c9f8c284d4a04b0976ecf830efe41af55",
+  "runner_sha256": "677409a904bde5eba6be3bfdac9cb54ee34fc5e8674ebb09f4cbb888bf7676c7",
+  "client_sha256": "78f44eb3b5812426c7d78f0d3f919258c5e7a732c071de17dc73716a2dff3309",
+  "build_manifest": null,
+  "release_manifest_identity_matches": false,
+  "recipe_sha256": "01f2e11b776f6ef1fdacaf1781920be09c2c29af6140f2a610ecd908452d7bfd",
+  "recipe": {
+    "contract_version": 1,
+    "name": "itoa-1577ed901354d0d7448ac162328f9dbf5183124c",
+    "upstream_commit": "1577ed901354d0d7448ac162328f9dbf5183124c",
+    "input_recipe": "Cargo.toml and src/**/*.rs; captured default-feature library configuration",
+    "expected_inputs": {
+      "Cargo.toml": "3727dc5bf842fd5a6b100a3dae94b5dfcb4ec33f20dd8f2eceac3d175d782101",
+      "src/lib.rs": "e962338e1886873aa7c3399ec89aa5378ccbfed712b9690f043628079390a34f",
+      "src/u128_ext.rs": "498cc94f13805e551248fd82f47cc318f51d953a5002a9f8698858cd12fbae3c"
+    },
+    "phases": [
+      {
+        "name": "body",
+        "edits": [
+          {
+            "path": "src/u128_ext.rs",
+            "before": "u128::from(x_hi) * u128::from(y_hi) + high1 + high2",
+            "after": "(u128::from(x_hi) * u128::from(y_hi) + high1) + high2"
+          }
+        ]
+      },
+      {
+        "name": "signature",
+        "edits": [
+          {
+            "path": "src/u128_ext.rs",
+            "before": "fn mulhi(x: u128, y: u128)",
+            "after": "fn mulhi(x: u128, y: u128, _benchmark_tag: ())"
+          },
+          {
+            "path": "src/lib.rs",
+            "before": "u128_ext::mulhi(n, M_HIGH)",
+            "after": "u128_ext::mulhi(n, M_HIGH, ())"
+          }
+        ]
+      },
+      {
+        "name": "manifest_metadata",
+        "edits": [
+          {
+            "path": "Cargo.toml",
+            "append": "\n[package.metadata.index_benchmark]\nnonce=1\n"
+          }
+        ]
+      }
+    ],
+    "compiler_arguments": [
+      "--not-a-cargo-option"
+    ]
+  },
+  "source_inputs": {
+    "Cargo.toml": "3727dc5bf842fd5a6b100a3dae94b5dfcb4ec33f20dd8f2eceac3d175d782101",
+    "src/lib.rs": "e962338e1886873aa7c3399ec89aa5378ccbfed712b9690f043628079390a34f",
+    "src/u128_ext.rs": "498cc94f13805e551248fd82f47cc318f51d953a5002a9f8698858cd12fbae3c"
+  },
+  "mode": "incremental",
+  "preflight": {
+    "blocking_processes": [
+      {
+        "pid": 411,
+        "cpu_percent": 49.3,
+        "command": "WindowServer",
+        "compiler": false
+      },
+      {
+        "pid": 2608,
+        "cpu_percent": 28.2,
+        "command": "XprotectService",
+        "compiler": false
+      },
+      {
+        "pid": 62493,
+        "cpu_percent": 40.2,
+        "command": "Kimi Helper (Renderer)",
+        "compiler": false
+      },
+      {
+        "pid": 64758,
+        "cpu_percent": 0.0,
+        "command": "cargo",
+        "compiler": true
+      },
+      {
+        "pid": 64813,
+        "cpu_percent": 199.4,
+        "command": "voxy_gameplay-dfd140e6fdf50cb4",
+        "compiler": false
+      },
+      {
+        "pid": 67768,
+        "cpu_percent": 0.0,
+        "command": "cargo",
+        "compiler": true
+      },
+      {
+        "pid": 68283,
+        "cpu_percent": 76.6,
+        "command": "rag-mcp",
+        "compiler": false
+      },
+      {
+        "pid": 67744,
+        "cpu_percent": 0.0,
+        "command": "cargo",
+        "compiler": true
+      }
+    ],
+    "quiet": false,
+    "sampled_at_unix": 1792983460.31842,
+    "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+  },
+  "controls": [
+    {
+      "case": "cold_ingest_and_index",
+      "before": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 48.9,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 2608,
+            "cpu_percent": 27.0,
+            "command": "XprotectService",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 138.9,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 191.5,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 68283,
+            "cpu_percent": 79.3,
+            "command": "rag-mcp",
+            "compiler": false
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983460.850341,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "after": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 48.7,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 706,
+            "cpu_percent": 36.7,
+            "command": "NotificationCenter",
+            "compiler": false
+          },
+          {
+            "pid": 2608,
+            "cpu_percent": 28.4,
+            "command": "XprotectService",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 61.4,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 98.5,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 68283,
+            "cpu_percent": 73.7,
+            "command": "rag-mcp",
+            "compiler": false
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983461.3387678,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      }
+    }
+  ],
+  "records": [
+    {
+      "case": "cold_ingest_and_index",
+      "steps": [
+        {
+          "operation": "ingest_file",
+          "path": "Cargo.toml",
+          "ms": 72.964,
+          "result": {
+            "document_id": "96054d25-46d8-45c1-aed5-6c3db8dbcb9b",
+            "chunk_count": 4,
+            "node_id": "8cce6a89-cc7f-4ec1-9bc5-502bcf939b65",
+            "edge_count": 2,
+            "content_hash": "2b0f3478f5ad00073d774b21ce88acc66ce9631f5d020306930a3ae5148db5fc",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/lib.rs",
+          "ms": 78.906042,
+          "result": {
+            "document_id": "6e26503f-5732-496c-87c6-f65716d372f3",
+            "chunk_count": 51,
+            "node_id": "cb243dcd-d658-4d7a-8a25-11a3346c1ee7",
+            "edge_count": 2,
+            "content_hash": "100307a5f55fc826aff32bc52377aaa470cc9ec20762780c6a3c63694821cb3e",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/u128_ext.rs",
+          "ms": 39.587208,
+          "result": {
+            "document_id": "7ad9898f-cd69-4570-be21-2a40c23b2a77",
+            "chunk_count": 3,
+            "node_id": "04ac2413-4688-4ee0-8354-41c718460115",
+            "edge_count": 2,
+            "content_hash": "c547af59d513302d24cc4e6b5da842f3f3af9b67a120547353e80f2945033d98",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "index_code",
+          "arguments": {},
+          "ms": 247.366458,
+          "result": {
+            "indexed": 3,
+            "unchanged": 0,
+            "unsupported": 0,
+            "parse_errors": [],
+            "index_revision": 1,
+            "revision_created": true,
+            "stage_timings": {
+              "contract_version": 1,
+              "run_id": "f8a01e0d-bce1-4f92-bba9-984b1842a85f",
+              "lock_wait_ms": 0.00041600000000000003,
+              "source_load_decode_ms": 1.7940420000000001,
+              "cache_parse_serialize_ms": 162.76375000000002,
+              "cache_replace_ms": 8.172041,
+              "revision_publish_ms": 69.37104199999999,
+              "transaction_body_ms": 242.238333,
+              "before_metrics_write_ms": 242.238916,
+              "documents_loaded": 3,
+              "cache_hits": 0,
+              "cache_misses": 3,
+              "unsupported_documents": 0,
+              "parse_error_documents": 0,
+              "commit_included": false,
+              "metrics_write_included": false,
+              "embedding_fts_included": false
+            },
+            "resolution": {
+              "contract_version": 1,
+              "documents_total": 3,
+              "documents_resolved": 3,
+              "documents_reused": 0,
+              "reference_sites_resolved": 503,
+              "reference_sites_reused": 0,
+              "rust_package_scopes": 2,
+              "project_fallback_scopes": 0,
+              "empty_reference_documents": 1,
+              "dependency_inputs_hashed": 6,
+              "invalid_cache_entries": 0,
+              "forced_full": false,
+              "cache_available": false,
+              "no_resolution_required": false,
+              "resolution_ms": 29.485917,
+              "equivalent_to_existing": null
+            },
+            "completion": {
+              "contract_version": 1,
+              "native_total_ms": 246.732083,
+              "commit_ms": 2.382875,
+              "metrics_write_ms": 2.109958,
+              "commit_included": true,
+              "process_lifetime_peak_rss_bytes": 167706624
+            }
+          }
+        }
+      ],
+      "inputs": {
+        "Cargo.toml": "3727dc5bf842fd5a6b100a3dae94b5dfcb4ec33f20dd8f2eceac3d175d782101",
+        "src/lib.rs": "e962338e1886873aa7c3399ec89aa5378ccbfed712b9690f043628079390a34f",
+        "src/u128_ext.rs": "498cc94f13805e551248fd82f47cc318f51d953a5002a9f8698858cd12fbae3c"
+      },
+      "ordinary_noop": false,
+      "environment": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 48.9,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 2608,
+            "cpu_percent": 27.0,
+            "command": "XprotectService",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 138.9,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 191.5,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 68283,
+            "cpu_percent": 79.3,
+            "command": "rag-mcp",
+            "compiler": false
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983460.850341,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "end_to_end_mcp_ms": 438.837417,
+      "sampled_worker_peak_rss_bytes": 160235520,
+      "rss_samples": 8,
+      "rss_sample_period_seconds": 0.05,
+      "environment_after": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 48.7,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 706,
+            "cpu_percent": 36.7,
+            "command": "NotificationCenter",
+            "compiler": false
+          },
+          {
+            "pid": 2608,
+            "cpu_percent": 28.4,
+            "command": "XprotectService",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 61.4,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 98.5,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 68283,
+            "cpu_percent": 73.7,
+            "command": "rag-mcp",
+            "compiler": false
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983461.3387678,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      }
+    }
+  ],
+  "correctness_audits": [],
+  "compiler_checks": [
+    {
+      "case": "cold_ingest_and_index",
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--not-a-cargo-option",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-p_4wpch6/sources/Cargo.toml"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "error: unexpected argument '--not-a-cargo-option' found\n\nUsage: cargo check --offline\n\nFor more information, try '--help'.\n"
+    }
+  ],
+  "production_database_used": false,
+  "performance_qualified": false,
+  "limitations": [
+    "small real-library workload; no representative scale claim",
+    "mock embeddings (16 dimensions), local FTS/document writes and code graph; no model cost",
+    "startup, source-copy, compiler and equivalence audits excluded from timing",
+    "sampled worker RSS is a lower bound, not exact physical operation peak",
+    "full binding control is an internal algorithm control, not a competitor",
+    "manifest_metadata changes metadata, not Cargo feature/dependency semantics",
+    "release profile is supplied by an external manifest; this runner checks identity, not compiler provenance"
+  ],
+  "isolated_stderr": "",
+  "error": {
+    "type": "AssertionError",
+    "message": "error: unexpected argument '--not-a-cargo-option' found\n\nUsage: cargo check --offline\n\nFor more information, try '--help'.\n"
+  },
+  "original_source_unchanged": true,
+  "binary_unchanged": true
+}

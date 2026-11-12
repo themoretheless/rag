@@ -1,0 +1,19 @@
+Traceback (most recent call last):
+  File "/Users/themoretheless/Documents/Sources/rag/scripts/bench_real_index.py", line 233, in <module>
+    main()
+    ~~~~^^
+  File "/Users/themoretheless/Documents/Sources/rag/scripts/bench_real_index.py", line 204, in main
+    measure('cold_ingest_and_index', list(before_inputs))
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/themoretheless/Documents/Sources/rag/scripts/bench_real_index.py", line 202, in measure
+    audit(label)
+    ~~~~~^^^^^^^
+  File "/Users/themoretheless/Documents/Sources/rag/scripts/bench_real_index.py", line 152, in audit
+    assert compiled.returncode == 0, compiled.stderr
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: error: unexpected argument '--not-a-cargo-option' found
+
+Usage: cargo check --offline
+
+For more information, try '--help'.
+

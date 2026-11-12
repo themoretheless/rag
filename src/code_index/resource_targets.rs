@@ -1,6 +1,6 @@
 //! Stored non-code resource identities, validated against the published corpus.
 use super::*;
-use duckdb::Connection;
+use crate::db::lin_engine::{cell_str, LinReader};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -47,7 +47,7 @@ impl ResourceTarget {
     }
 }
 pub(super) fn inventory(
-    conn: &Connection,
+    r: &impl LinReader,
     revision: Option<i64>,
 ) -> Result<Option<HashMap<String, ResourceTarget>>> {
     let Some(revision) = revision else {
@@ -55,9 +55,19 @@ pub(super) fn inventory(
     };
     // Old revisions did not record attachment identity for non-code documents.
     // Neither missing/invalid inventories nor duplicate IDs qualify freshness.
-    let value:Option<String>=conn.query_row("SELECT CAST(json_extract(try_cast(graph_json AS JSON),'$.file_resource_targets') AS VARCHAR) FROM code_index_revisions WHERE id=?",[revision],|r|r.get(0))?;
-    let Some(value) = value else { return Ok(None) };
-    let Ok(values) = serde_json::from_str::<Vec<ResourceTarget>>(&value) else {
+    let Some(row) = r.get_by_id("code_index_revisions", &revision.to_string())? else {
+        return Ok(None);
+    };
+    let Some(graph_raw) = cell_str(&row, "graph_json") else {
+        return Ok(None);
+    };
+    let Ok(graph) = serde_json::from_str::<serde_json::Value>(graph_raw) else {
+        return Ok(None);
+    };
+    let Some(targets_val) = graph.get("file_resource_targets") else {
+        return Ok(None);
+    };
+    let Ok(values) = serde_json::from_value::<Vec<ResourceTarget>>(targets_val.clone()) else {
         return Ok(None);
     };
     let mut out = HashMap::new();
@@ -285,11 +295,14 @@ mod tests {
         assert_eq!(impact(&store, "/p/data.json")["target_found"], false);
         // Simulate an attachment-only metadata update with unchanged revision/hash.
         store
-            .lock()
+            .write()
             .unwrap()
-            .execute(
-                "UPDATE documents SET source_file='/p/data.json' WHERE id='data'",
-                [],
+            .update_where(
+                "documents",
+                lin::query::pred::eq("id", "data"),
+                crate::db::lin_engine::RecBuilder::new()
+                    .str("source_file", "/p/data.json")
+                    .build(),
             )
             .unwrap();
         assert_eq!(
@@ -305,9 +318,15 @@ mod tests {
             1
         );
         store
-            .lock()
+            .write()
             .unwrap()
-            .execute("UPDATE documents SET status='archived' WHERE id='data'", [])
+            .update_where(
+                "documents",
+                lin::query::pred::eq("id", "data"),
+                crate::db::lin_engine::RecBuilder::new()
+                    .str("status", "archived")
+                    .build(),
+            )
             .unwrap();
         assert_eq!(impact(&store, "/p/data.json")["target_found"], false);
     }
@@ -315,45 +334,50 @@ mod tests {
     fn corrupt_source_and_inventory_or_table_disagreement_never_qualify_freshness() {
         let (_temp, store) = corpus();
         store
-            .lock()
+            .write()
             .unwrap()
-            .execute(
-                "UPDATE code_index_revision_files SET content_hash='wrong' WHERE document_id='svg'",
-                [],
+            .update_where(
+                "code_index_revision_files",
+                lin::query::pred::eq("document_id", "svg"),
+                crate::db::lin_engine::RecBuilder::new()
+                    .str("content_hash", "wrong")
+                    .build(),
             )
             .unwrap();
         assert_eq!(
             impact(&store, "/p/icon.svg")["target"]["captured_resource_target"]["state"],
             "stale"
         );
-        let conn = store.lock().unwrap();
-        let raw: String = conn
-            .query_row(
-                "SELECT graph_json FROM code_index_revisions WHERE id=1",
-                [],
-                |r| r.get(0),
+        {
+            let mut w = store.write().unwrap();
+            let row = w.get_by_id("code_index_revisions", "1").unwrap().unwrap();
+            let raw = crate::db::lin_engine::cell_string(&row, "graph_json");
+            let mut graph: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            graph
+                .as_object_mut()
+                .unwrap()
+                .remove("file_resource_targets");
+            w.update_where(
+                "code_index_revisions",
+                lin::query::pred::eq("id", "1"),
+                crate::db::lin_engine::RecBuilder::new()
+                    .str("graph_json", graph.to_string())
+                    .build(),
             )
             .unwrap();
-        let mut graph: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        graph
-            .as_object_mut()
-            .unwrap()
-            .remove("file_resource_targets");
-        conn.execute(
-            "UPDATE code_index_revisions SET graph_json=? WHERE id=1",
-            [graph.to_string()],
-        )
-        .unwrap();
-        drop(conn);
+        }
         let r = impact(&store, "/p/icon.svg");
         assert_eq!(r["resource_target_inventory_available"], false);
         assert_eq!(r["target_available"], false);
         store
-            .lock()
+            .write()
             .unwrap()
-            .execute(
-                "UPDATE code_index_revision_files SET content_hash=? WHERE document_id='svg'",
-                [content_hash("<svg><!-- PRIVATE_ASSET --></svg>")],
+            .update_where(
+                "code_index_revision_files",
+                lin::query::pred::eq("document_id", "svg"),
+                crate::db::lin_engine::RecBuilder::new()
+                    .str("content_hash", content_hash("<svg><!-- PRIVATE_ASSET --></svg>"))
+                    .build(),
             )
             .unwrap();
         let mut data = doc("blob", "/p/blob.svg", "p", "readable");
@@ -363,12 +387,9 @@ mod tests {
         store.index_code().unwrap();
         let hash = content_hash("<svg>private</svg>");
         store
-            .lock()
+            .write()
             .unwrap()
-            .execute(
-                "DELETE FROM code_index_source_blobs WHERE content_hash=?",
-                [hash],
-            )
+            .delete_by_id("code_index_source_blobs", &hash)
             .unwrap();
         let r = impact(&store, "/p/blob.svg");
         assert_eq!(
@@ -419,25 +440,24 @@ mod tests {
         store.upsert_document(&page).unwrap();
         store.index_code().unwrap();
         assert_eq!(store.code_index_diff(&q).unwrap(), diff);
-        let c = store.lock().unwrap();
-        let raw: String = c
-            .query_row(
-                "SELECT graph_json FROM code_index_revisions WHERE id=2",
-                [],
-                |r| r.get(0),
+        {
+            let mut w = store.write().unwrap();
+            let row = w.get_by_id("code_index_revisions", "2").unwrap().unwrap();
+            let raw = crate::db::lin_engine::cell_string(&row, "graph_json");
+            let mut graph: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            graph
+                .as_object_mut()
+                .unwrap()
+                .remove("file_resource_targets");
+            w.update_where(
+                "code_index_revisions",
+                lin::query::pred::eq("id", "2"),
+                crate::db::lin_engine::RecBuilder::new()
+                    .str("graph_json", graph.to_string())
+                    .build(),
             )
             .unwrap();
-        let mut graph: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        graph
-            .as_object_mut()
-            .unwrap()
-            .remove("file_resource_targets");
-        c.execute(
-            "UPDATE code_index_revisions SET graph_json=? WHERE id=2",
-            [graph.to_string()],
-        )
-        .unwrap();
-        drop(c);
+        }
         let legacy = store.code_index_diff(&q).unwrap();
         assert_eq!(legacy["resource_target_relations_available"], false);
         let removed = legacy["relations_removed"].as_array().unwrap();

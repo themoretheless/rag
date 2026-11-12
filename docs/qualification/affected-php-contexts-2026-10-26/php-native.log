@@ -1,0 +1,50 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.37s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 43 tests
+test code_index::php_names::tests::php_names_inheritance_import_comments_duplicates_and_local_visibility_barriers ... ok
+test code_index::php_names::tests::php_names_namespace_functions_aliases_case_and_prefixes ... ok
+test code_index::php_names::tests::php_names_fallback_is_function_only_and_project_isolated ... ok
+test code_index::php_names::tests::php_names_group_import_domains_and_reopened_scopes_do_not_leak ... ok
+test code_index::php_names::tests::php_names_declared_static_this_visibility_and_late_dispatch_guards ... ok
+test code_index::php_names::tests::php_names_duplicate_targets_stay_ambiguous_and_other_languages_are_not_php_functions ... ok
+test code_index::php_names::tests::php_names_inherited_methods_imported_chain_parent_override_and_visibility ... ok
+test code_index::php_names::tests::php_names_flat_import_lists_separate_class_function_domains_and_type_occurrences ... ok
+test code_index::php_names::tests::php_names_first_class_values_types_and_anonymous_owner_barrier ... ok
+test code_index::php_names::tests::php_names_conditional_duplicate_imports_traits_and_parse_errors_are_not_guessed ... ok
+test code_index::php_names::tests::php_names_trait_body_alias_retains_consumer_but_override_and_inheritance_do_not_rebind_scope ... ok
+test code_index::php_names::tests::php_names_inheritance_interface_relations_and_depth_budget ... ok
+test code_index::php_names::tests::php_names_inheritance_conditional_bases_and_final_override_relations_fail_closed ... ok
+test code_index::php_names::tests::php_names_inheritance_guards_cycles_missing_bases_traits_final_and_abstract ... ok
+test code_index::php_names::tests::php_names_trait_body_missing_context_results_and_first_class_values_are_explicit ... ok
+test code_index::php_names::tests::php_names_trait_body_single_inherited_host_keeps_lexical_base_and_trait_imports ... ok
+test code_index::php_names::tests::php_names_trait_body_contexts_keep_self_this_and_parent_consumers_separate ... ok
+test code_index::php_names::tests::php_names_trait_insteadof_aliases_keep_excluded_and_original_methods ... ok
+test code_index::php_names::tests::php_names_trait_conflicts_unknown_cycles_and_nontraits_are_not_guessed ... ok
+test code_index::php_names::tests::php_names_trait_multiple_exclusions_unqualified_alias_and_first_class_values ... ok
+test code_index::php_names::tests::php_names_trait_composition_namespace_nested_precedence_and_private_host ... ok
+test code_index::php_names::tests::php_names_trait_path_callable_values_keep_contexts_without_becoming_calls ... ok
+test code_index::php_names::tests::php_names_trait_path_impact_prunes_incompatible_entry_consumers ... ok
+test code_index::php_names::tests::php_names_trait_path_missing_entry_metadata_fails_closed_and_reports_incompleteness ... ok
+test code_index::php_names::tests::php_names_trait_path_impact_visits_all_context_states_with_one_symbol_witness ... ok
+test code_index::php_names::tests::php_names_trait_path_nested_body_to_inherited_trait_body_maps_two_lexical_frames ... ok
+test code_index::php_names::tests::php_names_trait_visibility_alias_does_not_rename_or_change_original ... ok
+test code_index::php_names::tests::php_names_trait_unsupported_final_adaptations_never_become_aliases ... ok
+test code_index::php_names::tests::php_names_traits_shadow_bases_but_local_declarations_take_precedence ... ok
+test code_index::php_names::tests::phpunit_candidates_reject_cycles_foreign_projects_and_legacy_capture ... ok
+test code_index::php_names::tests::php_names_trait_invalid_adaptations_and_multiple_use_conflicts_stay_explicit ... ok
+test code_index::php_names::tests::php_names_trait_composition_depth_work_and_capture_limits_fail_closed ... ok
+test code_index::php_names::tests::php_names_trait_path_entry_metadata_cache_missing_frame_repairs_without_new_calls ... ok
+test code_index::php_names::tests::phpunit_candidates_require_framework_base_and_public_instance_methods ... ok
+test code_index::php_names::tests::php_names_trait_body_context_cache_roundtrip_validates_metadata_and_same_byte_type_values ... ok
+test code_index::php_names::tests::php_names_trait_body_consumer_limit_is_not_a_complete_single_binding ... ok
+test code_index::php_names::tests::php_names_capture_limits_fail_closed_with_explicit_capability_state ... ok
+test code_index::php_names::tests::phpunit_candidates_frozen_history_guards_legacy_enrichment ... ok
+test code_index::php_names::tests::php_names_trait_path_frozen_entry_frames_have_separate_legacy_capability_guard ... ok
+test code_index::php_names::tests::php_names_trait_body_frozen_owner_target_swap_is_visible_with_unchanged_union ... ok
+test code_index::php_names::tests::php_names_inheritance_cache_upgrade_and_frozen_base_changes ... ok
+test code_index::php_names::tests::php_names_trait_capture_upgrade_and_frozen_selection_changes ... ok
+test code_index::php_names::tests::php_names_cache_capability_repair_and_frozen_alias_changes ... ok
+
+test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 1315 filtered out; finished in 0.76s
+

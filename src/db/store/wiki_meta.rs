@@ -1,140 +1,123 @@
-//! Wiki catalog listing: SQL filters, count, bounded page and lean row mapping.
+//! Wiki catalog listing: filters, count, bounded page and lean row mapping.
 
 use super::*;
+use crate::db::lin_engine::{cell_i64, cell_nonempty_string, cell_opt_string, cell_str, cell_string, cell_ts};
 
-/// SQL filters, total count, bounded page, and lean row projection.
-///
-/// SELECT intentionally omits `content` so list stays lean (ISP vs full [`Document`]).
+/// Filter, count, sort, and page `layer='wiki'` documents without loading `content`.
 pub(super) fn fetch_wiki_page_meta_items(
-    conn: &Connection,
+    r: &impl LinReader,
     filter: &WikiPageMetaFilter,
 ) -> Result<(Vec<crate::models::WikiPageListItem>, usize)> {
-    let mut predicates = vec!["layer = 'wiki'".to_string()];
-    let mut binds: Vec<String> = Vec::new();
-
-    if let Some(ref kind) = filter.kind {
-        let kind = kind.trim();
-        if !kind.is_empty() {
-            // Match stored kind; empty DB kind is projected as "wiki" in the DTO map.
-            if crate::models::DocumentKind::Wiki == kind {
-                predicates.push("(COALESCE(kind, '') = '' OR kind = ?)".into());
-            } else {
-                predicates.push("kind = ?".into());
-            }
-            binds.push(kind.to_string());
-        }
-    }
-    if let Some(ref wing) = filter.wing {
-        let wing = wing.trim();
-        if !wing.is_empty() {
-            predicates.push("wing = ?".into());
-            binds.push(wing.to_string());
-        }
-    }
-    if let Some(ref room) = filter.room {
-        let room = room.trim();
-        if !room.is_empty() {
-            predicates.push("room = ?".into());
-            binds.push(room.to_string());
-        }
-    }
-    if let Some(ref category) = filter.category {
-        let category = category.trim();
-        if !category.is_empty() {
-            predicates.push(
-                "LOWER(TRIM(COALESCE(json_extract_string(TRY_CAST(metadata_json AS JSON), '$.category'), ''))) = ?"
-                    .into(),
-            );
-            binds.push(category.to_lowercase());
-        }
-    }
-    if let Some(ref query) = filter.q {
-        let query = query.trim();
-        if !query.is_empty() {
-            predicates.push(
-                r#"contains(
-                    LOWER(
-                        COALESCE(title, '') || '\n' ||
-                        COALESCE(uri, '') || '\n' ||
-                        COALESCE(NULLIF(kind, ''), 'wiki') || '\n' ||
-                        COALESCE(json_extract_string(TRY_CAST(metadata_json AS JSON), '$.summary'), '') || '\n' ||
-                        COALESCE(json_extract_string(TRY_CAST(metadata_json AS JSON), '$.category'), '')
-                    ),
-                    ?
-                )"#
-                .into(),
-            );
-            binds.push(query.to_lowercase());
-        }
-    }
-
-    let where_sql = format!("WHERE {}", predicates.join(" AND "));
-    let count_sql = format!("SELECT COUNT(*)::BIGINT FROM documents {where_sql}");
-    let params_dyn: Vec<&dyn duckdb::types::ToSql> = binds
-        .iter()
-        .map(|s| s as &dyn duckdb::types::ToSql)
-        .collect();
-    let total: i64 = conn.query_row(&count_sql, params_dyn.as_slice(), |row| row.get(0))?;
-
-    let mut sql = format!(
-        r#"
-        SELECT id, uri, title, kind,
-               metadata_json,
-               COALESCE(revision, 1),
-               CAST(updated_at AS VARCHAR)
-        FROM documents
-        {where_sql}
-        ORDER BY title ASC, id ASC
-        "#
-    );
-    if let Some(limit) = filter.limit {
-        let limit = limit.clamp(1, crate::db::MAX_CATALOG_PAGE_SIZE);
-        sql.push_str(&format!(" LIMIT {limit}"));
-    }
-    if let Some(offset) = filter.offset.filter(|offset| *offset > 0) {
-        if filter.limit.is_none() {
-            sql.push_str(" LIMIT 9223372036854775807");
-        }
-        sql.push_str(&format!(" OFFSET {offset}"));
-    }
-
-    let mut stmt = conn.prepare(&sql)?;
-    let out = crate::db::rows::query_vec(&mut stmt, params_dyn.as_slice(), map_wiki_page_meta_row)?;
-    Ok((out, total.max(0) as usize))
-}
-
-/// Project one catalog SELECT row into lean [`crate::models::WikiPageListItem`] (no body).
-pub(super) fn map_wiki_page_meta_row(
-    row: &duckdb::Row<'_>,
-) -> Result<crate::models::WikiPageListItem> {
-    let id: String = row.get(0)?;
-    let uri: String = row.get(1)?;
-    let title: String = row.get(2)?;
-    let kind: String = row
-        .get::<_, Option<String>>(3)?
+    let want_kind = filter.kind.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let want_wing = filter.wing.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let want_room = filter.room.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let want_category_lc = filter
+        .category
+        .as_deref()
+        .map(str::trim)
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| crate::models::DocumentKind::Wiki.as_str().into());
-    let metadata_json: String = row.get(4)?;
-    let revision: i64 = row.get::<_, Option<i64>>(5)?.unwrap_or(1);
-    let updated_raw: String = row.get(6)?;
-    let updated_at = parse_ts(&updated_raw)?;
-    let slug = uri
-        .strip_prefix("wiki://")
-        .unwrap_or(uri.as_str())
-        .to_string();
-    let (summary, category) = meta_summary_category(&metadata_json);
-    Ok(crate::models::WikiPageListItem {
-        id,
-        uri,
-        slug,
-        title,
-        kind,
-        summary,
-        category,
-        revision,
-        etag: crate::models::format_document_etag(revision),
-        updated_at: updated_at.to_rfc3339(),
-    })
+        .map(str::to_lowercase);
+    let want_q_lc = filter
+        .q
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_lowercase);
+
+    let wiki_rows = r.find_by_eq("documents", "layer", "wiki")?;
+    let mut matched: Vec<crate::models::WikiPageListItem> = Vec::new();
+
+    for row in &wiki_rows {
+        let row_kind = cell_str(row, "kind").unwrap_or("");
+        if let Some(k) = want_kind {
+            if crate::models::DocumentKind::Wiki == k {
+                if !row_kind.is_empty() && row_kind != k {
+                    continue;
+                }
+            } else if row_kind != k {
+                continue;
+            }
+        }
+        if let Some(w) = want_wing
+            && cell_str(row, "wing") != Some(w)
+        {
+            continue;
+        }
+        if let Some(rm) = want_room
+            && cell_str(row, "room") != Some(rm)
+        {
+            continue;
+        }
+
+        let metadata_json = cell_opt_string(row, "metadata_json").unwrap_or_else(|| "{}".into());
+        let (summary, category) = meta_summary_category(&metadata_json);
+
+        if let Some(ref cat_lc) = want_category_lc {
+            let row_cat_lc = category
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .to_lowercase();
+            if &row_cat_lc != cat_lc {
+                continue;
+            }
+        }
+
+        let id = cell_string(row, "id");
+        let uri = cell_string(row, "uri");
+        let title = cell_string(row, "title");
+        let eff_kind = cell_nonempty_string(row, "kind")
+            .unwrap_or_else(|| crate::models::DocumentKind::Wiki.as_str().into());
+
+        if let Some(ref q_lc) = want_q_lc {
+            let haystack = format!(
+                "{}\n{}\n{}\n{}\n{}",
+                title,
+                uri,
+                eff_kind,
+                summary.as_deref().unwrap_or(""),
+                category.as_deref().unwrap_or("")
+            )
+            .to_lowercase();
+            if !haystack.contains(q_lc.as_str()) {
+                continue;
+            }
+        }
+
+        let revision = cell_i64(row, "revision", 1).max(1);
+        let updated_at = cell_ts(row, "updated_at")?;
+        let slug = uri
+            .strip_prefix("wiki://")
+            .unwrap_or(uri.as_str())
+            .to_string();
+
+        matched.push(crate::models::WikiPageListItem {
+            id,
+            uri,
+            slug,
+            title,
+            kind: eff_kind,
+            summary,
+            category,
+            revision,
+            etag: crate::models::format_document_etag(revision),
+            updated_at: updated_at.to_rfc3339(),
+        });
+    }
+
+    let total = matched.len();
+    matched.sort_by(|a, b| a.title.cmp(&b.title).then_with(|| a.id.cmp(&b.id)));
+
+    let offset = filter.offset.unwrap_or(0);
+    let iter = matched.into_iter().skip(offset);
+    let page: Vec<crate::models::WikiPageListItem> = if let Some(limit) = filter.limit {
+        let limit = limit.clamp(1, crate::db::MAX_CATALOG_PAGE_SIZE);
+        iter.take(limit).collect()
+    } else {
+        iter.collect()
+    };
+
+    Ok((page, total))
 }
 
 /// Pull optional `summary` / `category` strings from document metadata JSON.

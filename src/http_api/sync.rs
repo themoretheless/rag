@@ -1205,9 +1205,7 @@ mod tests {
         let pending = replica.store.pending_sync_outbox(10).unwrap();
         replica
             .store
-            .lock()
-            .unwrap()
-            .execute_batch("DROP TABLE sync_nodes")
+            .drop_collection_for_test("sync_nodes")
             .unwrap();
         let result = replica.store.update_document_meta_for_sync_test(
             &before.id,

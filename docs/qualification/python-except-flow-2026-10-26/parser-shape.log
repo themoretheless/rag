@@ -1,0 +1,20 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 35.06s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 1 test
+except_clause grammar=except_clause children=2 (except_clause value: (as_pattern (identifier) alias: (as_pattern_target (identifier))) (block (pass_statement)))
+
+thread 'code_index::resolve::python_names::tests::handler_alias_parser_shape_keeps_one_type_and_one_identifier' (74559338) panicked at src/code_index/resolve/python_names/tests.rs:177:54:
+called `Result::unwrap()` on an `Err` value: "exception_alias_pattern_unverified"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test code_index::resolve::python_names::tests::handler_alias_parser_shape_keeps_one_type_and_one_identifier ... FAILED
+
+failures:
+
+failures:
+    code_index::resolve::python_names::tests::handler_alias_parser_shape_keeps_one_type_and_one_identifier
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1434 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`

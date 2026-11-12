@@ -3,6 +3,8 @@
 use super::*;
 use std::collections::BTreeMap;
 mod traits;
+mod stdarch;
+mod stdarch_catalog;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(super) struct Facts {
@@ -90,6 +92,7 @@ enum Ty {
     Primitive(String),
     Array(Box<Ty>),
     Bounds(Vec<Ty>),
+    Callable { trait_name: Option<String>, arity: usize, output: Box<Ty> },
     Projection(Box<Ty>, Box<Ty>, String),
     Unknown,
 }
@@ -105,6 +108,9 @@ enum Expr {
     Name(String),
     Member(Box<Expr>, String),
     Call(Box<Expr>, Vec<Ty>),
+    // Keep the legacy Call shape decodable; new captures retain argument count.
+    Invoke(Box<Expr>, Vec<Ty>, usize),
+    Try(Box<Expr>),
     Await(Box<Expr>),
     Index(Box<Expr>),
     Construct(Ty),
@@ -151,6 +157,18 @@ fn ty(node: Node, source: &str, depth: usize) -> Ty {
     }
     match node.kind() {
         "primitive_type" => Ty::Primitive(text(node, source).into()),
+        "function_type" => {
+            let parameters = node.child_by_field_name("parameters").map(children).unwrap_or_default();
+            if children(node).iter().any(|n| n.kind() == "for_lifetimes")
+                || parameters.iter().any(|n| matches!(n.kind(), "variadic_parameter" | "attribute_item")) {
+                return Ty::Unknown;
+            }
+            Ty::Callable {
+                trait_name: node.child_by_field_name("trait").map(|n| text(n, source).into()),
+                arity: parameters.len(),
+                output: Box::new(node.child_by_field_name("return_type").map(|n| ty(n, source, depth + 1)).unwrap_or(Ty::Unknown)),
+            }
+        }
         "pointer_type" => node.child_by_field_name("type")
             .map(|n| Ty::Pointer(children(node).iter().any(|c| c.kind() == "mutable_specifier"), Box::new(ty(n, source, depth + 1))))
             .unwrap_or(Ty::Unknown),
@@ -249,6 +267,7 @@ fn expr(node: Node, source: &str, depth: usize) -> Expr {
             let Some(function) = node.child_by_field_name("function") else {
                 return Expr::Unknown;
             };
+            let arity = node.child_by_field_name("arguments").map(children).map_or(0, |a| a.len());
             if function.kind() == "generic_function" {
                 let Some(callee) = function.child_by_field_name("function") else {
                     return Expr::Unknown;
@@ -263,9 +282,9 @@ fn expr(node: Node, source: &str, depth: usize) -> Expr {
                             .collect()
                     })
                     .unwrap_or_default();
-                Expr::Call(nested(callee), args)
+                Expr::Invoke(nested(callee), args, arity)
             } else {
-                Expr::Call(nested(function), vec![])
+                Expr::Invoke(nested(function), vec![], arity)
             }
         }
         "parenthesized_expression" => node
@@ -276,6 +295,7 @@ fn expr(node: Node, source: &str, depth: usize) -> Expr {
             .named_child(0)
             .map(|n| Expr::Await(nested(n)))
             .unwrap_or(Expr::Unknown),
+        "try_expression" => node.named_child(0).map(|n| Expr::Try(nested(n))).unwrap_or(Expr::Unknown),
         "reference_expression" => node
             .child_by_field_name("value")
             .map(|n| Expr::Reference(nested(n)))
@@ -431,7 +451,7 @@ pub(super) fn collect(root: Node, source: &str, doc: &mut IndexedDocument) {
                         .symbols
                         .iter()
                         .filter(|s| {
-                            s.kind == "struct_item"
+                            matches!(s.kind.as_str(), "struct_item" | "union_item")
                                 && s.start_byte <= node.start_byte()
                                 && node.end_byte() <= s.end_byte
                         })
@@ -570,7 +590,12 @@ pub(super) fn collect(root: Node, source: &str, doc: &mut IndexedDocument) {
 #[derive(Debug, Clone, PartialEq)]
 enum ValueType {
     Nominal(String, Vec<ValueType>),
+    Stdarch(String),
     Traits(Vec<String>),
+    // A lexical generic parameter is distinct from an unknown expression and
+    // from another parameter having the same trait bounds.
+    Parameter { identity: String, traits: Vec<String>, sized: bool, callable: Option<(usize, Box<ValueType>)> },
+    Callable { arity: usize, output: Box<ValueType>, traits: Vec<String> },
     Standard(String, Vec<ValueType>),
     Reference(Box<ValueType>),
     Pointer(bool, Box<ValueType>),
@@ -628,6 +653,28 @@ impl<'a> Engine<'a> {
                 depth + 1,
             ))),
             Ty::Unknown => ValueType::Unknown,
+            Ty::Callable { trait_name, arity, output } => {
+                if let Some(name) = trait_name {
+                    let (head, tail) = name.split_once("::").unwrap_or((name, ""));
+                    let canonical = if let Some(import) = resolve::import_target(doc, head, at) {
+                        let import = import.strip_prefix("\0extern_crate::").unwrap_or(import);
+                        if tail.is_empty() { import.to_string() } else { format!("{import}::{tail}") }
+                    } else { name.clone() };
+                    let known = matches!(canonical.as_str(), "Fn" | "FnMut" | "FnOnce"
+                        | "core::ops::Fn" | "core::ops::FnMut" | "core::ops::FnOnce"
+                        | "std::ops::Fn" | "std::ops::FnMut" | "std::ops::FnOnce");
+                    let shadowed = !self.names(doc, at, owner, name, false).is_empty()
+                        || doc.rust_semantics.functions.iter().any(|(id,f)| {
+                            self.symbol(id).is_some_and(|s|s.qualified_name == owner)
+                                && f.generics.iter().chain(&f.enclosing_generics).any(|g|g == head)
+                        });
+                    if !known || shadowed || resolve::unknown_rust_namespace(doc, head, at)
+                        || !rust_cargo::standard_crate_unshadowed(self.docs, doc, at, canonical.split("::").next().unwrap_or("")) {
+                        return ValueType::Unknown;
+                    }
+                }
+                ValueType::Callable { arity: *arity, output: Box::new(self.types(doc, at, owner, output, substitutions, depth + 1)), traits: vec![] }
+            }
             Ty::Projection(t, tr, name) => {
                 let value = self.types(doc, at, owner, t, substitutions, depth + 1);
                 let ids = self.trait_ids(
@@ -642,6 +689,9 @@ impl<'a> Engine<'a> {
             }
             Ty::Bounds(bounds) => {
                 let ids = self.trait_ids(doc, at, owner, bounds, substitutions, depth + 1);
+                if let Some((arity, output)) = self.bound_callable(doc, at, owner, bounds, substitutions, depth + 1) {
+                    return ValueType::Callable { arity, output, traits: ids };
+                }
                 if ids.is_empty() {
                     ValueType::Unknown
                 } else {
@@ -684,7 +734,7 @@ impl<'a> Engine<'a> {
                 } else {
                     name
                 };
-                if let Some((_, function)) = doc.rust_semantics.functions.iter().find(|(id, f)| {
+                if let Some((function_id, function)) = doc.rust_semantics.functions.iter().find(|(id, f)| {
                     self.symbol(id).is_some_and(|s| s.qualified_name == owner)
                         && f.generics
                             .iter()
@@ -693,10 +743,13 @@ impl<'a> Engine<'a> {
                 }) {
                     let bounds = function.bounds.get(name).cloned().unwrap_or_default();
                     let ids = self.trait_ids(doc, at, owner, &bounds, substitutions, depth + 1);
-                    return if ids.is_empty() {
-                        ValueType::Unknown
-                    } else {
-                        ValueType::Traits(ids)
+                    // Optional/unsupported bound syntax (notably ?Sized) is
+                    // captured as Unknown. Do not assert implicit Sized then.
+                    return ValueType::Parameter {
+                        identity: format!("{function_id}::{name}"),
+                        traits: ids,
+                        sized: bounds.iter().all(|b| !matches!(b, Ty::Unknown)),
+                        callable: self.bound_callable(doc, at, owner, &bounds, substitutions, depth + 1),
                     };
                 }
                 if resolve::unknown_rust_namespace(doc, name.split("::").next().unwrap_or(""), at) {
@@ -708,7 +761,7 @@ impl<'a> Engine<'a> {
                     .filter(|s| {
                         matches!(
                             s.kind.as_str(),
-                            "struct_item" | "enum_item" | "trait_item" | "type_item"
+                            "struct_item" | "union_item" | "enum_item" | "trait_item" | "type_item"
                         )
                     })
                     .collect();
@@ -764,7 +817,12 @@ impl<'a> Engine<'a> {
                     name.to_string()
                 };
                 let terminal = canonical.rsplit("::").next().unwrap_or("");
-                let standard = (matches!(canonical.as_str(), "Box" | "Arc" | "Rc" | "Vec")
+                if args.is_empty() {
+                    if let Some(identity) = stdarch::identity(self.docs, doc, at, name, &canonical) {
+                        return ValueType::Stdarch(identity);
+                    }
+                }
+                let standard = (matches!(canonical.as_str(), "Box" | "Arc" | "Rc" | "Vec" | "Option" | "Result")
                     || matches!(
                         canonical.as_str(),
                         "std::boxed::Box"
@@ -775,6 +833,8 @@ impl<'a> Engine<'a> {
                             | "alloc::rc::Rc"
                             | "std::vec::Vec"
                             | "alloc::vec::Vec"
+                            | "core::option::Option" | "std::option::Option"
+                            | "core::result::Result" | "std::result::Result"
                     ))
                     && rust_cargo::standard_crate_unshadowed(
                         self.docs,
@@ -782,7 +842,7 @@ impl<'a> Engine<'a> {
                         at,
                         canonical.split("::").next().unwrap_or(""),
                     );
-                if standard && args.len() == 1 {
+                if standard && args.len() == if terminal == "Result" { 2 } else { 1 } {
                     // A user-defined generic parameter with a prelude name still shadows std.
                     if doc.rust_semantics.functions.iter().any(|(id, f)| {
                         self.symbol(id).is_some_and(|s| s.qualified_name == owner)
@@ -795,12 +855,19 @@ impl<'a> Engine<'a> {
                     }
                     return ValueType::Standard(
                         terminal.into(),
-                        vec![self.types(doc, at, owner, &args[0], substitutions, depth + 1)],
+                        args.iter().map(|t|self.types(doc, at, owner, t, substitutions, depth + 1)).collect(),
                     );
                 }
                 ValueType::Unknown
             }
         }
+    }
+    fn bound_callable(&mut self, doc: &IndexedDocument, at: usize, owner: &str, bounds: &[Ty], substitutions: &HashMap<String,ValueType>, depth: usize) -> Option<(usize,Box<ValueType>)> {
+        let candidates: Vec<_> = bounds.iter().filter(|b| matches!(b, Ty::Callable { trait_name: Some(_), .. })).collect();
+        if candidates.len() != 1 { return None; }
+        if let ValueType::Callable { arity, output, .. } = self.types(doc, at, owner, candidates[0], substitutions, depth + 1) {
+            Some((arity,output))
+        } else { None }
     }
     fn names(
         &mut self,
@@ -843,7 +910,7 @@ impl<'a> Engine<'a> {
                     && self.symbols.iter().any(|s| {
                         s.path == doc.path
                             && s.qualified_name == prefix
-                            && matches!(s.kind.as_str(), "struct_item" | "enum_item" | "trait_item")
+                            && matches!(s.kind.as_str(), "struct_item" | "union_item" | "enum_item" | "trait_item")
                     });
                 let found = if type_scope {
                     vec![]
@@ -881,7 +948,7 @@ impl<'a> Engine<'a> {
             return vec![];
         }
         match value {
-            ValueType::Nominal(..) | ValueType::Traits(..) => {
+            ValueType::Nominal(..) | ValueType::Stdarch(..) | ValueType::Traits(..) | ValueType::Parameter { .. } | ValueType::Callable { .. } => {
                 self.trait_methods(value, name, context, None, true, depth + 1)
             }
             ValueType::Pointer(..) => {
@@ -983,6 +1050,10 @@ impl<'a> Engine<'a> {
                 ValueType::Future(t) => *t,
                 _ => ValueType::Unknown,
             },
+            Expr::Try(e) => match self.value(doc, at, owner, e, depth + 1) {
+                ValueType::Standard(name,args) if matches!(name.as_str(), "Option" | "Result") => args[0].clone(),
+                _ => ValueType::Unknown,
+            },
             Expr::Index(e) => {
                 let mut t = self.value(doc, at, owner, e, depth + 1);
                 for _ in 0..16 {
@@ -1046,7 +1117,25 @@ impl<'a> Engine<'a> {
                     depth + 1,
                 )
             }
-            Expr::Call(callee, type_args) => {
+            Expr::Call(callee, type_args) | Expr::Invoke(callee, type_args, _) => {
+                if let (Expr::Invoke(_,_,arity), Expr::Name(_)) = (e, callee.as_ref()) {
+                    let mut value = self.value(doc, at, owner, callee, depth + 1);
+                    for _ in 0..16 {
+                        match value {
+                            ValueType::Reference(inner) => value = *inner,
+                            ValueType::Standard(ref n,ref a) if matches!(n.as_str(), "Box" | "Arc" | "Rc") => value = a[0].clone(),
+                            _ => break,
+                        }
+                    }
+                    let callable = match value {
+                        ValueType::Callable { arity, output, .. } => Some((arity,output)),
+                        ValueType::Parameter { callable, .. } => callable,
+                        _ => None,
+                    };
+                    if let Some((expected,output)) = callable {
+                        return if type_args.is_empty() && *arity == expected { *output } else { ValueType::Unknown };
+                    }
+                }
                 let found = self.callees(doc, at, owner, callee, depth + 1);
                 if found.len() != 1 {
                     return ValueType::Unknown;
@@ -1069,6 +1158,11 @@ impl<'a> Engine<'a> {
                 } else if let Expr::Ufcs(t, _, _) = callee.as_ref() {
                     let value = self.types(doc, at, owner, t, &HashMap::new(), depth + 1);
                     substitution.extend(self.method_substitutions(function, &value, depth + 1));
+                } else if let Expr::Name(name) = callee.as_ref() {
+                    if let Some((t, _)) = name.rsplit_once("::") {
+                        let value = self.types(doc, at, owner, &Ty::Named(t.into(), vec![]), &HashMap::new(), depth + 1);
+                        substitution.extend(self.method_substitutions(function, &value, depth + 1));
+                    }
                 }
                 if !type_args.is_empty() {
                     if f.generics.len() != type_args.len() {
@@ -1143,6 +1237,7 @@ impl<'a> Engine<'a> {
                     }
                 }
                 self.names(doc, at, owner, name, true)
+                    .into_iter().filter(|s| s.kind != "union_item").collect()
             }
             Expr::Ufcs(t, tr, name) => {
                 let value = self.types(doc, at, owner, t, &HashMap::new(), depth + 1);
@@ -1191,6 +1286,7 @@ pub(super) fn resolve(
         .any(|(start, end)| *start <= r.start_byte && r.start_byte < *end)
     {
         return Some(CallEdge {
+            context_evidence: None,
             reference: r.clone(),
             candidates: vec![],
             resolution: "unresolved".into(),
@@ -1205,9 +1301,7 @@ pub(super) fn resolve(
         .rust_semantics
         .expressions
         .get(&format!("{}:{}", r.start_byte, r.expression))?;
-    let Expr::Call(callee, _) = expression else {
-        return None;
-    };
+    let callee = match expression { Expr::Call(callee,_) | Expr::Invoke(callee,_,_) => callee, _ => return None };
     // Keep established bare/qualified binding behavior; own all member call forms
     // so failed expression typing cannot fall back to unrelated lexical methods.
     let caller = r
@@ -1274,6 +1368,7 @@ pub(super) fn resolve(
         })
     });
     Some(CallEdge {
+        context_evidence: None,
         reference: r.clone(),
         candidates: found.iter().map(|s| s.id.clone()).collect(),
         resolution: match found.len() {
@@ -1380,6 +1475,159 @@ mod tests {
         assert_eq!(targets(&g, "s.typed::<User>().save"), ["User::save"]);
         assert_eq!(targets(&g, "s.typed::<Other>().save"), ["Other::save"]);
         assert!(targets(&g, "s.typed().save").is_empty());
+    }
+    #[test]
+    fn rust_union_fields_keep_declared_owner_and_generic_substitutions() {
+        let g=graph(&[("/p/src/lib.rs","mod slots; use slots::Slot; #[derive(Copy,Clone)] struct User; #[derive(Copy,Clone)] struct Other; impl User {fn save(&self){}} impl Other {fn save(&self){}} struct Holder {slot:Slot<User>} fn run(h:Holder){unsafe{h.slot.value.save();h.slot.other.save();h.slot.missing.save();}}"),("/p/src/slots.rs","use crate::Other; pub union Slot<T:Copy>{pub value:T,pub other:Other}")]);
+        assert_eq!(targets(&g,"h.slot.value.save"),["User::save"]);
+        assert_eq!(targets(&g,"h.slot.other.save"),["Other::save"]);
+        assert!(targets(&g,"h.slot.missing.save").is_empty());
+        assert!(g.symbols.iter().any(|s|s.kind=="union_item" && s.name=="Slot"));
+    }
+    #[test]
+    fn rust_union_type_does_not_shadow_a_same_name_value_function() {
+        let g=graph(&[("/p/lib.rs","#[derive(Copy,Clone)]struct User;impl User{fn save(&self){}} union Slot{value:User} #[allow(non_snake_case)]fn Slot()->User{User}fn run(){Slot().save();}")]);
+        assert_eq!(targets(&g,"Slot().save"),["User::save"]);
+        let edge=g.calls.iter().find(|c|c.reference.expression=="Slot").unwrap();
+        assert_eq!(edge.candidates.len(),1);
+        assert_eq!(g.symbols.iter().find(|s|s.id==edge.candidates[0]).unwrap().kind,"function_item");
+    }
+    #[test]
+    fn rust_union_field_namespace_does_not_borrow_other_owner_types() {
+        let g=graph(&[("/p/lib.rs","#[derive(Copy,Clone)]struct User;#[derive(Copy,Clone)]struct Other;impl User {fn save(&self){}}impl Other {fn save(&self){}}union Left {value:User}union Right {value:Other}fn run(l:Left,r:Right){unsafe{l.value.save();r.value.save();}}")]);
+        assert_eq!(targets(&g,"l.value.save"),["User::save"]);
+        assert_eq!(targets(&g,"r.value.save"),["Other::save"]);
+    }
+    #[test]
+    fn rust_stdarch_bound_checks_do_not_spend_the_budget_on_unrelated_traits() {
+        let manifest="[package]\nname='simd-fixture'\nversion='0.1.0'\n[package.metadata.rag.graph]\nversion=1\ntarget_kind='lib'\n[package.metadata.rag.graph.cfg_values]\ntarget_arch=['aarch64']\n";
+        let mut source="use core::arch::aarch64::*;trait Mark{}impl Mark for uint8x16_t{}trait Other{}".to_string();
+        for index in 0..160 { source.push_str(&format!("struct Other{index};impl Other for Other{index}{{}}")); }
+        source.push_str("struct Generic<T>(T);impl<T:Mark>Generic<T>{fn get(&self){}}fn run(v:Generic<uint8x16_t>){v.get();}");
+        let g=graph(&[("/p/Cargo.toml",manifest),("/p/src/lib.rs",&source)]);
+        assert_eq!(targets(&g,"v.get").len(),1);
+    }
+    #[test]
+    fn rust_stdarch_aliases_match_exact_vector_types_without_inherent_guesses() {
+        let manifest="[package]\nname='simd-fixture'\nversion='0.1.0'\n[package.metadata.rag.graph]\nversion=1\ntarget_kind='lib'\n[package.metadata.rag.graph.cfg_values]\ntarget_arch=['aarch64']\n";
+        let source="use std::arch::aarch64::uint8x16_t as Bytes;use core::arch::aarch64::uint16x8_t as Words;trait Mark{}mod implementations{use core::arch::aarch64::*;impl super::Mark for uint8x16_t{}}struct Generic<T>(T);impl<T:Mark> Generic<T>{fn get(&self){}}fn run(a:Generic<Bytes>,b:Generic<Words>){a.get();b.get();}impl Bytes{fn fabricated(&self){}}fn bad(v:Bytes){v.fabricated();}";
+        let g=graph(&[("/p/Cargo.toml",manifest),("/p/src/lib.rs",source)]);
+        assert_eq!(targets(&g,"a.get").len(),1);
+        assert!(targets(&g,"b.get").is_empty());
+        assert!(targets(&g,"v.fabricated").is_empty());
+    }
+    #[test]
+    fn rust_stdarch_requires_target_and_unambiguous_unshadowed_imports() {
+        let prefix="trait Mark{}impl Mark for core::arch::aarch64::uint8x16_t{}struct Generic<T>(T);impl<T:Mark> Generic<T>{fn get(&self){}}";
+        for (imports,arch) in [
+            ("use core::arch::aarch64::*;", "x86_64"),
+            ("use core::arch::aarch64::*;use unknown::*;", "aarch64"),
+            ("use core::arch::aarch64::*;struct uint8x16_t;", "aarch64"),
+            ("extern crate custom as core;use core::arch::aarch64::*;", "aarch64"),
+            ("", "aarch64"),
+        ] {
+            let manifest=format!("[package]\nname='simd-fixture'\nversion='0.1.0'\n[package.metadata.rag.graph]\nversion=1\ntarget_kind='lib'\n[package.metadata.rag.graph.cfg_values]\ntarget_arch=['{arch}']\n");
+            let source=format!("{imports}{prefix}fn run(v:Generic<uint8x16_t>){{v.get();}}");
+            let g=graph(&[("/p/Cargo.toml",&manifest),("/p/src/lib.rs",&source)]);
+            assert!(targets(&g,"v.get").is_empty(),"{imports} / {arch}");
+        }
+        let manifest="[package]\nname='simd-fixture'\nversion='0.1.0'\n[package.metadata.rag.graph]\nversion=1\ntarget_kind='lib'\n[package.metadata.rag.graph.cfg_values]\ntarget_arch=['aarch64']\n";
+        let source="use custom as core;use core as alias;use alias::arch::aarch64::*;trait Mark{}impl Mark for std::arch::aarch64::uint8x16_t{}struct Generic<T>(T);impl<T:Mark>Generic<T>{fn get(&self){}}fn run(v:Generic<uint8x16_t>){v.get();}";
+        let g=graph(&[("/p/Cargo.toml",manifest),("/p/src/lib.rs",source)]);
+        assert!(targets(&g,"v.get").is_empty());
+    }
+    #[test]
+    fn rust_stdarch_unknown_arch_and_unknown_type_names_do_not_create_identity() {
+        let source="use core::arch::aarch64::*;trait Mark{}impl Mark for uint8x16_t{}struct Generic<T>(T);impl<T:Mark>Generic<T>{fn get(&self){}}fn run(v:Generic<uint8x16_t>,w:Generic<imaginary_t>){v.get();w.get();}";
+        let g=graph(&[("/p/src/lib.rs",source)]);
+        assert!(targets(&g,"v.get").is_empty());
+        assert!(targets(&g,"w.get").is_empty());
+    }
+    #[test]
+    fn rust_stdarch_imports_preserve_generic_wrapper_receiver_identity() {
+        let manifest="[package]\nname='simd-fixture'\nversion='0.1.0'\n[package.metadata.rag.graph]\nversion=1\ntarget_kind='lib'\n[package.metadata.rag.graph.cfg_values]\ntarget_arch=['aarch64']\n";
+        let source="use core::arch::aarch64::uint8x16_t;trait Mark{}mod implementations{use core::arch::aarch64::*;impl super::Mark for uint8x16_t{}}struct Generic<T>(T);impl<T:Mark> Generic<T>{fn get(&self){}}struct Wrapper(Generic<uint8x16_t>);impl Wrapper{fn run(&self){self.0.get();}}";
+        let g=graph(&[("/p/Cargo.toml",manifest),("/p/src/lib.rs",source)]);
+        assert_eq!(targets(&g,"self.0.get").len(),1);
+    }
+    #[test]
+    fn rust_callback_arity_and_unsupported_callable_bounds_do_not_guess_returns() {
+        let g=graph(&[("/p/lib.rs","struct User;impl User{fn save(&self){}}fn run(f:fn(u8)->Option<User>){f()?.save();f(1,2)?.save();f(1)?.save();}fn higher(g:for<'a>fn(&'a u8)->Option<User>){g(&0)?.save();}")]);
+        assert!(targets(&g,"f()?.save").is_empty());
+        assert!(targets(&g,"f(1,2)?.save").is_empty());
+        assert_eq!(targets(&g,"f(1)?.save"),["User::save"]);
+        assert!(targets(&g,"g(&0)?.save").is_empty());
+    }
+    #[test]
+    fn rust_try_and_callable_names_respect_local_and_external_shadows() {
+        for source in [
+            "struct User;impl User{fn save(&self){}}struct Option<T>(T);fn get()->Option<User>{Option(User)}fn run(){get()?.save();}",
+            "struct User;impl User{fn save(&self){}}trait FnMut{}fn run(f:impl FnMut()->Option<User>){f()?.save();}",
+            "extern crate custom as core;struct User;impl User{fn save(&self){}}fn get()->core::option::Option<User>{todo!()}fn run(){get()?.save();}",
+        ] {
+            let g=graph(&[("/p/lib.rs",source)]);
+            assert!(g.calls.iter().filter(|c|c.reference.name=="save").all(|c|c.candidates.is_empty()),"{source}");
+        }
+    }
+    #[test]
+    fn rust_callback_aliases_and_generic_where_bounds_keep_declared_outputs() {
+        let g=graph(&[("/p/lib.rs","use core::ops::FnOnce as Callback;use core::option::Option as Maybe;struct User;impl User{fn save(&self){}}fn run<F>(f:F)->Maybe<()>where F:Callback()->Maybe<User>{f()?.save();Some(())}fn reference(f:&mut dyn FnMut()->Maybe<User>)->Maybe<()>{f()?.save();Some(())}")]);
+        let calls:Vec<_>=g.calls.iter().filter(|c|c.reference.name=="save").collect();
+        assert_eq!(calls.len(),2);
+        assert!(calls.iter().all(|c|c.candidates.len()==1));
+    }
+    #[test]
+    fn rust_declared_callbacks_and_try_keep_result_receiver_types() {
+        let g=graph(&[("/p/lib.rs","struct User;impl User{fn save(&self){}}fn run(mut f:impl FnMut()->Option<User>,p:fn()->Option<User>)->Option<()>{let u=f()?;u.save();p()?.save();Some(())}fn generic<F:FnOnce()->Result<User,()>>(g:F)->Result<(),()>{g()?.save();Ok(())}")]);
+        assert_eq!(targets(&g,"u.save"),["User::save"]);
+        assert_eq!(targets(&g,"p()?.save"),["User::save"]);
+        assert_eq!(targets(&g,"g()?.save"),["User::save"]);
+    }
+    #[test]
+    fn rust_associated_bounds_preserve_unsized_and_unknown_cfg_guards() {
+        let g=graph(&[("/p/lib.rs","trait Done{fn ready(&self);}trait Mark{fn mark(self);}impl<T> Mark for *const T{fn mark(self){}}trait Loose{type Output:?Sized+Done;fn ptr(self)->*const Self::Output;}trait Conditional{#[cfg(missing)]type Output:Done;fn out(self)->Self::Output;}fn run<L:Loose,C:Conditional>(l:L,c:C){l.ptr().mark();c.out().ready();}")]);
+        assert!(targets(&g,"l.ptr().mark").is_empty());
+        assert!(targets(&g,"c.out().ready").is_empty());
+    }
+    #[test]
+    fn rust_associated_bounds_require_declared_non_generic_evidence() {
+        let g=graph(&[("/p/lib.rs","trait Done{fn ready(&self);}trait Unknown{type Output;fn out(self)->Self::Output;}trait Gat{type Output<'a>:Done;fn get(&self)->Self::Output<'_>;}fn run<U:Unknown,G:Gat>(u:U,g:G){u.out().ready();g.get().ready();}")]);
+        assert!(targets(&g,"u.out().ready").is_empty());
+        assert!(targets(&g,"g.get().ready").is_empty());
+    }
+    #[test]
+    fn rust_generic_associated_bound_return_chains_keep_declaration_targets() {
+        let g=graph(&[("/p/lib.rs","trait Done {fn ready(&self);fn again(self)->Self;}trait Factory {type Output:Done;fn make()->Self;fn output(self)->Self::Output;}fn run<T:Factory>(){T::make().output().again().ready();}")]);
+        assert_eq!(targets(&g,"T::make().output"),["Factory::output"]);
+        assert_eq!(targets(&g,"T::make().output().again"),["Done::again"]);
+        assert_eq!(targets(&g,"T::make().output().again().ready"),["Done::ready"]);
+    }
+    #[test]
+    fn rust_associated_bounds_do_not_borrow_same_name_trait_outputs() {
+        let g=graph(&[("/p/lib.rs","trait Good{fn save(&self);}trait Bad{fn save(&self);}trait Left{type Output:Good;fn out(self)->Self::Output;}trait Right{type Output:Bad;fn out(self)->Self::Output;}fn run<L:Left,R:Right>(l:L,r:R){l.out().save();r.out().save();}")]);
+        assert_eq!(targets(&g,"l.out().save"),["Good::save"]);
+        assert_eq!(targets(&g,"r.out().save"),["Bad::save"]);
+    }
+    #[test]
+    fn rust_generic_pointer_receivers_preserve_implicit_sized_parameters() {
+        let g=graph(&[("/p/lib.rs","trait Mark {fn mark(self);}impl<T> Mark for *const T {fn mark(self){}}impl<T> Mark for *mut T {fn mark(self){}}fn run<T,U>(p:*const T,q:*mut U){p.mark();q.mark();(q as *const U).mark();}")]);
+        for expression in ["p.mark","q.mark","(q as *const U).mark"] {
+            assert_eq!(targets(&g,expression).len(),1,"{expression}");
+        }
+    }
+    #[test]
+    fn rust_generic_parameter_identity_does_not_unify_distinct_parameters() {
+        let g=graph(&[("/p/lib.rs","struct Pair<A,B>(A,B);trait Mark{fn mark(self);}impl<T> Mark for Pair<*const T,*const T>{fn mark(self){}}fn same<T>(a:Pair<*const T,*const T>){a.mark();}fn different<T,U>(b:Pair<*const T,*const U>){b.mark();}fn bounded<V:Mark>(c:V){c.mark();}")]);
+        assert_eq!(targets(&g,"a.mark").len(),1);
+        assert!(targets(&g,"b.mark").is_empty());
+        assert_eq!(targets(&g,"c.mark"),["Mark::mark"]);
+    }
+    #[test]
+    fn rust_generic_pointer_optional_sized_does_not_match_sized_blanket() {
+        let g=graph(&[("/p/lib.rs","trait Mark {fn mark(self);}impl<T> Mark for *const T {fn mark(self){}}fn inline<T:?Sized>(p:*const T){p.mark();}fn clause<U>(q:*const U) where U:?Sized {q.mark();}fn sized<V>(r:*const V){r.mark();}")]);
+        assert!(targets(&g,"p.mark").is_empty());
+        assert!(targets(&g,"q.mark").is_empty());
+        assert_eq!(targets(&g,"r.mark").len(),1);
     }
     #[test]
     fn rust_raw_pointer_trait_receivers_keep_mutability_and_pointee_identity() {
@@ -1739,14 +1987,7 @@ mod tests {
         store.upsert_document(&document).unwrap();
         store.index_code().unwrap();
         {
-            let connection = store.lock().unwrap();
-            let payload: String = connection
-                .query_row(
-                    "SELECT payload FROM code_index_documents WHERE document_id='legacy'",
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap();
+            let payload = crate::code_index::test_get_code_doc_payload(&store, "legacy");
             let mut old: serde_json::Value = serde_json::from_str(&payload).unwrap();
             old["version"] = serde_json::json!(31);
             old["rust_semantics"]
@@ -1760,12 +2001,7 @@ mod tests {
             {
                 function.as_object_mut().unwrap().remove("bounds");
             }
-            connection
-                .execute(
-                    "UPDATE code_index_documents SET payload=? WHERE document_id='legacy'",
-                    [old.to_string()],
-                )
-                .unwrap();
+            crate::code_index::test_set_code_doc_payload(&store, "legacy", &old.to_string());
         }
         let stale = store.code_snapshot().unwrap();
         assert_eq!(stale.stale_documents, ["legacy"]);

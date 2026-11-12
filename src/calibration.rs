@@ -1,20 +1,18 @@
 //! Reproducible confidence-threshold reports. Never silently applies learned thresholds.
 use crate::{
-    db::Store,
+    analysis_tasks,
+    db::{
+        lin_engine::{cell_i64, cell_str, cell_string, LinReader, LinWriter, RecBuilder},
+        Store,
+    },
     error::{AppError, Result},
     util::content_hash,
 };
-use duckdb::params;
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
-pub(crate) const DDL: &str = r#"
-CREATE TABLE IF NOT EXISTS analysis_calibrations (
- seq BIGINT PRIMARY KEY, id VARCHAR UNIQUE NOT NULL, created_ms BIGINT NOT NULL,
- kind VARCHAR NOT NULL, sample_size BIGINT NOT NULL, index_rev BIGINT, report_json VARCHAR NOT NULL
-);
-"#;
+
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Sample {
@@ -73,8 +71,8 @@ fn metrics(rows: &[Sample], threshold: Option<f64>) -> Metrics {
         }
     }
     let predicted = tp + fp;
-    let precision = (predicted > 0).then(|| tp as f64 / predicted as f64);
-    let recall = (tp + fn_ > 0).then(|| tp as f64 / (tp + fn_) as f64);
+    let precision = (predicted > 0).then_some(tp as f64 / predicted as f64);
+    let recall = (tp + fn_ > 0).then_some(tp as f64 / (tp + fn_) as f64);
     let f1 = if 2 * tp + fp + fn_ > 0 {
         2.0 * tp as f64 / (2 * tp + fp + fn_) as f64
     } else {
@@ -253,50 +251,57 @@ impl Store {
     pub fn calibrate_confidence(&self, q: &CalibrationQuery) -> Result<Value> {
         let (kind, min, samples) = validate(q)?;
         let mut report = fit(&kind, min, &samples);
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let seq: i64 = tx.query_row(
-            "SELECT COALESCE(MAX(seq),0)+1 FROM analysis_calibrations",
-            [],
-            |r| r.get(0),
-        )?;
-        let rev: Option<i64> =
-            tx.query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| r.get(0))?;
-        let id = uuid::Uuid::new_v4().to_string();
-        let at = chrono::Utc::now().timestamp_millis();
-        let o = report.as_object_mut().unwrap();
-        o.insert("id".into(), json!(id));
-        o.insert("seq".into(), json!(seq));
-        o.insert("created_ms".into(), json!(at));
-        o.insert("index_rev".into(), json!(rev));
-        tx.execute(
-            "INSERT INTO analysis_calibrations VALUES (?,?,?,?,?,?,?)",
-            params![
-                seq,
-                id,
-                at,
-                kind,
-                (samples.training.len() + samples.validation.len()) as i64,
-                rev,
-                serde_json::to_string(&report)?
-            ],
-        )?;
-        tx.commit()?;
+        let sample_size = (samples.training.len() + samples.validation.len()) as i64;
+        self.with_tx(|tx| {
+            let seq = analysis_tasks::next_seq(tx, "analysis_calibrations")?;
+            let rev = analysis_tasks::latest_code_index_rev(tx)?;
+            let id = uuid::Uuid::new_v4().to_string();
+            let at = chrono::Utc::now().timestamp_millis();
+            let o = report.as_object_mut().unwrap();
+            o.insert("id".into(), json!(id));
+            o.insert("seq".into(), json!(seq));
+            o.insert("created_ms".into(), json!(at));
+            o.insert("index_rev".into(), json!(rev));
+            let report_json = serde_json::to_string(&report)?;
+            tx.insert_one(
+                "analysis_calibrations",
+                RecBuilder::new()
+                    .id(seq.to_string())
+                    .i64("seq", seq)
+                    .str("calibration_id", &id)
+                    .i64("created_ms", at)
+                    .str("kind", &kind)
+                    .i64("sample_size", sample_size)
+                    .opt_i64("index_rev", rev)
+                    .str("report_json", report_json)
+                    .build(),
+            )?;
+            Ok(())
+        })?;
         Ok(report)
     }
     pub fn calibration_reports(&self, q: &ReportsQuery) -> Result<Value> {
         let limit = q.limit.unwrap_or(20).clamp(1, 200);
-        let conn = self.lock()?;
-        let mut stmt=conn.prepare("SELECT report_json FROM analysis_calibrations WHERE (? IS NULL OR kind=?) AND (? IS NULL OR seq<?) ORDER BY seq DESC LIMIT ?")?;
-        let rows = stmt.query_map(
-            params![q.kind, q.kind, q.before_seq, q.before_seq, limit as i64 + 1],
-            |r| r.get::<_, String>(0),
-        )?;
+        let r = self.read()?;
+        let mut matched: Vec<(i64, String)> = Vec::new();
+        r.scan_each("analysis_calibrations", |row| {
+            if let Some(k) = q.kind.as_deref()
+                && cell_str(row, "kind") != Some(k)
+            {
+                return Ok(true);
+            }
+            let seq = cell_i64(row, "seq", 0);
+            if q.before_seq.is_some_and(|b| seq >= b) {
+                return Ok(true);
+            }
+            matched.push((seq, cell_string(row, "report_json")));
+            Ok(true)
+        })?;
+        matched.sort_by_key(|a| std::cmp::Reverse(a.0));
         let mut items = vec![];
         let mut bytes = 0usize;
         let mut more = false;
-        for row in rows {
-            let row = row?;
+        for (_, row) in matched.into_iter().take(limit + 1) {
             if items.len() >= limit || bytes + row.len() > 256 * 1024 {
                 more = true;
                 break;
@@ -375,7 +380,7 @@ mod tests {
     #[test]
     fn assertions_are_not_labels_and_reports_survive_restart_with_stable_cursors() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("c.duckdb");
+        let path = dir.path().join("c.lin");
         let store = Store::open(&path).unwrap();
         let q = CalibrationQuery {
             samples: Some(Samples {

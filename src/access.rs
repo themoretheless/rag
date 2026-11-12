@@ -66,6 +66,7 @@ pub fn required_tool_role(name: &str) -> Option<AccessRole> {
         | "routes"
         | "dead_code"
         | "slice"
+        | "data_slice"
         | "inheritance"
         | "code"
         | "repo_map"

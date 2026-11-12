@@ -162,6 +162,7 @@ fn is_type(s: &Symbol) -> bool {
             | "class_declaration"
             | "interface_declaration"
             | "struct_item"
+            | "union_item"
             | "enum_item"
             | "trait_item"
     )
@@ -224,6 +225,10 @@ pub(super) fn edges(
 ) -> Vec<InheritanceEdge> {
     let mut result = Vec::new();
     for (id, doc) in docs {
+        if doc.php_names.is_some() {
+            result.extend(super::php_names::edges(docs, doc));
+            continue;
+        }
         if doc.powershell.is_some() {
             result.extend(super::powershell::edges(docs, doc));
             continue;
@@ -310,6 +315,9 @@ pub(super) fn overrides(
     docs: &HashMap<String, IndexedDocument>,
 ) -> Vec<OverrideEdge> {
     let mut result = Vec::new();
+    for doc in docs.values().filter(|d| d.php_names.is_some()) {
+        result.extend(super::php_names::overrides(docs, doc));
+    }
     for ty in symbols
         .iter()
         .filter(|s| matches!(s.kind.as_str(), "class_definition" | "class_declaration"))

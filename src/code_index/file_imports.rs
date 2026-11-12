@@ -409,22 +409,10 @@ mod tests {
         store.upsert_document(&client).unwrap();
         store.index_code().unwrap();
         assert_eq!(store.code_index_diff(&diffq).unwrap(), diff);
-        let conn = store.lock().unwrap();
-        let raw: String = conn
-            .query_row(
-                "SELECT graph_json FROM code_index_revisions WHERE id=1",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let raw = crate::code_index::test_get_rev_graph_json(&store, 1);
         let mut graph: serde_json::Value = serde_json::from_str(&raw).unwrap();
         graph.as_object_mut().unwrap().remove("file_imports");
-        conn.execute(
-            "UPDATE code_index_revisions SET graph_json=? WHERE id=1",
-            [graph.to_string()],
-        )
-        .unwrap();
-        drop(conn);
+        crate::code_index::test_set_rev_graph_json(&store, 1, &graph.to_string());
         let legacy = store.code_index_diff(&diffq).unwrap();
         assert_eq!(legacy["file_import_relations_available"], false);
         assert!(!legacy["relations_removed"]

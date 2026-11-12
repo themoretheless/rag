@@ -14,6 +14,10 @@ pub(super) struct Input {
     target_triple: Option<String>,
 }
 impl Input {
+    pub(super) fn unique_value(&self, name: &str) -> Option<&str> {
+        let values = self.values.get(name)?;
+        (values.len() == 1).then(|| values.iter().next().unwrap().as_str())
+    }
     pub(super) fn enable_tests(&mut self) {
         self.flags.insert("test".into());
     }
@@ -209,9 +213,11 @@ fn projectable_condition(kind: &str) -> bool {
             | "mod_item"
             | "impl_item"
             | "struct_item"
+            | "union_item"
             | "enum_item"
             | "trait_item"
             | "type_item"
+            | "associated_type"
             | "use_declaration"
             | "public_use_declaration"
             | "source_file"
@@ -499,10 +505,9 @@ pub(super) fn collect(root: Node, source: &str, doc: &mut IndexedDocument) {
                     end: child.end_byte(),
                     kind: if child.kind() == "use_declaration" && {
                         let mut cursor = child.walk();
-                        let visible = child
+                        child
                             .named_children(&mut cursor)
-                            .any(|n| n.kind() == "visibility_modifier");
-                        visible
+                            .any(|n| n.kind() == "visibility_modifier")
                     } {
                         "public_use_declaration".into()
                     } else {
@@ -1029,6 +1034,8 @@ mod tests {
         for declarations in [
             "struct Holder{#[cfg(feature=\"fast\")]value:User,#[cfg(not(feature=\"fast\"))]value:Other}",
             "#[cfg(feature=\"fast\")]struct Holder{value:User}#[cfg(not(feature=\"fast\"))]struct Holder{value:Other}",
+            "union Holder{#[cfg(feature=\"fast\")]value:User,#[cfg(not(feature=\"fast\"))]value:Other}",
+            "#[cfg(feature=\"fast\")]union Holder{value:User}#[cfg(not(feature=\"fast\"))]union Holder{value:Other}",
         ] {
             let source = format!("struct User;impl User{{fn save(&self){{}}}}struct Other;impl Other{{fn save(&self){{}}}}{declarations}impl Holder{{fn run(&self){{self.value.save();}}}}fn make_user()->User{{User}}fn make_other()->Other{{Other}}fn make()->Holder{{Holder{{#[cfg(feature=\"fast\")]value:make_user(),#[cfg(not(feature=\"fast\"))]value:make_other()}}}}");
             for (features, expected) in [("'fast'", "User::save"), ("", "Other::save")] {
@@ -1041,6 +1048,16 @@ mod tests {
                 assert!(!g.calls.iter().any(|c| c.reference.expression == absent));
                 assert_eq!(g.calls.iter().find(|c| c.reference.expression == present).unwrap().candidates.len(), 1);
             }
+        }
+    }
+    #[test]
+    fn unknown_union_field_alternatives_do_not_publish_a_unique_receiver() {
+        for fields in ["value:User,#[cfg(target_os=\"linux\")]value:Other", "#[cfg(target_os=\"linux\")]value:Other,value:User"] {
+            let source=format!("struct User;struct Other;impl User{{fn save(&self){{}}}}impl Other{{fn save(&self){{}}}}union Holder{{{fields}}}fn run(h:Holder){{unsafe{{h.value.save();}}}}");
+            let (g, docs)=graph(&manifest("",false),&source);
+            assert!(docs["lib"].binding_limitations.is_empty());
+            let call=g.calls.iter().find(|c|c.reference.expression=="h.value.save").unwrap();
+            assert!(call.candidates.is_empty(),"{call:?}");
         }
     }
     #[test]
@@ -1317,6 +1334,40 @@ mod tests {
                 expected
             );
         }
+    }
+    #[test]
+    fn conditional_stdarch_globs_do_not_hide_unknown_competing_imports() {
+        let source="#[cfg(feature=\"fast\")]use core::arch::aarch64::*;#[cfg(not(feature=\"fast\"))]use unknown::*;trait Mark{}impl Mark for core::arch::aarch64::uint8x16_t{}struct Generic<T>(T);impl<T:Mark>Generic<T>{fn get(&self){}}fn run(v:Generic<uint8x16_t>){v.get();}";
+        for (features,expected) in [("'fast'",1),("",0)] {
+            let config=manifest(features,false)+"\n[package.metadata.rag.graph.cfg_values]\ntarget_arch=['aarch64']\n";
+            let (g,_) = graph(&config,source);
+            let call=g.calls.iter().find(|c|c.reference.expression=="v.get").unwrap();
+            assert_eq!(call.candidates.len(),expected,"{call:?}");
+        }
+        let unknown="use core::arch::aarch64::*;#[cfg(target_os=\"unknown\")]use other::*;trait Mark{}impl Mark for core::arch::aarch64::uint8x16_t{}struct Generic<T>(T);impl<T:Mark>Generic<T>{fn get(&self){}}fn run(v:Generic<uint8x16_t>){v.get();}";
+        let config=manifest("",false)+"\n[package.metadata.rag.graph.cfg_values]\ntarget_arch=['aarch64']\n";
+        let (g,_) = graph(&config,unknown);
+        assert!(g.calls.iter().find(|c|c.reference.expression=="v.get").unwrap().candidates.is_empty());
+        let source="use core::arch::aarch64::*;trait Mark{}impl Mark for uint8x16_t{}struct Generic<T>(T);impl<T:Mark>Generic<T>{fn get(&self){}}fn run(v:Generic<uint8x16_t>){v.get();}";
+        for (features,expected) in [("",1),("'core'",0)] {
+            let config=manifest(features,false)+"\n[dependencies]\ncore={version='1',package='custom-core',optional=true}\n[package.metadata.rag.graph.cfg_values]\ntarget_arch=['aarch64']\n";
+            let (g,_) = graph(&config,source);
+            assert_eq!(g.calls.iter().find(|c|c.reference.expression=="v.get").unwrap().candidates.len(),expected);
+        }
+    }
+    #[test]
+    fn conditional_associated_type_bounds_select_declarations_without_cross_owner_targets() {
+        let source="trait Good{fn ready(&self);}trait Other{fn ready(&self);}trait Factory{#[cfg(feature=\"fast\")]type Output:Good;#[cfg(not(feature=\"fast\"))]type Output:Other;fn out(self)->Self::Output;}fn run<T:Factory>(v:T){v.out().ready();}";
+        for (features, expected) in [("'fast'", "Good::ready"), ("", "Other::ready")] {
+            let (g, docs) = graph(&manifest(features, false), source);
+            assert!(!docs["lib"].binding_limitations.iter().any(|s| s == "RUST_CFG_NESTED_SEMANTICS_UNMODELED"));
+            let call=g.calls.iter().find(|c| c.reference.expression == "v.out().ready").unwrap();
+            assert_eq!(call.candidates.len(),1,"{call:?}");
+            assert_eq!(g.symbols.iter().find(|s| s.id==call.candidates[0]).unwrap().qualified_name,expected);
+        }
+        let unknown="trait Good{fn ready(&self);}trait Other{fn ready(&self);}trait Factory{type Output:Good;#[cfg(target_os=\"unknown\")]type Output:Other;fn out(self)->Self::Output;}fn run<T:Factory>(v:T){v.out().ready();}";
+        let (g,_) = graph(&manifest("",false),unknown);
+        assert!(g.calls.iter().find(|c|c.reference.expression=="v.out().ready").unwrap().candidates.is_empty());
     }
     #[test]
     fn conditional_public_imports_select_only_the_active_local_binding() {

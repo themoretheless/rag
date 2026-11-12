@@ -1,5 +1,12 @@
 //! Syntactic entrypoints/routes, conservative reachability and structural call slices.
 use super::*;
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct EntryPointsQuery {
+    /// Exact project/wing; scopes source loading and discovery, including host dependencies.
+    pub project: Option<String>,
+    #[serde(flatten)]
+    pub query: CodeQuery,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct RouteSpec {
     pub handler: String,
@@ -11,8 +18,23 @@ pub(super) struct RouteSpec {
     #[serde(default)]
     pub start: usize,
 }
+#[derive(Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TestContext {
+    pub host_symbol_id: String,
+    pub lexical_owner_symbol_id: String,
+    pub effective_method: String,
+    pub origin: String,
+    pub host_document_id: String,
+    pub host_path: String,
+    pub host_revision: i64,
+    pub host_content_hash: String,
+    pub trait_body: bool,
+    pub framework_execution_verified: bool,
+}
 #[derive(Debug, Serialize)]
 pub struct EntryPoint {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub test_context: Option<TestContext>,
     pub document_id: String,
     pub start_byte: usize,
     pub project: Option<String>,
@@ -296,6 +318,9 @@ pub(super) fn entrypoints(
 ) -> Vec<EntryPoint> {
     let mut entries = Vec::new();
     for (id, doc) in docs {
+        if doc.php_names.is_some() {
+            entries.extend(super::php_names::test_entrypoints(docs, doc));
+        }
         let exports: HashSet<_> = doc.exports.values().map(String::as_str).collect();
         for symbol in symbols.iter().filter(|s| s.document_id == *id) {
             let owner = symbol.qualified_name.split("::").next().unwrap_or("");
@@ -332,6 +357,7 @@ pub(super) fn entrypoints(
             };
             if let Some(kind) = kind {
                 entries.push(EntryPoint {
+                    test_context: None,
                     document_id: id.clone(),
                     project: doc.project.clone(),
                     revision: doc.revision,
@@ -354,6 +380,7 @@ pub(super) fn entrypoints(
         }
         for endpoint in &doc.endpoints {
             entries.push(EntryPoint {
+                test_context: None,
                 document_id: id.clone(),
                 project: doc.project.clone(),
                 revision: doc.revision,
@@ -406,6 +433,7 @@ pub(super) fn entrypoints(
             });
             if targets.is_empty() {
                 entries.push(EntryPoint {
+                    test_context: None,
                     document_id: id.clone(),
                     project: doc.project.clone(),
                     revision: doc.revision,
@@ -432,6 +460,7 @@ pub(super) fn entrypoints(
             };
             for symbol in targets {
                 entries.push(EntryPoint {
+                    test_context: None,
                     document_id: id.clone(),
                     project: doc.project.clone(),
                     revision: doc.revision,
@@ -464,6 +493,7 @@ pub(super) fn entrypoints(
             &a.method,
             &a.reference_kind,
             &a.request_method,
+            &a.test_context,
         )
             .cmp(&(
                 &b.path,
@@ -475,6 +505,7 @@ pub(super) fn entrypoints(
                 &b.method,
                 &b.reference_kind,
                 &b.request_method,
+                &b.test_context,
             ))
     });
     entries.dedup_by(|a, b| {
@@ -485,6 +516,7 @@ pub(super) fn entrypoints(
             && a.route == b.route
             && a.method == b.method
             && a.reference_kind == b.reference_kind
+            && a.test_context == b.test_context
             && a.request_method == b.request_method
             && a.path == b.path
             && a.line == b.line
@@ -573,6 +605,9 @@ impl CodeSnapshot {
                         e.symbol_id
                             .as_deref()
                             .is_some_and(|id| selected.contains(id))
+                            || e.test_context
+                                .as_ref()
+                                .is_some_and(|c| selected.contains(c.host_symbol_id.as_str()))
                     }
                 })
                 .collect();
@@ -598,6 +633,12 @@ impl CodeSnapshot {
                     "client_defaults_interceptors_and_ajax_setup_resolved":false,
                     "fetch_default_method_inferred":false,
                     "php_handler_binding_verified":false,
+                    "phpunit_discovery_semantics":"effective_public_instance_candidates_on_captured_TestCase_hosts_with_trait_aliases_and_base_precedence",
+                    "phpunit_runtime_discovery_verified":false,
+                    "phpunit_inherited_and_trait_test_candidates":true,
+                    "phpunit_discovery_limits":{"hosts_per_document":128,"names_per_host":1024,"trait_depth":32,"ancestry_depth":64,"work_per_host":65536},
+                    "phpunit_candidate_enumeration_complete":false,
+                    "test_discovery_complete":false,
                     "route_path_semantics":"declared_literal_not_effective_mount_path",
                     "php_group_prefix_resolved":false,
                     "endpoint_urls_fetched":false

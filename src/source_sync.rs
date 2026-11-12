@@ -588,7 +588,7 @@ impl<'a> SourceSyncService<'a> {
         let stamp = source_stamp(&canonical, run.scan_policy)?;
         let existing = run.preloaded.get(&source_file);
         let preserved_source_ok = crate::code_index::source::is_preserved_html(
-            &*self.store.lock()?,
+            &*self.store.read()?,
             &canonical,
             existing.and_then(|entry| entry.document_metadata_json.as_deref()),
         );

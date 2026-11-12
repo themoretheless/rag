@@ -1,0 +1,432 @@
+{
+  "status": "passed",
+  "binary_sha256": "5d7e288d1ad4eac4781b614ce7ab7cfcbe197fd1236414b090ab3d8a38beeecc",
+  "index_format": 79,
+  "indexed": {
+    "indexed": 2,
+    "unchanged": 0,
+    "unsupported": 0,
+    "parse_errors": [],
+    "index_revision": 1,
+    "revision_created": true,
+    "stage_timings": {
+      "contract_version": 1,
+      "run_id": "08c40cf0-9059-47a3-8894-5b34a2847962",
+      "lock_wait_ms": 0.000625,
+      "source_load_decode_ms": 1.754834,
+      "cache_parse_serialize_ms": 8.212375,
+      "cache_replace_ms": 5.272958,
+      "revision_publish_ms": 18.154333,
+      "transaction_body_ms": 33.61,
+      "before_metrics_write_ms": 33.610708,
+      "documents_loaded": 2,
+      "cache_hits": 0,
+      "cache_misses": 2,
+      "unsupported_documents": 0,
+      "parse_error_documents": 0,
+      "commit_included": false,
+      "metrics_write_included": false,
+      "embedding_fts_included": false
+    },
+    "resolution": {
+      "contract_version": 1,
+      "documents_total": 2,
+      "documents_resolved": 2,
+      "documents_reused": 0,
+      "reference_sites_resolved": 74,
+      "reference_sites_reused": 0,
+      "rust_package_scopes": 1,
+      "project_fallback_scopes": 0,
+      "empty_reference_documents": 1,
+      "dependency_inputs_hashed": 2,
+      "invalid_cache_entries": 0,
+      "forced_full": false,
+      "cache_available": false,
+      "no_resolution_required": false,
+      "resolution_ms": 5.053209000000001,
+      "equivalent_to_existing": null
+    },
+    "completion": {
+      "contract_version": 1,
+      "native_total_ms": 37.578958,
+      "commit_ms": 1.796041,
+      "metrics_write_ms": 2.1719999999999997,
+      "commit_included": true,
+      "process_lifetime_peak_rss_bytes": 156368896
+    }
+  },
+  "warm": {
+    "indexed": 0,
+    "unchanged": 2,
+    "unsupported": 0,
+    "parse_errors": [],
+    "index_revision": 1,
+    "revision_created": false,
+    "stage_timings": {
+      "contract_version": 1,
+      "run_id": "a1eb7a09-400a-48ee-8b8d-d88041c28bb7",
+      "lock_wait_ms": 0.000292,
+      "source_load_decode_ms": 1.8246250000000002,
+      "cache_parse_serialize_ms": 1.147208,
+      "cache_replace_ms": 0.0013340000000000001,
+      "revision_publish_ms": 1.506667,
+      "transaction_body_ms": 4.6885829999999995,
+      "before_metrics_write_ms": 4.6889590000000005,
+      "documents_loaded": 2,
+      "cache_hits": 2,
+      "cache_misses": 0,
+      "unsupported_documents": 0,
+      "parse_error_documents": 0,
+      "commit_included": false,
+      "metrics_write_included": false,
+      "embedding_fts_included": false
+    },
+    "resolution": {
+      "contract_version": 1,
+      "documents_total": 0,
+      "documents_resolved": 0,
+      "documents_reused": 0,
+      "reference_sites_resolved": 0,
+      "reference_sites_reused": 0,
+      "rust_package_scopes": 0,
+      "project_fallback_scopes": 0,
+      "empty_reference_documents": 0,
+      "dependency_inputs_hashed": 0,
+      "invalid_cache_entries": 0,
+      "forced_full": false,
+      "cache_available": false,
+      "no_resolution_required": true,
+      "resolution_ms": 0.0,
+      "equivalent_to_existing": null
+    },
+    "completion": {
+      "contract_version": 1,
+      "native_total_ms": 7.857625,
+      "commit_ms": 0.870417,
+      "metrics_write_ms": 2.298,
+      "commit_included": true,
+      "process_lifetime_peak_rss_bytes": 161595392
+    }
+  },
+  "selected": [
+    {
+      "caller": "optional",
+      "expected_expression": "value.save",
+      "expected_target": "User::save",
+      "edge": {
+        "candidates": [
+          "012e12aa-f247-449d-949d-0bcc5fe713c9:99:save"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "caller": "012e12aa-f247-449d-949d-0bcc5fe713c9:196:optional",
+          "column": 16,
+          "content_hash": "7b963c11c46c6a517cac1de9e54289de20311c436257d7c30fd5dfb377b0e2c4",
+          "document_id": "012e12aa-f247-449d-949d-0bcc5fe713c9",
+          "expression": "value.save",
+          "is_call": true,
+          "line": 9,
+          "name": "save",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-callback-try-nf34ze17/source/src/lib.rs",
+          "revision": 1,
+          "start_byte": 296
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "content_hash": "7b963c11c46c6a517cac1de9e54289de20311c436257d7c30fd5dfb377b0e2c4",
+        "document_id": "012e12aa-f247-449d-949d-0bcc5fe713c9",
+        "documentation_examined": true,
+        "end_byte": 129,
+        "end_line": 4,
+        "id": "012e12aa-f247-449d-949d-0bcc5fe713c9:99:save",
+        "kind": "function_item",
+        "name": "save",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-callback-try-nf34ze17/source/src/lib.rs",
+        "qualified_name": "User::save",
+        "revision": 1,
+        "signature": "pub fn save(&self) -> u8",
+        "start_byte": 99,
+        "start_line": 4
+      }
+    },
+    {
+      "caller": "pointer",
+      "expected_expression": "f(1)?.save",
+      "expected_target": "Other::save",
+      "edge": {
+        "candidates": [
+          "012e12aa-f247-449d-949d-0bcc5fe713c9:163:save"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "caller": "012e12aa-f247-449d-949d-0bcc5fe713c9:312:pointer",
+          "column": 14,
+          "content_hash": "7b963c11c46c6a517cac1de9e54289de20311c436257d7c30fd5dfb377b0e2c4",
+          "document_id": "012e12aa-f247-449d-949d-0bcc5fe713c9",
+          "expression": "f(1)?.save",
+          "is_call": true,
+          "line": 12,
+          "name": "save",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-callback-try-nf34ze17/source/src/lib.rs",
+          "revision": 1,
+          "start_byte": 386
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "content_hash": "7b963c11c46c6a517cac1de9e54289de20311c436257d7c30fd5dfb377b0e2c4",
+        "document_id": "012e12aa-f247-449d-949d-0bcc5fe713c9",
+        "documentation_examined": true,
+        "end_byte": 193,
+        "end_line": 6,
+        "id": "012e12aa-f247-449d-949d-0bcc5fe713c9:163:save",
+        "kind": "function_item",
+        "name": "save",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-callback-try-nf34ze17/source/src/lib.rs",
+        "qualified_name": "Other::save",
+        "revision": 1,
+        "signature": "pub fn save(&self) -> u8",
+        "start_byte": 163,
+        "start_line": 6
+      }
+    },
+    {
+      "caller": "generic",
+      "expected_expression": "f()?.save",
+      "expected_target": "User::save",
+      "edge": {
+        "candidates": [
+          "012e12aa-f247-449d-949d-0bcc5fe713c9:99:save"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "caller": "012e12aa-f247-449d-949d-0bcc5fe713c9:402:generic",
+          "column": 15,
+          "content_hash": "7b963c11c46c6a517cac1de9e54289de20311c436257d7c30fd5dfb377b0e2c4",
+          "document_id": "012e12aa-f247-449d-949d-0bcc5fe713c9",
+          "expression": "f()?.save",
+          "is_call": true,
+          "line": 15,
+          "name": "save",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-callback-try-nf34ze17/source/src/lib.rs",
+          "revision": 1,
+          "start_byte": 485
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "content_hash": "7b963c11c46c6a517cac1de9e54289de20311c436257d7c30fd5dfb377b0e2c4",
+        "document_id": "012e12aa-f247-449d-949d-0bcc5fe713c9",
+        "documentation_examined": true,
+        "end_byte": 129,
+        "end_line": 4,
+        "id": "012e12aa-f247-449d-949d-0bcc5fe713c9:99:save",
+        "kind": "function_item",
+        "name": "save",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-callback-try-nf34ze17/source/src/lib.rs",
+        "qualified_name": "User::save",
+        "revision": 1,
+        "signature": "pub fn save(&self) -> u8",
+        "start_byte": 99,
+        "start_line": 4
+      }
+    },
+    {
+      "caller": "borrowed",
+      "expected_expression": "f()?.save",
+      "expected_target": "Other::save",
+      "edge": {
+        "candidates": [
+          "012e12aa-f247-449d-949d-0bcc5fe713c9:163:save"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "caller": "012e12aa-f247-449d-949d-0bcc5fe713c9:500:borrowed",
+          "column": 15,
+          "content_hash": "7b963c11c46c6a517cac1de9e54289de20311c436257d7c30fd5dfb377b0e2c4",
+          "document_id": "012e12aa-f247-449d-949d-0bcc5fe713c9",
+          "expression": "f()?.save",
+          "is_call": true,
+          "line": 18,
+          "name": "save",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-callback-try-nf34ze17/source/src/lib.rs",
+          "revision": 1,
+          "start_byte": 579
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "content_hash": "7b963c11c46c6a517cac1de9e54289de20311c436257d7c30fd5dfb377b0e2c4",
+        "document_id": "012e12aa-f247-449d-949d-0bcc5fe713c9",
+        "documentation_examined": true,
+        "end_byte": 193,
+        "end_line": 6,
+        "id": "012e12aa-f247-449d-949d-0bcc5fe713c9:163:save",
+        "kind": "function_item",
+        "name": "save",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-callback-try-nf34ze17/source/src/lib.rs",
+        "qualified_name": "Other::save",
+        "revision": 1,
+        "signature": "pub fn save(&self) -> u8",
+        "start_byte": 163,
+        "start_line": 6
+      }
+    },
+    {
+      "caller": "direct",
+      "expected_expression": "factory()?.save",
+      "expected_target": "User::save",
+      "edge": {
+        "candidates": [
+          "012e12aa-f247-449d-949d-0bcc5fe713c9:99:save"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "caller": "012e12aa-f247-449d-949d-0bcc5fe713c9:644:direct",
+          "column": 51,
+          "content_hash": "7b963c11c46c6a517cac1de9e54289de20311c436257d7c30fd5dfb377b0e2c4",
+          "document_id": "012e12aa-f247-449d-949d-0bcc5fe713c9",
+          "expression": "factory()?.save",
+          "is_call": true,
+          "line": 21,
+          "name": "save",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-callback-try-nf34ze17/source/src/lib.rs",
+          "revision": 1,
+          "start_byte": 683
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "content_hash": "7b963c11c46c6a517cac1de9e54289de20311c436257d7c30fd5dfb377b0e2c4",
+        "document_id": "012e12aa-f247-449d-949d-0bcc5fe713c9",
+        "documentation_examined": true,
+        "end_byte": 129,
+        "end_line": 4,
+        "id": "012e12aa-f247-449d-949d-0bcc5fe713c9:99:save",
+        "kind": "function_item",
+        "name": "save",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-callback-try-nf34ze17/source/src/lib.rs",
+        "qualified_name": "User::save",
+        "revision": 1,
+        "signature": "pub fn save(&self) -> u8",
+        "start_byte": 99,
+        "start_line": 4
+      }
+    }
+  ],
+  "unresolved_callback_bodies": [
+    {
+      "caller": "optional",
+      "edge": {
+        "candidates": [],
+        "provenance": "derived",
+        "reference": {
+          "caller": "012e12aa-f247-449d-949d-0bcc5fe713c9:196:optional",
+          "column": 17,
+          "content_hash": "7b963c11c46c6a517cac1de9e54289de20311c436257d7c30fd5dfb377b0e2c4",
+          "document_id": "012e12aa-f247-449d-949d-0bcc5fe713c9",
+          "expression": "f",
+          "is_call": true,
+          "line": 8,
+          "name": "f",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-callback-try-nf34ze17/source/src/lib.rs",
+          "revision": 1,
+          "start_byte": 281
+        },
+        "resolution": "unresolved",
+        "resolution_basis": "shadowed_or_external"
+      }
+    },
+    {
+      "caller": "pointer",
+      "edge": {
+        "candidates": [],
+        "provenance": "derived",
+        "reference": {
+          "caller": "012e12aa-f247-449d-949d-0bcc5fe713c9:312:pointer",
+          "column": 8,
+          "content_hash": "7b963c11c46c6a517cac1de9e54289de20311c436257d7c30fd5dfb377b0e2c4",
+          "document_id": "012e12aa-f247-449d-949d-0bcc5fe713c9",
+          "expression": "f",
+          "is_call": true,
+          "line": 12,
+          "name": "f",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-callback-try-nf34ze17/source/src/lib.rs",
+          "revision": 1,
+          "start_byte": 386
+        },
+        "resolution": "unresolved",
+        "resolution_basis": "shadowed_or_external"
+      }
+    },
+    {
+      "caller": "generic",
+      "edge": {
+        "candidates": [],
+        "provenance": "derived",
+        "reference": {
+          "caller": "012e12aa-f247-449d-949d-0bcc5fe713c9:402:generic",
+          "column": 10,
+          "content_hash": "7b963c11c46c6a517cac1de9e54289de20311c436257d7c30fd5dfb377b0e2c4",
+          "document_id": "012e12aa-f247-449d-949d-0bcc5fe713c9",
+          "expression": "f",
+          "is_call": true,
+          "line": 15,
+          "name": "f",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-callback-try-nf34ze17/source/src/lib.rs",
+          "revision": 1,
+          "start_byte": 485
+        },
+        "resolution": "unresolved",
+        "resolution_basis": "shadowed_or_external"
+      }
+    },
+    {
+      "caller": "borrowed",
+      "edge": {
+        "candidates": [],
+        "provenance": "derived",
+        "reference": {
+          "caller": "012e12aa-f247-449d-949d-0bcc5fe713c9:500:borrowed",
+          "column": 10,
+          "content_hash": "7b963c11c46c6a517cac1de9e54289de20311c436257d7c30fd5dfb377b0e2c4",
+          "document_id": "012e12aa-f247-449d-949d-0bcc5fe713c9",
+          "expression": "f",
+          "is_call": true,
+          "line": 18,
+          "name": "f",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-callback-try-nf34ze17/source/src/lib.rs",
+          "revision": 1,
+          "start_byte": 579
+        },
+        "resolution": "unresolved",
+        "resolution_basis": "shadowed_or_external"
+      }
+    }
+  ],
+  "fixture_sha256": {
+    "Cargo.toml": "3d4cc1dca4c267e9d693ec7be88a2f3ea74d0d0760b72622f3af55060e57d811",
+    "src/lib.rs": "0102101c7dcc18f89cf09e7aec763f218ab349724c43dd2cbf8c2b63fea4c702"
+  },
+  "compiler": {
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--manifest-path",
+      "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-callback-try-nf34ze17/source/Cargo.toml"
+    ],
+    "exit_code": 0,
+    "stdout": "\nrunning 1 test\ntest values ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+    "stderr": "   Compiling callback-try-fixture v0.1.0 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-callback-try-nf34ze17/source)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.25s\n     Running unittests src/lib.rs (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-callback-try-nf34ze17/cargo-target/debug/build/callback-try-fixture/b59f34227d6e0e6a/out/callback_try_fixture-b59f34227d6e0e6a)\n   Doc-tests callback_try_fixture\n"
+  },
+  "limitations": [
+    "declared callback output only; callback body targets, argument types, custom Try and HRTB unsupported"
+  ]
+}

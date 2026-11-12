@@ -24,11 +24,89 @@ struct Cache {
 }
 #[derive(Deserialize)]
 struct EdgeWire {
+    #[serde(default)]
+    context_evidence: Option<BindingContexts>,
     reference: Reference,
     candidates: Vec<String>,
     resolution: String,
     provenance: String,
     resolution_basis: String,
+}
+fn valid_contexts(
+    edge: &EdgeWire,
+    body_site: bool,
+    allowed: &super::php_names::ContextIds<'_>,
+) -> bool {
+    let trait_target = edge
+        .candidates
+        .iter()
+        .any(|id| allowed.trait_methods.contains(id.as_str()));
+    let required = body_site || trait_target;
+    let Some(evidence) = &edge.context_evidence else {
+        return !required;
+    };
+    let body = evidence.kind == "php_captured_trait_consumers" && body_site;
+    let entry = evidence.kind == "php_captured_trait_entry" && !body_site && trait_target;
+    if !required
+        || !(body || entry)
+        || evidence.runtime_contexts_complete
+        || evidence.context_correlation_proven
+        || evidence.contexts.len() > 128
+    {
+        return false;
+    }
+    if entry
+        && (evidence.contexts.len() != 1 || !evidence.enumeration_complete || evidence.truncated)
+    {
+        return false;
+    }
+    let mut owners = HashSet::new();
+    let mut union = std::collections::BTreeSet::new();
+    for context in &evidence.contexts {
+        if !allowed.owners.contains(context.owner.as_str())
+            || !owners.insert(&context.owner)
+            || context
+                .candidates
+                .iter()
+                .any(|id| !allowed.methods.contains(id.as_str()))
+        {
+            return false;
+        }
+        let trait_targets = context
+            .candidates
+            .iter()
+            .filter(|id| allowed.trait_methods.contains(id.as_str()))
+            .count();
+        if let Some(target) = &context.target_owner {
+            if !allowed.owners.contains(target.as_str())
+                || trait_targets == 0
+                || trait_targets != context.candidates.len()
+                || entry && target != &context.owner
+            {
+                return false;
+            }
+        } else if trait_targets > 0 || entry {
+            return false;
+        }
+        if context.resolution
+            != match context.candidates.len() {
+                0 => "unresolved",
+                1 => "resolved_static",
+                _ => "ambiguous",
+            }
+        {
+            return false;
+        }
+        union.extend(context.candidates.iter().cloned());
+    }
+    let expected = if union.is_empty() {
+        "unresolved"
+    } else if union.len() > 1 || evidence.contexts.len() != 1 || !evidence.enumeration_complete {
+        "ambiguous"
+    } else {
+        "resolved_static"
+    };
+    edge.resolution == expected && union.into_iter().collect::<Vec<_>>() == edge.candidates
 }
 pub(super) struct Resolved {
     pub edges: Vec<CallEdge>,
@@ -156,9 +234,23 @@ pub(super) fn resolve(
                 return None;
             }
             let mut result = Vec::new();
+            let context_sites = super::php_names::context_sites(doc);
+            let allowed = if doc.php_names.is_some() {
+                super::php_names::context_ids(docs, doc)
+            } else {
+                super::php_names::ContextIds::default()
+            };
             for (raw, reference) in e.edges.iter().zip(&doc.references) {
                 let edge: EdgeWire = serde_json::from_value(raw.clone()).ok()?;
-                if edge.provenance != "derived"
+                if !valid_contexts(
+                    &edge,
+                    context_sites.contains(&(
+                        reference.start_byte,
+                        reference.is_call,
+                        reference.expression.clone(),
+                    )),
+                    &allowed,
+                ) || edge.provenance != "derived"
                     || serde_json::to_value(&edge.reference).ok()?
                         != serde_json::to_value(reference).ok()?
                     || edge
@@ -169,6 +261,7 @@ pub(super) fn resolve(
                     return None;
                 }
                 result.push(CallEdge {
+                    context_evidence: edge.context_evidence,
                     reference: edge.reference,
                     candidates: edge.candidates,
                     resolution: edge.resolution,
@@ -250,17 +343,16 @@ pub(super) fn resolve(
         stats,
     })
 }
-pub(super) fn previous(conn: &duckdb::Connection, revision: Option<i64>) -> Result<Option<Value>> {
+pub(super) fn previous(
+    r: &impl crate::db::lin_engine::LinReader,
+    revision: Option<i64>,
+) -> Result<Option<Value>> {
     let Some(revision) = revision else {
         return Ok(None);
     };
-    let raw: Option<String> = conn
-        .query_row(
-            "SELECT graph_json FROM code_index_revisions WHERE id=?",
-            [revision],
-            |r| r.get(0),
-        )
-        .optional()?;
+    let raw = r
+        .get_by_id("code_index_revisions", &revision.to_string())?
+        .and_then(|row| crate::db::lin_engine::cell_str(&row, "graph_json").map(str::to_string));
     Ok(raw
         .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
         .and_then(|v| v.get("resolution_cache").cloned()))

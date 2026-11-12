@@ -1,0 +1,11 @@
+{
+  "/tmp/rag-callback-try-20261026/controlled-itoa-before/report.json": "2e2550c10e4dbe7bfcb0d092f733937f5cefa37127db50c11c80842d0542b4c3",
+  "/tmp/rag-callback-try-20261026/controlled-itoa-before/scored-cases.json": "ab8143a8a1a0b623a82579da13734a67b07647fe0945ff9547a119cddac62d00",
+  "/tmp/rag-callback-try-20261026/controlled-itoa-before/oracle-labels.json": "6b11bb10011692e7616d5700bca2e68acf45f195a07b69e7187f139def297642",
+  "/tmp/rag-callback-try-20261026/controlled-ryu-before/report.json": "76f8334f2c55b405041546e83a26584304255b3c40827e0e1f23ec3ff3b95ed5",
+  "/tmp/rag-callback-try-20261026/controlled-ryu-before/scored-cases.json": "ebf016236f027e6bd60ae2f472e305dcea8d018cc07972f42920344ca49661ef",
+  "/tmp/rag-callback-try-20261026/controlled-ryu-before/oracle-labels.json": "d8862ad4cb32901001c41ecd8bae29b9ba7fc907fa98542cb8a88b92396b4c30",
+  "/tmp/rag-callback-try-20261026/controlled-memchr-before/report.json": "0f1eaaf19f2c888d64c52e379dd2fbde7e7ee029ad517a58137b5f603950324c",
+  "/tmp/rag-callback-try-20261026/controlled-memchr-before/scored-cases.json": "2e16ae20679f2d6ca23c29ff54cb892e479a5832b03f2027262e60744ee1b629",
+  "/tmp/rag-callback-try-20261026/controlled-memchr-before/oracle-labels.json": "4b15b56ff5f5c44c1fcce9443428650ecf6b8568acbd1241fa9ce62cd502e2a7"
+}

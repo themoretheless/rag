@@ -1,0 +1,1173 @@
+{
+  "itoa": {
+    "recovered_sites": 0,
+    "lost_correct_sites": 0,
+    "recovered": [],
+    "lost": []
+  },
+  "ryu": {
+    "recovered_sites": 0,
+    "lost_correct_sites": 0,
+    "recovered": [],
+    "lost": []
+  },
+  "memchr": {
+    "recovered_sites": 24,
+    "lost_correct_sites": 0,
+    "recovered": [
+      {
+        "path": "src/arch/aarch64/neon/packedpair.rs",
+        "range": [
+          140,
+          15,
+          140,
+          19
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/packedpair/impl#[`Finder<V>`]find().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/packedpair.rs",
+            "range": [
+              79,
+              25,
+              79,
+              29
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "ad408ab9-145e-4bc4-8f7c-50be1357916c:3217:find@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/packedpair.rs",
+            79,
+            25
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.find",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/aarch64/neon/packedpair.rs",
+        "range": [
+          157,
+          15,
+          157,
+          29
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/packedpair/impl#[`Finder<V>`]find_prefilter().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/packedpair.rs",
+            "range": [
+              169,
+              25,
+              169,
+              39
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "ad408ab9-145e-4bc4-8f7c-50be1357916c:6858:find_prefilter@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/packedpair.rs",
+            169,
+            25
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.find_prefilter",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/aarch64/neon/packedpair.rs",
+        "range": [
+          165,
+          15,
+          165,
+          19
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/packedpair/impl#[`Finder<V>`]pair().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/packedpair.rs",
+            "range": [
+              287,
+              18,
+              287,
+              22
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "ad408ab9-145e-4bc4-8f7c-50be1357916c:11751:pair@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/packedpair.rs",
+            287,
+            18
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.pair",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/aarch64/neon/packedpair.rs",
+        "range": [
+          177,
+          15,
+          177,
+          31
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/packedpair/impl#[`Finder<V>`]min_haystack_len().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/packedpair.rs",
+            "range": [
+              296,
+              18,
+              296,
+              34
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "ad408ab9-145e-4bc4-8f7c-50be1357916c:12038:min_haystack_len@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/packedpair.rs",
+            296,
+            18
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.min_haystack_len",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          166,
+          28,
+          166,
+          35
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/memchr/impl#[`One<V>`]needle1().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/memchr.rs",
+            "range": [
+              116,
+              18,
+              116,
+              25
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "3692da85-8f64-41ff-b351-d790601d16b2:5540:needle1@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/memchr.rs",
+            116,
+            18
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.needle1",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          210,
+          28,
+          210,
+          35
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/memchr/impl#[`One<V>`]needle1().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/memchr.rs",
+            "range": [
+              116,
+              18,
+              116,
+              25
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "3692da85-8f64-41ff-b351-d790601d16b2:5540:needle1@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/memchr.rs",
+            116,
+            18
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.needle1",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          247,
+          28,
+          247,
+          35
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/memchr/impl#[`One<V>`]needle1().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/memchr.rs",
+            "range": [
+              116,
+              18,
+              116,
+              25
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "3692da85-8f64-41ff-b351-d790601d16b2:5540:needle1@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/memchr.rs",
+            116,
+            18
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.needle1",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          273,
+          15,
+          273,
+          23
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/memchr/impl#[`One<V>`]find_raw().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/memchr.rs",
+            "range": [
+              142,
+              25,
+              142,
+              33
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "3692da85-8f64-41ff-b351-d790601d16b2:6712:find_raw@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/memchr.rs",
+            142,
+            25
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.find_raw",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          293,
+          15,
+          293,
+          24
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/memchr/impl#[`One<V>`]rfind_raw().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/memchr.rs",
+            "range": [
+              253,
+              25,
+              253,
+              34
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "3692da85-8f64-41ff-b351-d790601d16b2:11663:rfind_raw@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/memchr.rs",
+            253,
+            25
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.rfind_raw",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          313,
+          15,
+          313,
+          24
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/memchr/impl#[`One<V>`]count_raw().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/memchr.rs",
+            "range": [
+              348,
+              25,
+              348,
+              34
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "3692da85-8f64-41ff-b351-d790601d16b2:15582:count_raw@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/memchr.rs",
+            348,
+            25
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.count_raw",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          514,
+          28,
+          514,
+          35
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/memchr/impl#[`Two<V>`]needle1().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/memchr.rs",
+            "range": [
+              460,
+              18,
+              460,
+              25
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "3692da85-8f64-41ff-b351-d790601d16b2:19744:needle1@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/memchr.rs",
+            460,
+            18
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.needle1",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          514,
+          53,
+          514,
+          60
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/memchr/impl#[`Two<V>`]needle2().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/memchr.rs",
+            "range": [
+              466,
+              18,
+              466,
+              25
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "3692da85-8f64-41ff-b351-d790601d16b2:19885:needle2@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/memchr.rs",
+            466,
+            18
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.needle2",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          558,
+          28,
+          558,
+          35
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/memchr/impl#[`Two<V>`]needle1().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/memchr.rs",
+            "range": [
+              460,
+              18,
+              460,
+              25
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "3692da85-8f64-41ff-b351-d790601d16b2:19744:needle1@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/memchr.rs",
+            460,
+            18
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.needle1",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          558,
+          53,
+          558,
+          60
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/memchr/impl#[`Two<V>`]needle2().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/memchr.rs",
+            "range": [
+              466,
+              18,
+              466,
+              25
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "3692da85-8f64-41ff-b351-d790601d16b2:19885:needle2@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/memchr.rs",
+            466,
+            18
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.needle2",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          584,
+          15,
+          584,
+          23
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/memchr/impl#[`Two<V>`]find_raw().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/memchr.rs",
+            "range": [
+              492,
+              25,
+              492,
+              33
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "3692da85-8f64-41ff-b351-d790601d16b2:21065:find_raw@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/memchr.rs",
+            492,
+            25
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.find_raw",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          604,
+          15,
+          604,
+          24
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/memchr/impl#[`Two<V>`]rfind_raw().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/memchr.rs",
+            "range": [
+              591,
+              25,
+              591,
+              34
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "3692da85-8f64-41ff-b351-d790601d16b2:25546:rfind_raw@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/memchr.rs",
+            591,
+            25
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.rfind_raw",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          800,
+          28,
+          800,
+          35
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/memchr/impl#[`Three<V>`]needle1().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/memchr.rs",
+            "range": [
+              726,
+              18,
+              726,
+              25
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "3692da85-8f64-41ff-b351-d790601d16b2:30287:needle1@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/memchr.rs",
+            726,
+            18
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.needle1",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          801,
+          35,
+          801,
+          42
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/memchr/impl#[`Three<V>`]needle2().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/memchr.rs",
+            "range": [
+              732,
+              18,
+              732,
+              25
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "3692da85-8f64-41ff-b351-d790601d16b2:30430:needle2@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/memchr.rs",
+            732,
+            18
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.needle2",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          802,
+          35,
+          802,
+          42
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/memchr/impl#[`Three<V>`]needle3().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/memchr.rs",
+            "range": [
+              738,
+              18,
+              738,
+              25
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "3692da85-8f64-41ff-b351-d790601d16b2:30572:needle3@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/memchr.rs",
+            738,
+            18
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.needle3",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          846,
+          28,
+          846,
+          35
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/memchr/impl#[`Three<V>`]needle1().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/memchr.rs",
+            "range": [
+              726,
+              18,
+              726,
+              25
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "3692da85-8f64-41ff-b351-d790601d16b2:30287:needle1@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/memchr.rs",
+            726,
+            18
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.needle1",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          847,
+          35,
+          847,
+          42
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/memchr/impl#[`Three<V>`]needle2().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/memchr.rs",
+            "range": [
+              732,
+              18,
+              732,
+              25
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "3692da85-8f64-41ff-b351-d790601d16b2:30430:needle2@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/memchr.rs",
+            732,
+            18
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.needle2",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          848,
+          35,
+          848,
+          42
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/memchr/impl#[`Three<V>`]needle3().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/memchr.rs",
+            "range": [
+              738,
+              18,
+              738,
+              25
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "3692da85-8f64-41ff-b351-d790601d16b2:30572:needle3@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/memchr.rs",
+            738,
+            18
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.needle3",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          874,
+          15,
+          874,
+          23
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/memchr/impl#[`Three<V>`]find_raw().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/memchr.rs",
+            "range": [
+              764,
+              25,
+              764,
+              33
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "3692da85-8f64-41ff-b351-d790601d16b2:31752:find_raw@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/memchr.rs",
+            764,
+            25
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.find_raw",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          894,
+          15,
+          894,
+          24
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/arch/generic/memchr/impl#[`Three<V>`]rfind_raw().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/arch/generic/memchr.rs",
+            "range": [
+              873,
+              25,
+              873,
+              34
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "3692da85-8f64-41ff-b351-d790601d16b2:36593:rfind_raw@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/arch/generic/memchr.rs",
+            873,
+            25
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "self.0.rfind_raw",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      }
+    ],
+    "lost": []
+  }
+}

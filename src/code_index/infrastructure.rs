@@ -407,17 +407,16 @@ impl Store {
                 "at most eight explicit linked projects".into(),
             ));
         }
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let latest: Option<i64> =
-            tx.query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| r.get(0))?;
+        let guard = self.read()?;
+        let r = &*guard;
+        let latest = crate::analysis_tasks::latest_code_index_rev(r)?;
         let revision = q
             .index_revision
             .or(latest)
             .ok_or_else(|| AppError::Invalid("run index_code first".into()))?;
         let mut files = Vec::new();
         for p in &projects {
-            files.extend(history::files(&tx, revision, Some(p))?);
+            files.extend(history::files(r, revision, Some(p))?);
         }
         if files.len() > 1000
             || files.iter().map(|f| f.source.len()).sum::<usize>() > 32 * 1024 * 1024
@@ -430,22 +429,57 @@ impl Store {
         if q.index_revision.is_none() {
             let captured_ids: HashSet<_> = files.iter().map(|f| f.id.clone()).collect();
             for project in &projects {
-                let mut statement=tx.prepare("SELECT id,source_file FROM documents WHERE wing=? AND source_file IS NOT NULL AND COALESCE(status,'active') NOT IN ('archived','tombstone','consolidated') ORDER BY id")?;
-                let rows = statement.query_map([project], |r| {
-                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-                })?;
-                for row in rows {
-                    let (id, path) = row?;
+                let mut proj_docs = Vec::new();
+                for rec in r.find_by_eq("documents", "wing", project.as_str())? {
+                    let status = opt_str(&rec, "status").unwrap_or("active");
+                    if matches!(status, "archived" | "tombstone" | "consolidated") {
+                        continue;
+                    }
+                    let Some(sf) = opt_str(&rec, "source_file") else {
+                        continue;
+                    };
+                    let id = req_str(&rec, "id")?.to_string();
+                    proj_docs.push((id, sf.to_string()));
+                }
+                proj_docs.sort_by(|a, b| a.0.cmp(&b.0));
+                for (id, path) in proj_docs {
                     if !captured_ids.contains(&id) {
                         diagnostics.push(json!({"document_id":id,"path":path,"project":project,"code":"source_not_published_in_selected_revision"}));
                     }
                 }
             }
-            files.retain(|f|{
-            let current=tx.query_row("SELECT COALESCE(source_file,uri),COALESCE(revision,1),wing,content,metadata_json FROM documents WHERE id=? AND COALESCE(status,'active') NOT IN ('archived','tombstone','consolidated')",[&f.id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?))).optional();
-            let fresh=current.ok().flatten().is_some_and(|(path,rev,project,content,meta)|path==f.path&&rev==f.revision&&project==f.project&&source::read(&tx,&content,&meta).is_ok_and(|s|content_hash(&s)==f.hash));
-            if !fresh{diagnostics.push(json!({"document_id":f.id,"path":f.path,"project":f.project,"code":"stale_or_unavailable_captured_input"}));}fresh
-        });
+            files.retain(|f| {
+                let current = r
+                    .get_by_id("documents", &f.id)
+                    .ok()
+                    .flatten()
+                    .and_then(|rec| {
+                        let status = opt_str(&rec, "status").unwrap_or("active");
+                        if matches!(status, "archived" | "tombstone" | "consolidated") {
+                            return None;
+                        }
+                        let path = match opt_str(&rec, "source_file") {
+                            Some(sf) => sf.to_string(),
+                            None => req_str(&rec, "uri").ok()?.to_string(),
+                        };
+                        let rev = opt_i64(&rec, "revision").unwrap_or(1);
+                        let project = opt_str(&rec, "wing").map(str::to_string);
+                        let content = req_str(&rec, "content").ok()?.to_string();
+                        let meta = opt_str(&rec, "metadata_json").unwrap_or("{}").to_string();
+                        Some((path, rev, project, content, meta))
+                    });
+                let fresh = current.is_some_and(|(path, rev, project, content, meta)| {
+                    path == f.path
+                        && rev == f.revision
+                        && project == f.project
+                        && source::read(r, &content, &meta)
+                            .is_ok_and(|s| content_hash(&s) == f.hash)
+                });
+                if !fresh {
+                    diagnostics.push(json!({"document_id":f.id,"path":f.path,"project":f.project,"code":"stale_or_unavailable_captured_input"}));
+                }
+                fresh
+            });
         }
         let mut code = HashMap::new();
         for file in &files {
@@ -558,7 +592,6 @@ impl Store {
             ));
         }
         let result = graph.report(q, revision, latest)?;
-        tx.commit()?;
         Ok(result)
     }
 }

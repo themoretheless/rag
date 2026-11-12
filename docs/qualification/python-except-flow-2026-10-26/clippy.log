@@ -1,0 +1,47 @@
+    Checking rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+error: this OR pattern can be rewritten using a range
+   --> src/code_index/data_flow/diff.rs:482:60
+    |
+482 |     if !matches!(before["data_flow_format"].as_u64(), Some(5 | 6 | 7))
+    |                                                            ^^^^^^^^^ help: try: `5..=7`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/main/index.html#manual_range_patterns
+    = note: `-D clippy::manual-range-patterns` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::manual_range_patterns)]`
+
+error: this OR pattern can be rewritten using a range
+   --> src/code_index/data_flow/diff.rs:483:63
+    |
+483 |         || !matches!(after["data_flow_format"].as_u64(), Some(5 | 6 | 7))
+    |                                                               ^^^^^^^^^ help: try: `5..=7`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/main/index.html#manual_range_patterns
+
+error: this `if` can be collapsed into the outer `match`
+   --> src/code_index/resolve/python_names.rs:134:21
+    |
+134 | /                     if children(node).iter().any(|n| n.kind() == "block") {
+135 | |                         facts.handler_aliases.push((
+136 | |                             norm(text(alias, source)),
+137 | |                             alias.start_byte(),
+...   |
+143 | |                         true
+144 | |                     }
+    | |_____________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/main/index.html#collapsible_match
+    = note: `-D clippy::collapsible-match` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::collapsible_match)]`
+help: collapse nested if block
+    |
+133 ~                 Ok((_, Some(alias)))
+134 ~                     if children(node).iter().any(|n| n.kind() == "block") => {
+135 |                         facts.handler_aliases.push((
+...
+141 |                         false
+142 ~                     }
+    |
+
+error: could not compile `rag-mcp` (lib) due to 3 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `rag-mcp` (lib test) due to 3 previous errors

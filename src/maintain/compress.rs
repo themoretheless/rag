@@ -810,8 +810,8 @@ mod tests {
         // oldest / smaller id kept
         assert_eq!(remaining[0].id, "w1");
         let generation_after_compress = {
-            let conn = store.lock().unwrap();
-            crate::db::fts::fts_generation_state(&conn).unwrap()
+            let r = store.read().unwrap();
+            crate::db::fts::fts_generation_state(&*r).unwrap()
         };
         assert!(!generation_after_compress.dirty);
         assert_eq!(
@@ -832,8 +832,8 @@ mod tests {
         .unwrap();
         assert_eq!(hits.len(), 1);
         let generation_after_search = {
-            let conn = store.lock().unwrap();
-            crate::db::fts::fts_generation_state(&conn).unwrap()
+            let r = store.read().unwrap();
+            crate::db::fts::fts_generation_state(&*r).unwrap()
         };
         assert_eq!(generation_after_search, generation_after_compress);
     }
@@ -1061,8 +1061,8 @@ mod tests {
             true,
         );
         let generation = {
-            let conn = store.lock().unwrap();
-            db::fts_generation_state(&conn).unwrap()
+            let r = store.read().unwrap();
+            db::fts_generation_state(&*r).unwrap()
         };
         assert!(generation.dirty, "next lexical read must retry FTS");
 
@@ -1099,8 +1099,8 @@ mod tests {
             true,
         );
         let generation = {
-            let conn = store.lock().unwrap();
-            db::fts_generation_state(&conn).unwrap()
+            let r = store.read().unwrap();
+            db::fts_generation_state(&*r).unwrap()
         };
         assert!(generation.dirty, "next lexical read must retry FTS");
     }

@@ -1,0 +1,25 @@
+{
+  "workspace_tests": {
+    "passed": 1599,
+    "failed": 0,
+    "ignored": 1
+  },
+  "focused_path_tests_passed": 14,
+  "mcp_suites_passed": 8,
+  "trace_context_checks_passed": 14,
+  "versions": {
+    "index_format": 80,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "source_sha256": {
+    "src/code_index/paths.rs": "8f53a2e3ab4d2ccbdcf9307bff29ebf1c32063a697d57a3232eaf8f460bf83d1",
+    "src/code_index/paths/contexts.rs": "1c8f09523b9051cdd6bff78301a1bd97ceb62f9b6c089d0d905fd3cb41dde74a",
+    "src/mcp/analysis.rs": "c8313c215d4cfd59c18a47ae498bf4c6d8a5c0c90e596a3f678872c365547345",
+    "scripts/smoke_trace_php_contexts.py": "dcf4a8df632fdec43651475d7a507f9ab06fb76a04071546eeb3a467c6c3a664"
+  },
+  "shared_checkout": true,
+  "frozen_checkout_proven": false,
+  "deployment_proven": false,
+  "runtime_path_proven": false
+}

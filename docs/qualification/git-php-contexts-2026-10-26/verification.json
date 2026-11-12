@@ -1,0 +1,23 @@
+{
+  "workspace_tests": {
+    "passed": 1585,
+    "failed": 0,
+    "ignored": 1
+  },
+  "focused_git_tests_passed": 11,
+  "mcp_suites_passed": 8,
+  "git_php_checks_passed": 11,
+  "index_format": 79,
+  "analysis_contract": 2,
+  "source_sha256": {
+    "src/code_index/git_impact.rs": "61c1953b2e9e577a68701c4c4153561acb471e0d4fb2b4ea985b641858461639",
+    "src/code_index/impact.rs": "24cefaf6b4020de2b33902837b1cceafc9b85801fbd6268ffda75f29d1310e3d",
+    "src/code_index/impact/context_walk.rs": "9bc170e5a0653e9c1f4aba9af671c0bccd666f6e25d25e391bde34efb0301518",
+    "src/mcp/analysis.rs": "c7f3be3a118d22edbf452f73a27de3d9aa0d03c90597dbd5e0a1e3770eb4aade",
+    "scripts/smoke_git_php_contexts.py": "b49070f598ccc872827c4014445a621536d3c87c9ba4b843fa84ccddcec3c881"
+  },
+  "shared_checkout": true,
+  "frozen_checkout_proven": false,
+  "deployment_proven": false,
+  "runtime_context_correlation_proven": false
+}

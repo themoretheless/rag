@@ -1,0 +1,50 @@
+{
+  "index_format": 79,
+  "source_inputs_and_oracle_labels_unchanged": true,
+  "native_mcp_parity_sites": 1183,
+  "before": {
+    "labelled_sites": 1183,
+    "local_positive_sites": 570,
+    "external_negative_sites": 613,
+    "true_positive": 473,
+    "false_positive": 0,
+    "false_negative": 97,
+    "precision": 1.0,
+    "recall": 0.8298245614035088,
+    "exact_sites": 1086,
+    "exact_site_rate": 0.9180050718512257
+  },
+  "after": {
+    "labelled_sites": 1183,
+    "local_positive_sites": 570,
+    "external_negative_sites": 613,
+    "true_positive": 478,
+    "false_positive": 0,
+    "false_negative": 92,
+    "precision": 1.0,
+    "recall": 0.8385964912280702,
+    "exact_sites": 1091,
+    "exact_site_rate": 0.9222316145393068
+  },
+  "external_negative_evidence": {
+    "sites": 613,
+    "with_extracted_observation": 608,
+    "without_extracted_observation": 5,
+    "with_false_local_candidate": 0
+  },
+  "recovered_sites": 5,
+  "lost_correct_sites": 0,
+  "focused_rust_passed": 96,
+  "mcp_targets": 5,
+  "unresolved_callback_body_sites": 4,
+  "compiler_executed_tests": 1,
+  "workspace": {
+    "passed": 1584,
+    "failed": 0,
+    "ignored": 1
+  },
+  "strict_clippy_passed": true,
+  "production_binary_replaced": false,
+  "performance_qualified": false,
+  "shared_source_not_frozen": true
+}

@@ -211,13 +211,13 @@ fn live(path: &Path, roots: &[PathBuf]) -> Result<(PathBuf, String)> {
     }
     Ok((canonical, source))
 }
-fn build(conn: &duckdb::Connection, q: &RenameQuery, roots: &[PathBuf]) -> Result<Plan> {
+fn build(r: &impl crate::db::lin_engine::LinReader, q: &RenameQuery, roots: &[PathBuf]) -> Result<Plan> {
     identifier(&q.new_name)?;
     if q.project.trim().is_empty() {
         return Err(AppError::Invalid("project is required".into()));
     }
-    let snapshot = snapshot_locked(conn, Some(&q.project))?;
-    let tests = snapshot_locked_view(conn, Some(&q.project), true)?;
+    let snapshot = snapshot_locked(r, Some(&q.project))?;
+    let tests = snapshot_locked_view(r, Some(&q.project), true)?;
     let mut targets: Vec<_> = snapshot
         .symbols
         .iter()
@@ -274,7 +274,7 @@ fn build(conn: &duckdb::Connection, q: &RenameQuery, roots: &[PathBuf]) -> Resul
     let revision = snapshot
         .index_revision
         .ok_or_else(|| AppError::Invalid("index required".into()))?;
-    let files = history::files(conn, revision, Some(&q.project))?;
+    let files = history::files(r, revision, Some(&q.project))?;
     if files.len() > 1000 || files.iter().map(|f| f.source.len()).sum::<usize>() > 32 * 1024 * 1024
     {
         return Err(AppError::Invalid(
@@ -477,16 +477,13 @@ fn build(conn: &duckdb::Connection, q: &RenameQuery, roots: &[PathBuf]) -> Resul
 
 impl Store {
     pub fn code_rename_preview(&self, q: &RenameQuery, roots: &[PathBuf]) -> Result<Value> {
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let plan = build(&tx, q, roots)?;
-        tx.commit()?;
+        let r = self.read()?;
+        let plan = build(&*r, q, roots)?;
         Ok(plan.report)
     }
     pub fn code_rename_apply(&self, q: &RenameApply, roots: &[PathBuf]) -> Result<Value> {
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let plan = build(&tx, &q.query, roots)?;
+        let w = self.write()?;
+        let plan = build(&*w, &q.query, roots)?;
         if plan.report["status"] != "preview"
             || plan.report["plan_token"].as_str() != Some(q.plan_token.as_str())
         {
@@ -494,11 +491,10 @@ impl Store {
                 "rename plan changed or blocked; request and review a fresh preview".into(),
             ));
         }
-        // Finish the read transaction before writing files, retaining the Store lock
-        // so ingestion cannot silently advance the captured corpus during apply.
-        tx.commit()?;
+        // Retain the exclusive Store write guard while replacing files so ingestion
+        // cannot silently advance the captured corpus during apply.
         let result = apply(plan, roots)?;
-        drop(conn);
+        drop(w);
         Ok(result)
     }
 }
@@ -745,8 +741,8 @@ mod tests {
                 .unwrap()
         }
         fn plan(&self) -> Plan {
-            let conn = self.store.lock().unwrap();
-            build(&conn, &self.query(), std::slice::from_ref(&self.root)).unwrap()
+            let r = self.store.read().unwrap();
+            build(&*r, &self.query(), std::slice::from_ref(&self.root)).unwrap()
         }
     }
     #[test]

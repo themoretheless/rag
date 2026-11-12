@@ -1,13 +1,14 @@
-//! DuckDB data plane: schema, store CRUD, vector/hybrid search, FTS, graph, temporal KG.
+//! `lin` data plane: schema, store CRUD, vector/hybrid search, FTS, graph, temporal KG.
 //!
 //! # Submodules
 //!
 //! | Module | Role |
 //! |--------|------|
+//! | [`lin_engine`] | Embedded `lin` engine adapter, `BridgeEmbedder`, RwLock guards, ACID `LinTx` |
 //! | [`schema`] | DDL / migrate / open connection |
 //! | [`store`] | Document & chunk CRUD, wing/room, ops_log, wiki_index, manifest |
 //! | [`search`] | Vector, lexical, hybrid RRF + diversity |
-//! | [`fts`] | DuckDB FTS / BM25 (or term-frequency fallback) |
+//! | [`fts`] | BM25 + stemmer lexical search (or term-frequency fallback) |
 //! | [`graph`] | Graph node/edge CRUD, neighbors BFS, backlinks (methods on [`Store`]) |
 //! | [`kg`] | Temporal knowledge-graph facts (P1 surface) |
 //!
@@ -22,14 +23,15 @@ pub mod fts;
 pub mod graph;
 pub mod kg;
 pub mod knowledge;
+pub mod lin_engine;
 pub(crate) mod payload_kv;
 pub mod recovery;
 pub mod review;
-mod rows;
+pub(crate) mod rows;
 pub mod schema;
 pub mod search;
 mod source_dedupe;
-mod source_manifest;
+pub(crate) mod source_manifest;
 pub mod store;
 pub mod sync;
 pub mod vault;
@@ -45,6 +47,7 @@ pub use fts::{
     refresh_fts_if_stale, refresh_fts_if_stale_with_stemmer, reindex, reindex_with_stemmer,
     search_bm25, search_bm25_with_stemmer, FtsBackend, FtsGenerationState, FtsState, LexFilters,
 };
+pub use kg::KgFactInput;
 pub use source_dedupe::{
     SourceDuplicateCleanupReport, SourceDuplicateDocument, SourceDuplicateGroup,
 };

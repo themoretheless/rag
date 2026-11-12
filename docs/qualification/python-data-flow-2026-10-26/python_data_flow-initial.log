@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/Users/themoretheless/Documents/Sources/rag/scripts/smoke_python_data_flow.py", line 80, in <module>
+    if __name__=='__main__':main()
+                            ~~~~^^
+  File "/Users/themoretheless/Documents/Sources/rag/scripts/smoke_python_data_flow.py", line 65, in main
+    structural=mcp.call('slice',dict(symbol=items['left']['id'],direction='forward'));assert structural['structural_only'] and not backward['structural_call_slice'],structural
+                                                                                             ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+KeyError: 'structural_only'

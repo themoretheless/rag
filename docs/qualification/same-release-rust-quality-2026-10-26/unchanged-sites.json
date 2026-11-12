@@ -1,0 +1,17 @@
+{
+  "itoa": {
+    "scored_sites": 57,
+    "changed_target_or_score_sites": 0,
+    "all_definition_positions_and_scores_unchanged": true
+  },
+  "ryu": {
+    "scored_sites": 237,
+    "changed_target_or_score_sites": 0,
+    "all_definition_positions_and_scores_unchanged": true
+  },
+  "memchr": {
+    "scored_sites": 889,
+    "changed_target_or_score_sites": 0,
+    "all_definition_positions_and_scores_unchanged": true
+  }
+}

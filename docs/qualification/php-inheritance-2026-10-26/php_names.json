@@ -1,0 +1,23 @@
+{
+  "passed": true,
+  "versions": {
+    "index_format": 73,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "scenarios": [
+    "namespace-aliases",
+    "declared-static-method",
+    "first-class-value-not-call",
+    "transitive-impact",
+    "dynamic-and-late-static-guards",
+    "source-bytes-and-phpdoc",
+    "warm-cache",
+    "stale-exclusion",
+    "import-only-refresh",
+    "project-isolation"
+  ],
+  "compiler_runtime_verified": false,
+  "production_database_touched": false,
+  "source_applications_executed": false
+}

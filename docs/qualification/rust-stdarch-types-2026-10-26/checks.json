@@ -1,0 +1,58 @@
+{
+  "index_format": 81,
+  "source_inputs_and_oracle_labels_unchanged": true,
+  "native_mcp_parity_sites": 1183,
+  "before": {
+    "labelled_sites": 1183,
+    "local_positive_sites": 570,
+    "external_negative_sites": 613,
+    "true_positive": 478,
+    "false_positive": 0,
+    "false_negative": 92,
+    "precision": 1.0,
+    "recall": 0.8385964912280702,
+    "exact_sites": 1091,
+    "exact_site_rate": 0.9222316145393068
+  },
+  "after": {
+    "labelled_sites": 1183,
+    "local_positive_sites": 570,
+    "external_negative_sites": 613,
+    "true_positive": 502,
+    "false_positive": 0,
+    "false_negative": 68,
+    "precision": 1.0,
+    "recall": 0.8807017543859649,
+    "exact_sites": 1115,
+    "exact_site_rate": 0.9425190194420964
+  },
+  "external_negative_evidence": {
+    "sites": 613,
+    "with_extracted_observation": 608,
+    "without_extracted_observation": 5,
+    "with_false_local_candidate": 0
+  },
+  "recovered_sites": 24,
+  "lost_correct_sites": 0,
+  "focused_rust_passed": 102,
+  "mcp_targets": 3,
+  "compiler_executed_tests": 1,
+  "catalog_module_entries": {
+    "arm": 104,
+    "aarch64": 112,
+    "x86": 16,
+    "x86_64": 16,
+    "wasm32": 1
+  },
+  "catalog_generation_reproducible": true,
+  "catalog_source_hashes_rechecked": true,
+  "workspace": {
+    "passed": 1600,
+    "failed": 0,
+    "ignored": 1
+  },
+  "strict_clippy_passed": true,
+  "production_binary_replaced": false,
+  "performance_qualified": false,
+  "shared_source_not_frozen": true
+}

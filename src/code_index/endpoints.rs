@@ -36,11 +36,10 @@ pub(super) fn collect_markup(node: Node, source: &str, out: &mut IndexedDocument
         .filter(|n| n.kind() == "attribute")
         .filter(|n| {
             let mut cursor = n.walk();
-            let matched = n.named_children(&mut cursor).any(|child| {
+            n.named_children(&mut cursor).any(|child| {
                 child.kind() == "attribute_name"
                     && text(child, source).eq_ignore_ascii_case(attribute)
-            });
-            matched
+            })
         })
         .collect();
     // Do not pick an arbitrary winner for duplicate attributes.

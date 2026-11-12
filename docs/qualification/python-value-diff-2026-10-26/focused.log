@@ -1,0 +1,124 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+error[E0282]: type annotations needed for `std::collections::HashMap<_, _>`
+  --> src/code_index/data_flow/diff.rs:58:9
+   |
+58 |     let mut hashes = HashMap::new();
+   |         ^^^^^^^^^^
+...
+66 |             .map(|n| hashes[&n.id()].clone())
+   |                      --------------- type must be known at this point
+   |
+help: consider giving `hashes` an explicit type, where the type for type parameter `V` is specified
+   |
+58 |     let mut hashes: std::collections::HashMap<K, V> = HashMap::new();
+   |                   +++++++++++++++++++++++++++++++++
+
+error[E0277]: the trait bound `serde_json::Value: std::convert::From<&serde_json::Value>` is not satisfied
+   --> src/code_index/data_flow/diff.rs:491:10
+    |
+491 |         .into();
+    |          ^^^^ the trait `std::convert::From<&serde_json::Value>` is not implemented for `serde_json::Value`
+    |
+    = help: `serde_json::Value` implements trait `std::convert::From<T>`:
+              std::convert::From<&[T]>
+              std::convert::From<&str>
+              std::convert::From<()>
+              std::convert::From<Cow<'_, str>>
+              std::convert::From<Vec<T>>
+              std::convert::From<[T; N]>
+              std::convert::From<bool>
+              std::convert::From<f32>
+            and 16 others
+    = note: required for `&serde_json::Value` to implement `Into<serde_json::Value>`
+    = note: required for `serde_json::Value` to implement `std::convert::From<Vec<&serde_json::Value>>`
+    = note: 1 redundant requirement hidden
+    = note: required for `Vec<&serde_json::Value>` to implement `Into<serde_json::Value>`
+
+error[E0277]: the trait bound `serde_json::Value: std::convert::From<&std::string::String>` is not satisfied
+   --> src/code_index/data_flow/diff.rs:497:10
+    |
+497 |         .into();
+    |          ^^^^ the trait `std::convert::From<&std::string::String>` is not implemented for `serde_json::Value`
+    |
+    = help: consider casting the `&std::string::String` value to `&str`
+    = help: `serde_json::Value` implements trait `std::convert::From<T>`:
+              std::convert::From<&[T]>
+              std::convert::From<&str>
+              std::convert::From<()>
+              std::convert::From<Cow<'_, str>>
+              std::convert::From<Vec<T>>
+              std::convert::From<[T; N]>
+              std::convert::From<bool>
+              std::convert::From<f32>
+            and 16 others
+    = note: required for `&std::string::String` to implement `Into<serde_json::Value>`
+    = note: required for `serde_json::Value` to implement `std::convert::From<Vec<&std::string::String>>`
+    = note: 1 redundant requirement hidden
+    = note: required for `Vec<&std::string::String>` to implement `Into<serde_json::Value>`
+
+error[E0277]: the trait bound `serde_json::Value: std::convert::From<&serde_json::Value>` is not satisfied
+   --> src/code_index/data_flow/diff.rs:500:78
+    |
+500 |     report["nodes_changed"] = changes.iter().take(limit).collect::<Vec<_>>().into();
+    |                                                                              ^^^^ the trait `std::convert::From<&serde_json::Value>` is not implemented for `serde_json::Value`
+    |
+    = help: `serde_json::Value` implements trait `std::convert::From<T>`:
+              std::convert::From<&[T]>
+              std::convert::From<&str>
+              std::convert::From<()>
+              std::convert::From<Cow<'_, str>>
+              std::convert::From<Vec<T>>
+              std::convert::From<[T; N]>
+              std::convert::From<bool>
+              std::convert::From<f32>
+            and 16 others
+    = note: required for `&serde_json::Value` to implement `Into<serde_json::Value>`
+    = note: required for `serde_json::Value` to implement `std::convert::From<Vec<&serde_json::Value>>`
+    = note: 1 redundant requirement hidden
+    = note: required for `Vec<&serde_json::Value>` to implement `Into<serde_json::Value>`
+
+error[E0277]: the trait bound `serde_json::Value: std::convert::From<&serde_json::Value>` is not satisfied
+   --> src/code_index/data_flow/diff.rs:502:74
+    |
+502 |     report["edges_added"] = added.iter().take(limit).collect::<Vec<_>>().into();
+    |                                                                          ^^^^ the trait `std::convert::From<&serde_json::Value>` is not implemented for `serde_json::Value`
+    |
+    = help: `serde_json::Value` implements trait `std::convert::From<T>`:
+              std::convert::From<&[T]>
+              std::convert::From<&str>
+              std::convert::From<()>
+              std::convert::From<Cow<'_, str>>
+              std::convert::From<Vec<T>>
+              std::convert::From<[T; N]>
+              std::convert::From<bool>
+              std::convert::From<f32>
+            and 16 others
+    = note: required for `&serde_json::Value` to implement `Into<serde_json::Value>`
+    = note: required for `serde_json::Value` to implement `std::convert::From<Vec<&serde_json::Value>>`
+    = note: 1 redundant requirement hidden
+    = note: required for `Vec<&serde_json::Value>` to implement `Into<serde_json::Value>`
+
+error[E0277]: the trait bound `serde_json::Value: std::convert::From<&serde_json::Value>` is not satisfied
+   --> src/code_index/data_flow/diff.rs:504:78
+    |
+504 |     report["edges_removed"] = removed.iter().take(limit).collect::<Vec<_>>().into();
+    |                                                                              ^^^^ the trait `std::convert::From<&serde_json::Value>` is not implemented for `serde_json::Value`
+    |
+    = help: `serde_json::Value` implements trait `std::convert::From<T>`:
+              std::convert::From<&[T]>
+              std::convert::From<&str>
+              std::convert::From<()>
+              std::convert::From<Cow<'_, str>>
+              std::convert::From<Vec<T>>
+              std::convert::From<[T; N]>
+              std::convert::From<bool>
+              std::convert::From<f32>
+            and 16 others
+    = note: required for `&serde_json::Value` to implement `Into<serde_json::Value>`
+    = note: required for `serde_json::Value` to implement `std::convert::From<Vec<&serde_json::Value>>`
+    = note: 1 redundant requirement hidden
+    = note: required for `Vec<&serde_json::Value>` to implement `Into<serde_json::Value>`
+
+Some errors have detailed explanations: E0277, E0282.
+For more information about an error, try `rustc --explain E0277`.
+error: could not compile `rag-mcp` (lib test) due to 6 previous errors

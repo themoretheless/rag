@@ -1,0 +1,15 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+error[E0425]: cannot find value `witnessed_edges` in this scope
+   --> src/code_index/data_flow/query.rs:342:120
+    |
+342 | ...sors.get(at) else {break;};let e=&edges[*i];witnessed_edges.insert(*i);witness.push(json!({"source":e.source,"target":e.target,"...
+    |                                                ^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find value `witnessed_edges` in this scope
+   --> src/code_index/data_flow/query.rs:352:21
+    |
+352 |     report["edges"]=witnessed_edges.into_iter().map(|i|{let e=&edges[i];json!({"source":e.source,"target":e.target,"relation":e.kin...
+    |                     ^^^^^^^^^^^^^^^ not found in this scope
+
+For more information about this error, try `rustc --explain E0425`.
+error: could not compile `rag-mcp` (lib test) due to 2 previous errors

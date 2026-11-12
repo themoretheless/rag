@@ -8,6 +8,8 @@ mod samples;
 mod types;
 pub mod write_check;
 use crate::{
+    analysis_tasks,
+    db::lin_engine::{cell_i64, cell_str, cell_string, LinReader, LinWriter, RecBuilder},
     error::{AppError, Result},
     Store,
 };
@@ -17,8 +19,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{ConnectOptions, Connection, Executor, Row};
 use std::{collections::BTreeMap, str::FromStr, time::Duration};
-
-pub const DDL: &str = "CREATE SEQUENCE IF NOT EXISTS external_db_snapshot_seq; CREATE TABLE IF NOT EXISTS external_db_snapshots (id VARCHAR PRIMARY KEY, connection_alias VARCHAR NOT NULL, captured_ms BIGINT NOT NULL, payload VARCHAR NOT NULL, seq BIGINT DEFAULT nextval('external_db_snapshot_seq') UNIQUE);";
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -505,26 +505,55 @@ impl Store {
                 "external schema snapshot exceeds 8 MiB; reduce configured schemas",
             ));
         }
-        self.lock()?.execute(
-            "INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",
-            duckdb::params![snapshot.id, snapshot.connection, snapshot.captured_ms, body],
+        self.insert_external_db_snapshot(
+            &snapshot.id,
+            &snapshot.connection,
+            snapshot.captured_ms,
+            &body,
         )?;
         Ok(
             json!({"snapshot_id":snapshot.id,"connection":snapshot.connection,"captured_ms":snapshot.captured_ms,"tables":snapshot.tables.len(),"complete_within_visible_scope":snapshot.complete_within_visible_scope,"diagnostics":snapshot.diagnostics,"source":"remote_metadata","capture_format":snapshot.capture_format,"samples_requested":q.include_samples,"readonly":true}),
         )
     }
+    pub(crate) fn insert_external_db_snapshot(
+        &self,
+        id: &str,
+        connection_alias: &str,
+        captured_ms: i64,
+        payload: &str,
+    ) -> Result<()> {
+        self.with_tx(|tx| {
+            let seq = analysis_tasks::next_seq(tx, "external_db_snapshots")?;
+            tx.insert_one(
+                "external_db_snapshots",
+                RecBuilder::new()
+                    .id(id)
+                    .str("connection_alias", connection_alias)
+                    .i64("captured_ms", captured_ms)
+                    .str("payload", payload)
+                    .i64("seq", seq)
+                    .build(),
+            )
+        })
+    }
     fn external_snapshot(&self, q: &Query) -> Result<Snapshot> {
-        let conn = self.lock()?;
+        let r = self.read()?;
         let body: Option<String> = if let Some(id) = &q.snapshot_id {
-            let mut s = conn.prepare(
-                "SELECT payload FROM external_db_snapshots WHERE connection_alias=? AND id=?",
-            )?;
-            let mut rows = s.query(duckdb::params![q.connection, id])?;
-            rows.next()?.map(|r| r.get(0)).transpose()?
+            r.get_by_id("external_db_snapshots", id)?
+                .filter(|row| cell_str(row, "connection_alias") == Some(q.connection.as_str()))
+                .map(|row| cell_string(&row, "payload"))
         } else {
-            let mut s=conn.prepare("SELECT payload FROM external_db_snapshots WHERE connection_alias=? ORDER BY seq DESC LIMIT 1")?;
-            let mut rows = s.query(duckdb::params![q.connection])?;
-            rows.next()?.map(|r| r.get(0)).transpose()?
+            let mut best: Option<(i64, String)> = None;
+            r.scan_each("external_db_snapshots", |row| {
+                if cell_str(row, "connection_alias") == Some(q.connection.as_str()) {
+                    let seq = cell_i64(row, "seq", 0);
+                    if best.as_ref().is_none_or(|(prev, _)| seq > *prev) {
+                        best = Some((seq, cell_string(row, "payload")));
+                    }
+                }
+                Ok(true)
+            })?;
+            best.map(|(_, p)| p)
         };
         let snapshot: Snapshot = serde_json::from_str(&body.ok_or_else(|| {
             AppError::NotFound("no captured snapshot for this alias; use db_refresh first".into())
@@ -1112,19 +1141,14 @@ mod fixture_tests {
                 .unwrap()
                 .contains("PRIVATE_ROW_MARKER"));
             let root = tempfile::tempdir().unwrap();
-            let path = root.path().join("capture.duckdb");
+            let path = root.path().join("capture.lin");
             let store = Store::open(&path).unwrap();
             store
-                .lock()
-                .unwrap()
-                .execute(
-                    "INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",
-                    duckdb::params![
-                        snapshot.id,
-                        "fixture",
-                        snapshot.captured_ms,
-                        serde_json::to_string(&snapshot).unwrap()
-                    ],
+                .insert_external_db_snapshot(
+                    &snapshot.id,
+                    "fixture",
+                    snapshot.captured_ms,
+                    &serde_json::to_string(&snapshot).unwrap(),
                 )
                 .unwrap();
             let q = Query {
@@ -1165,7 +1189,14 @@ mod fixture_tests {
             next.tables[0].sample = json!({"collected":true,"rows":[{"status":"changed data"}]});
             next.id = uuid::Uuid::new_v4().to_string();
             // Identical timestamps must still select actual insertion order.
-            store.lock().unwrap().execute("INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",duckdb::params![next.id,"fixture",next.captured_ms,serde_json::to_string(&next).unwrap()]).unwrap();
+            store
+                .insert_external_db_snapshot(
+                    &next.id,
+                    "fixture",
+                    next.captured_ms,
+                    &serde_json::to_string(&next).unwrap(),
+                )
+                .unwrap();
             let unchanged = store.external_db_query("db_drift", &drift_q).unwrap();
             assert_eq!(unchanged["snapshot_id"], next.id);
             assert_eq!(unchanged["total"], 0);
@@ -1175,7 +1206,14 @@ mod fixture_tests {
                 .find(|t| t.name == "child")
                 .unwrap()
                 .columns[0]["nullable"] = json!("NO");
-            store.lock().unwrap().execute("INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",duckdb::params![next.id,"fixture",next.captured_ms,serde_json::to_string(&next).unwrap()]).unwrap();
+            store
+                .insert_external_db_snapshot(
+                    &next.id,
+                    "fixture",
+                    next.captured_ms,
+                    &serde_json::to_string(&next).unwrap(),
+                )
+                .unwrap();
             assert_eq!(
                 store.external_db_query("db_drift", &drift_q).unwrap()["changes"][0]["kind"],
                 "table_changed"
@@ -1209,7 +1247,14 @@ mod fixture_tests {
                             Some("changed definition".into())
                     }
                 };
-                store.lock().unwrap().execute("INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",duckdb::params![changed.id,"fixture",changed.captured_ms,serde_json::to_string(&changed).unwrap()]).unwrap();
+                store
+                    .insert_external_db_snapshot(
+                        &changed.id,
+                        "fixture",
+                        changed.captured_ms,
+                        &serde_json::to_string(&changed).unwrap(),
+                    )
+                    .unwrap();
                 let diff = store
                     .external_db_query(
                         "db_drift",
@@ -1233,7 +1278,14 @@ mod fixture_tests {
                 t.as_object_mut().unwrap().remove("metadata");
             }
             let legacy_id = legacy["id"].as_str().unwrap().to_string();
-            store.lock().unwrap().execute("INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",duckdb::params![legacy_id,"fixture",snapshot.captured_ms,legacy.to_string()]).unwrap();
+            store
+                .insert_external_db_snapshot(
+                    &legacy_id,
+                    "fixture",
+                    snapshot.captured_ms,
+                    &legacy.to_string(),
+                )
+                .unwrap();
             assert_eq!(
                 store
                     .external_db_query(
@@ -1299,7 +1351,14 @@ mod fixture_tests {
                 .all(|t| t["deletion_safe"] == false));
             next.id = uuid::Uuid::new_v4().to_string();
             next.target_fingerprint = "different-target".into();
-            store.lock().unwrap().execute("INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",duckdb::params![next.id,"fixture",next.captured_ms,serde_json::to_string(&next).unwrap()]).unwrap();
+            store
+                .insert_external_db_snapshot(
+                    &next.id,
+                    "fixture",
+                    next.captured_ms,
+                    &serde_json::to_string(&next).unwrap(),
+                )
+                .unwrap();
             assert_eq!(
                 store
                     .external_db_query(

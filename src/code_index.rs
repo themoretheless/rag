@@ -3,12 +3,15 @@
 mod affected_tests;
 mod analysis;
 pub use affected_tests::AffectedTestsQuery;
+pub use analysis::EntryPointsQuery;
 mod c_family;
 mod catalog;
 mod code_read;
 pub use code_read::CodeReadQuery;
 pub mod corpus;
 pub use catalog::{CatalogQuery, CatalogView};
+mod data_flow;
+pub use data_flow::DataSliceQuery;
 mod dead_code;
 mod dead_files;
 mod documentation;
@@ -30,6 +33,7 @@ mod literal_impact;
 mod perl;
 mod powershell;
 pub use infrastructure::InfrastructureQuery;
+use resolve::python_names;
 mod inheritance;
 mod java;
 mod lua;
@@ -38,6 +42,7 @@ mod resource_targets;
 mod ruby;
 pub use git_impact::{git_diff_impact, GitImpactQuery, GitScope};
 mod non_code_references;
+mod php_names;
 mod php_routes;
 pub mod policy;
 mod references;
@@ -64,13 +69,15 @@ mod shell;
 pub(crate) mod source;
 pub mod sql;
 pub mod styles;
-pub(crate) const INDEX_FORMAT_VERSION: u32 = 68;
+pub(crate) const INDEX_FORMAT_VERSION: u32 = 89;
 use crate::{
-    db::Store,
+    db::{
+        lin_engine::{opt_i64, opt_str, req_str, LinReader, LinWriter, RecBuilder},
+        Store,
+    },
     error::{AppError, Result},
     util::content_hash,
 };
-use duckdb::params;
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -117,7 +124,7 @@ pub struct Reference {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build_context: Option<String>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 struct IndexedDocument {
     version: u32,
     hash: String,
@@ -128,6 +135,12 @@ struct IndexedDocument {
     parse_errors: bool,
     #[serde(default)]
     bindings: Vec<resolve::Binding>,
+    #[serde(default)]
+    php_names: Option<php_names::Facts>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    python_names: Option<python_names::Facts>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    data_flow: Option<data_flow::Facts>,
     #[serde(default)]
     file_imports: Vec<file_imports::Spec>,
     #[serde(default)]
@@ -190,13 +203,39 @@ struct IndexedDocument {
     rust_cfg: rust_cfg::Facts,
 }
 pub use rag_mcp_core::IndexReport;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BindingContext {
+    pub owner: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_owner: Option<String>,
+    pub candidates: Vec<String>,
+    pub resolution: String,
+    pub resolution_basis: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BindingContexts {
+    pub kind: String,
+    pub enumeration_complete: bool,
+    pub truncated: bool,
+    pub runtime_contexts_complete: bool,
+    pub context_correlation_proven: bool,
+    pub contexts: Vec<BindingContext>,
+}
 #[derive(Debug, Clone, Serialize)]
 pub struct CallEdge {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_evidence: Option<BindingContexts>,
     pub reference: Reference,
     pub candidates: Vec<String>,
     pub resolution: String,
     pub provenance: &'static str,
     pub resolution_basis: String,
+}
+impl CallEdge {
+    pub(super) fn has_unknown_targets(&self) -> bool {
+        self.candidates.is_empty()
+            || self.resolution_basis == "python_receiver_type_join_with_unknown"
+    }
 }
 #[derive(Debug, Default, Serialize)]
 pub struct CodeSnapshot {
@@ -216,6 +255,8 @@ pub struct CodeSnapshot {
     pub resource_target_inventory_available: bool,
     pub entrypoints: Vec<analysis::EntryPoint>,
     pub sql: sql::SqlSnapshot,
+    #[serde(skip)]
+    data_flow: data_flow::Snapshot,
     translation_keys: translation_keys::Snapshot,
     pub styles: styles::StyleSnapshot,
     #[serde(skip)]
@@ -299,8 +340,10 @@ fn definition(node: Node) -> bool {
         "function_item"
             | "function_signature_item"
             | "struct_item"
+            | "union_item"
             | "enum_item"
             | "trait_item"
+            | "trait_declaration"
             | "mod_item"
             | "type_item"
             | "function_definition"
@@ -352,6 +395,9 @@ fn parse(id: &str, path: &str, source: &str, revision: i64) -> Result<IndexedDoc
         references: vec![],
         parse_errors: false,
         bindings: vec![],
+        php_names: None,
+        python_names: None,
+        data_flow: None,
         file_imports: vec![],
         file_resources: vec![],
         resource_base_unresolved: false,
@@ -453,6 +499,9 @@ fn parse(id: &str, path: &str, source: &str, revision: i64) -> Result<IndexedDoc
         }
     }
     out.parse_errors = tree.root_node().has_error();
+    if path.ends_with(".py") {
+        out.python_names = Some(python_names::capture(tree.root_node(), source));
+    }
     if path.ends_with(".rs") {
         rust_cargo::collect_modules(tree.root_node(), source, &mut out);
     }
@@ -469,6 +518,16 @@ fn parse(id: &str, path: &str, source: &str, revision: i64) -> Result<IndexedDoc
         },
     );
     documentation::attach(tree.root_node(), source, &mut out);
+    php_names::finish(tree.root_node(), source, id, &mut out);
+    if path.ends_with(".py") {
+        python_names::finish(tree.root_node(), source, &mut out);
+        out.data_flow = Some(data_flow::capture(
+            tree.root_node(),
+            source,
+            id,
+            &out.symbols,
+        ));
+    }
     if path.ends_with(".rs") {
         rust_cargo::collect_reexports(tree.root_node(), source, &mut out);
         rust_semantics::collect(tree.root_node(), source, &mut out);
@@ -669,25 +728,33 @@ impl Store {
     }
     pub fn index_code_with_options(&self, options: &IndexOptions) -> Result<IndexReport> {
         let started = std::time::Instant::now();
-        let mut conn = self.lock()?;
+        let mut w = self.write()?;
         let lock_wait_ms = started.elapsed().as_secs_f64() * 1000.0;
         let body_started = std::time::Instant::now();
-        let tx = conn.transaction()?;
+        let mut tx = w.begin_tx()?;
         let phase = std::time::Instant::now();
         let docs = {
-            let mut stmt = tx.prepare("SELECT id, COALESCE(source_file, uri), content, COALESCE(revision,1), wing, metadata_json, source_file IS NOT NULL FROM documents WHERE COALESCE(status,'active') NOT IN ('archived','tombstone','consolidated') ORDER BY id")?;
-            let rows = stmt.query_map([], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, i64>(3)?,
-                    r.get::<_, Option<String>>(4)?,
-                    r.get::<_, String>(5)?,
-                    r.get::<_, bool>(6)?,
-                ))
+            let mut raw = Vec::new();
+            tx.scan_each("documents", |rec| {
+                let status = opt_str(rec, "status").unwrap_or("active");
+                if matches!(status, "archived" | "tombstone" | "consolidated") {
+                    return Ok(true);
+                }
+                let id = req_str(rec, "id")?.to_string();
+                let source_file_opt = opt_str(rec, "source_file").map(str::to_string);
+                let path = match &source_file_opt {
+                    Some(sf) => sf.clone(),
+                    None => req_str(rec, "uri")?.to_string(),
+                };
+                let content = req_str(rec, "content")?.to_string();
+                let rev = opt_i64(rec, "revision").unwrap_or(1);
+                let project = opt_str(rec, "wing").map(str::to_string);
+                let metadata = opt_str(rec, "metadata_json").unwrap_or("{}").to_string();
+                let has_source_file = source_file_opt.is_some();
+                raw.push((id, path, content, rev, project, metadata, has_source_file));
+                Ok(true)
             })?;
-            let raw = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+            raw.sort_by(|a, b| a.0.cmp(&b.0));
             raw.into_iter()
                 .map(|(id, path, content, rev, project, metadata, source_file)| {
                     let text = source::read(&tx, &content, &metadata)?.into_owned();
@@ -699,11 +766,14 @@ impl Store {
         let phase = std::time::Instant::now();
         let mut report = IndexReport::default();
         // Replace the complete corpus snapshot atomically; rollback preserves the old one on errors.
-        let mut existing: HashMap<String, String> = {
-            let mut stmt = tx.prepare("SELECT document_id,payload FROM code_index_documents")?;
-            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
-            rows.collect::<std::result::Result<_, _>>()?
-        };
+        let mut existing: HashMap<String, String> = HashMap::new();
+        tx.scan_each("code_index_documents", |rec| {
+            let id = req_str(rec, "id")?;
+            let doc_id = opt_str(rec, "document_id").unwrap_or(id).to_string();
+            let payload = req_str(rec, "payload")?.to_string();
+            existing.insert(doc_id, payload);
+            Ok(true)
+        })?;
         let mut payloads = Vec::new();
         let mut changed = Vec::new();
         for (id, path, source, revision, project, _) in &docs {
@@ -719,6 +789,9 @@ impl Store {
                     d.version == INDEX_FORMAT_VERSION
                         && translation_keys::current(d)
                         && php_docblocks::current(d)
+                        && php_names::current(d)
+                        && data_flow::current(d)
+                        && python_names::current(d)
                         && d.hash == content_hash(source)
                         && d.revision == *revision
                         && d.path == *path
@@ -752,19 +825,23 @@ impl Store {
         let cache_parse_serialize_ms = phase.elapsed().as_secs_f64() * 1000.0;
         let phase = std::time::Instant::now();
         for id in existing.keys() {
-            tx.execute("DELETE FROM code_index_documents WHERE document_id=?", [id])?;
+            tx.delete_by_id("code_index_documents", id)?;
         }
         for i in changed {
             let (id, payload) = &payloads[i];
-            tx.execute(
-                "INSERT INTO code_index_documents VALUES (?,?) ON CONFLICT(document_id) DO UPDATE SET payload=excluded.payload",
-                params![id, payload],
+            tx.upsert_by_id(
+                "code_index_documents",
+                id,
+                RecBuilder::new()
+                    .str("document_id", id)
+                    .str("payload", payload)
+                    .build(),
             )?;
         }
         let cache_replace_ms = phase.elapsed().as_secs_f64() * 1000.0;
         let phase = std::time::Instant::now();
         let (revision, created, resolution) =
-            history::publish(&tx, &docs, &payloads, options.force_full_resolution)?;
+            history::publish(&mut tx, &docs, &payloads, options.force_full_resolution)?;
         report.resolution = Some(resolution);
         let revision_publish_ms = phase.elapsed().as_secs_f64() * 1000.0;
         report.index_revision = Some(revision);
@@ -789,7 +866,7 @@ impl Store {
             embedding_fts_included: false,
         };
         let metrics_started = std::time::Instant::now();
-        timings::record(&tx, revision, created, &measured)?;
+        timings::record(&mut tx, revision, created, &measured)?;
         let metrics_write_ms = metrics_started.elapsed().as_secs_f64() * 1000.0;
         report.stage_timings = Some(measured);
         let commit_started = std::time::Instant::now();
@@ -805,7 +882,10 @@ impl Store {
         Ok(report)
     }
     pub fn code_body(&self, q: &CodeQuery) -> Result<serde_json::Value> {
-        self.code_read(&CodeReadQuery { selection: q.clone(), ..Default::default() })
+        self.code_read(&CodeReadQuery {
+            selection: q.clone(),
+            ..Default::default()
+        })
     }
 
     /// Stale facts are omitted; their document IDs are explicitly reported.
@@ -815,71 +895,113 @@ impl Store {
 
     /// Restrict corpus reads before decoding source blobs or cached facts.
     pub(crate) fn code_snapshot_in_project(&self, project: Option<&str>) -> Result<CodeSnapshot> {
-        let mut conn = self.lock()?;
-        let transaction = conn.transaction()?;
-        let snapshot = snapshot_locked(&transaction, project)?;
-        transaction.commit()?;
-        Ok(snapshot)
+        let r = self.read()?;
+        snapshot_locked(&*r, project)
     }
     pub fn code_affected_tests(&self, query: &AffectedTestsQuery) -> Result<serde_json::Value> {
-        let mut connection = self.lock()?;
-        let transaction = connection.transaction()?;
-        let snapshot = snapshot_locked_view(&transaction, query.project.as_deref(), true)?;
-        let result = affected_tests::query(&snapshot, query)?;
-        transaction.commit()?;
-        Ok(result)
+        let r = self.read()?;
+        let snapshot = snapshot_locked_view(&*r, query.project.as_deref(), true)?;
+        affected_tests::query(&snapshot, query)
     }
 }
-fn snapshot_locked(conn: &duckdb::Connection, project: Option<&str>) -> Result<CodeSnapshot> {
-    snapshot_locked_view(conn, project, false)
+fn snapshot_locked(r: &impl LinReader, project: Option<&str>) -> Result<CodeSnapshot> {
+    snapshot_locked_view(r, project, false)
 }
 fn snapshot_locked_view(
-    conn: &duckdb::Connection,
+    r: &impl LinReader,
     project: Option<&str>,
     test_view: bool,
 ) -> Result<CodeSnapshot> {
-    let mut stmt = conn.prepare("SELECT d.id, COALESCE(d.source_file,d.uri), d.content, COALESCE(d.revision,1), c.payload, d.wing, d.metadata_json, d.source_file, f.path, f.project, f.document_revision, f.content_hash FROM documents d LEFT JOIN code_index_documents c ON c.document_id=d.id LEFT JOIN code_index_revision_files f ON f.index_revision=(SELECT MAX(id) FROM code_index_revisions) AND f.document_id=d.id WHERE COALESCE(d.status,'active') NOT IN ('archived','tombstone','consolidated') AND (CAST(? AS VARCHAR) IS NULL OR d.wing=CAST(? AS VARCHAR)) ORDER BY d.id")?;
-    let mut rows = stmt.query(params![project, project])?;
+    let index_revision = crate::analysis_tasks::latest_code_index_rev(r)?;
     let mut out = CodeSnapshot {
-        index_revision: conn
-            .query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| r.get(0))?,
+        index_revision,
         ..CodeSnapshot::default()
     };
-    let inventory = resource_targets::inventory(conn, out.index_revision)?;
+    let inventory = resource_targets::inventory(r, out.index_revision)?;
     out.resource_target_inventory_available = inventory.is_some();
+    let mut rev_files: HashMap<String, (String, Option<String>, i64, String)> = HashMap::new();
+    if let Some(rev) = index_revision {
+        if r.has_collection("code_index_revision_files") {
+            for rec in r.find_by_eq("code_index_revision_files", "index_revision", rev)? {
+                let doc_id = req_str(&rec, "document_id")?.to_string();
+                let fpath = req_str(&rec, "path")?.to_string();
+                let fproj = opt_str(&rec, "project").map(str::to_string);
+                let frev = opt_i64(&rec, "document_revision").unwrap_or(1);
+                let fhash = req_str(&rec, "content_hash")?.to_string();
+                rev_files.insert(doc_id, (fpath, fproj, frev, fhash));
+            }
+        }
+    }
+    struct RawDoc {
+        id: String,
+        path: String,
+        content: String,
+        rev: i64,
+        wing: Option<String>,
+        metadata: String,
+        source_file: Option<String>,
+    }
+    let mut raw_docs = Vec::new();
+    r.scan_each("documents", |rec| {
+        let status = opt_str(rec, "status").unwrap_or("active");
+        if matches!(status, "archived" | "tombstone" | "consolidated") {
+            return Ok(true);
+        }
+        let wing = opt_str(rec, "wing").map(str::to_string);
+        if let Some(proj) = project {
+            if wing.as_deref() != Some(proj) {
+                return Ok(true);
+            }
+        }
+        let id = req_str(rec, "id")?.to_string();
+        let source_file = opt_str(rec, "source_file").map(str::to_string);
+        let path = match &source_file {
+            Some(sf) => sf.clone(),
+            None => req_str(rec, "uri")?.to_string(),
+        };
+        let content = req_str(rec, "content")?.to_string();
+        let rev = opt_i64(rec, "revision").unwrap_or(1);
+        let metadata = opt_str(rec, "metadata_json").unwrap_or("{}").to_string();
+        raw_docs.push(RawDoc {
+            id,
+            path,
+            content,
+            rev,
+            wing,
+            metadata,
+            source_file,
+        });
+        Ok(true)
+    })?;
+    raw_docs.sort_by(|a, b| a.id.cmp(&b.id));
     let mut documents = HashMap::new();
-    while let Some(row) = rows.next()? {
-        let id: String = row.get(0)?;
-        let path: String = row.get(1)?;
+    for doc_row in raw_docs {
+        let id = doc_row.id;
+        let path = doc_row.path;
         if !indexable(&path) {
-            if row.get::<_, Option<String>>(7)?.is_some() {
-                let content: String = row.get(2)?;
-                let metadata: String = row.get(6)?;
-                let hash = source::read(conn, &content, &metadata)
+            if doc_row.source_file.is_some() {
+                let hash = source::read(r, &doc_row.content, &doc_row.metadata)
                     .ok()
                     .map(|v| content_hash(&v));
                 let current = resource_targets::ResourceTarget {
-                    document_id: id,
+                    document_id: id.clone(),
                     path,
-                    project: row.get(5)?,
-                    revision: row.get(3)?,
+                    project: doc_row.wing,
+                    revision: doc_row.rev,
                     content_hash: hash,
                     published_revision: None,
                     published_hash: None,
                     state: resource_targets::TargetState::Unpublished,
                     reason: String::new(),
                 };
-                let published = row
-                    .get::<_, Option<String>>(8)?
-                    .map(|path| {
-                        Ok::<_, AppError>(resource_targets::Published {
-                            path,
-                            project: row.get(9)?,
-                            revision: row.get(10)?,
-                            hash: row.get(11)?,
-                        })
-                    })
-                    .transpose()?;
+                let published = rev_files.get(&id).map(|(fpath, fproj, frev, fhash)| {
+                    resource_targets::Published {
+                        path: fpath.clone(),
+                        project: fproj.clone(),
+                        revision: *frev,
+                        hash: fhash.clone(),
+                    }
+                });
                 out.file_resource_targets.push(resource_targets::observe(
                     current,
                     inventory.as_ref(),
@@ -892,18 +1014,22 @@ fn snapshot_locked_view(
             id.clone(),
             DocumentScope {
                 path: path.clone(),
-                project: row.get(5)?,
+                project: doc_row.wing.clone(),
             },
         );
-        let content: String = row.get(2)?;
-        let metadata: String = row.get(6)?;
-        let source = source::read(conn, &content, &metadata)?;
-        let rev: i64 = row.get(3)?;
-        let payload: Option<String> = row.get(4)?;
+        let source = source::read(r, &doc_row.content, &doc_row.metadata)?;
+        let rev = doc_row.rev;
+        let payload = if r.has_collection("code_index_documents") {
+            r.get_by_id("code_index_documents", &id)?
+                .map(|rec| req_str(&rec, "payload").map(str::to_string))
+                .transpose()?
+        } else {
+            None
+        };
         let Some(payload) = payload else {
             if go::manifest(&path) || rust_cargo::manifest(&path) {
                 let mut boundary = parse(&id, &path, "", rev)?;
-                boundary.project = row.get(5)?;
+                boundary.project = doc_row.wing;
                 documents.insert(id.clone(), boundary);
                 out.binding_diagnostics.push(serde_json::json!({"document_id":id,"path":path,"code":if rust_cargo::manifest(&path){"RUST_MANIFEST_BOUNDARY_UNVERIFIED"}else{"GO_MANIFEST_BOUNDARY_UNVERIFIED"}}));
             }
@@ -914,14 +1040,17 @@ fn snapshot_locked_view(
         if cached.version != INDEX_FORMAT_VERSION
             || !translation_keys::current(&cached)
             || !php_docblocks::current(&cached)
+            || !php_names::current(&cached)
+            || !data_flow::current(&cached)
+            || !python_names::current(&cached)
             || cached.hash != content_hash(&source)
             || cached.path != path
             || cached.revision != rev
-            || cached.project != row.get::<_, Option<String>>(5)?
+            || cached.project != doc_row.wing
         {
             if go::manifest(&path) || rust_cargo::manifest(&path) {
                 let mut boundary = parse(&id, &path, "", rev)?;
-                boundary.project = row.get(5)?;
+                boundary.project = doc_row.wing;
                 documents.insert(id.clone(), boundary);
                 out.binding_diagnostics.push(serde_json::json!({"document_id":id,"path":path,"code":if rust_cargo::manifest(&path){"RUST_MANIFEST_BOUNDARY_UNVERIFIED"}else{"GO_MANIFEST_BOUNDARY_UNVERIFIED"}}));
             }
@@ -942,7 +1071,7 @@ fn snapshot_locked_view(
             .insert(id.clone(), cached.project.clone());
         out.symbols.extend(cached.symbols.clone());
         out.references.extend(cached.references.clone());
-        documents.insert(row.get::<_, String>(0)?, cached);
+        documents.insert(id, cached);
     }
     let original_ids: HashMap<_, _> = if test_view {
         let mut normal = documents.clone();
@@ -992,6 +1121,7 @@ fn snapshot_locked_view(
     out.binding_diagnostics
         .extend(shell::diagnostics(&documents));
     out.sql = sql::snapshot(&documents);
+    out.data_flow = data_flow::snapshot(&documents);
     out.translation_keys = translation_keys::snapshot(&documents);
     out.styles = styles::snapshot(&documents);
     out.entrypoints = analysis::entrypoints(&out.symbols, &documents);
@@ -999,7 +1129,7 @@ fn snapshot_locked_view(
     out.overrides = inheritance::overrides(&out.symbols, &documents);
     out.file_imports = file_imports::edges(&documents);
     out.file_resources = file_resources::edges_with_targets(&documents, &out.file_resource_targets);
-    let binding_cache = resolution_cache::previous(conn, out.index_revision)?;
+    let binding_cache = resolution_cache::previous(r, out.index_revision)?;
     out.bound_references =
         resolution_cache::resolve(&out.symbols, &documents, binding_cache.as_ref(), false)?.edges;
     out.cargo_targets = rust_cargo::target_evidence(&documents);
@@ -1014,7 +1144,6 @@ fn snapshot_locked_view(
         .collect();
     Ok(out)
 }
-use duckdb::OptionalExt;
 
 #[derive(Debug, Default, Clone, Deserialize, schemars::JsonSchema)]
 pub struct CodeQuery {
@@ -1120,7 +1249,7 @@ impl CodeSnapshot {
                 })
                 .collect();
             return serde_json::json!({"items":edges.iter().take(limit).collect::<Vec<_>>(),"total":edges.len(),"truncated":edges.len()>limit,
-                "method_relations":{"items":overrides.iter().take(limit).collect::<Vec<_>>(),"total":overrides.len(),"truncated":overrides.len()>limit,"kind":"override_candidate","semantic_override_proven":false,"supported_syntax":["Python","JavaScript","TypeScript"]},
+                "method_relations":{"items":overrides.iter().take(limit).collect::<Vec<_>>(),"total":overrides.len(),"truncated":overrides.len()>limit,"kind":"override_candidate","semantic_override_proven":false,"supported_syntax":["Python","JavaScript","TypeScript","PHP"]},
                 "stale_documents":self.stale_documents,"unindexed_documents":self.unindexed_documents,"parse_errors":self.parse_errors});
         }
         if operation == "repo_map" {
@@ -1170,6 +1299,49 @@ impl CodeSnapshot {
             "unindexed_documents":self.unindexed_documents,"parse_errors":self.parse_errors,
             "resolution":"conservative_static_bindings"})
     }
+}
+
+#[cfg(test)]
+pub(crate) fn test_get_code_doc_payload(store: &Store, doc_id: &str) -> String {
+    let r = store.read().unwrap();
+    let rec = r.get_by_id("code_index_documents", doc_id).unwrap().unwrap();
+    req_str(&rec, "payload").unwrap().to_string()
+}
+
+#[cfg(test)]
+pub(crate) fn test_set_code_doc_payload(store: &Store, doc_id: &str, payload: &str) {
+    let mut w = store.write().unwrap();
+    w.upsert_by_id(
+        "code_index_documents",
+        doc_id,
+        RecBuilder::new()
+            .str("document_id", doc_id)
+            .str("payload", payload)
+            .build(),
+    )
+    .unwrap();
+}
+
+#[cfg(test)]
+pub(crate) fn test_get_rev_graph_json(store: &Store, rev_id: i64) -> String {
+    let r = store.read().unwrap();
+    let rec = r
+        .get_by_id("code_index_revisions", &rev_id.to_string())
+        .unwrap()
+        .unwrap();
+    req_str(&rec, "graph_json").unwrap().to_string()
+}
+
+#[cfg(test)]
+pub(crate) fn test_set_rev_graph_json(store: &Store, rev_id: i64, graph_json: &str) {
+    let mut w = store.write().unwrap();
+    let key = rev_id.to_string();
+    w.update_where(
+        "code_index_revisions",
+        lin::query::pred::eq("id", key.as_str()),
+        RecBuilder::new().str("graph_json", graph_json).build(),
+    )
+    .unwrap();
 }
 
 #[cfg(test)]
@@ -1477,19 +1649,21 @@ mod tests {
             .is_empty());
         // Cache format changes force a parse even when content is unchanged.
         {
-            let conn = store.lock().unwrap();
-            let payload: String = conn
-                .query_row(
-                    "SELECT payload FROM code_index_documents WHERE document_id='main'",
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap();
+            let payload: String = {
+                let r = store.read().unwrap();
+                let rec = r.get_by_id("code_index_documents", "main").unwrap().unwrap();
+                req_str(&rec, "payload").unwrap().to_string()
+            };
             let mut payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
             payload["version"] = serde_json::json!(1);
-            conn.execute(
-                "UPDATE code_index_documents SET payload=? WHERE document_id='main'",
-                [payload.to_string()],
+            let mut w = store.write().unwrap();
+            w.upsert_by_id(
+                "code_index_documents",
+                "main",
+                RecBuilder::new()
+                    .str("document_id", "main")
+                    .str("payload", payload.to_string())
+                    .build(),
             )
             .unwrap();
         }

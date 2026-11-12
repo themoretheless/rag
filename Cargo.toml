@@ -6,12 +6,12 @@ resolver = "2"
 [package]
 name = "rag-mcp"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 # MSRV: egui/eframe (rag-mcp-ui) declare rust-version 1.95, the highest in
 # Cargo.lock, so the workspace uses that floor. CI builds on stable (1.97 at time
 # of writing) and the `msrv` job in checks.yml runs `cargo check` on 1.95.
 rust-version = "1.95"
-description = "RAG MCP server backed by DuckDB"
+description = "RAG MCP server backed by lin"
 license = "MIT"
 readme = "README.md"
 
@@ -31,6 +31,14 @@ path = "src/bin/ingest_file.rs"
 name = "rag_gate"
 path = "src/bin/rag_gate.rs"
 
+[[bin]]
+name = "migrate_to_lin"
+path = "src/bin/migrate_to_lin.rs"
+
+[[bin]]
+name = "bench_duckdb_vs_lin"
+path = "src/bin/bench_duckdb_vs_lin.rs"
+
 [dependencies]
 tempfile = "3"
 rag-mcp-core = { path = "crates/rag-mcp-core", version = "0.1.0" }
@@ -42,6 +50,8 @@ axum = "0.8"
 blake3 = "1"
 chrono = { version = "0.4", features = ["serde"] }
 duckdb = { version = "1", features = ["bundled"] }
+rusqlite = { version = "0.42", features = ["bundled"] }
+lin = { git = "https://github.com/themoretheless/lin", branch = "release", version = "0.5.0", features = ["compress-zstd", "parallel"] }
 notify = "8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 ring = "0.17"
@@ -111,6 +121,9 @@ default = ["tokenizers"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
+
+[lints.clippy]
+collapsible_if = "allow"
 
 # Debug info dominates build output: every test and binary target statically
 # links bundled DuckDB. Line tables keep panic backtraces readable for our code;

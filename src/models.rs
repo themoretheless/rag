@@ -591,18 +591,6 @@ finding_codes! {
     }
 }
 
-impl duckdb::ToSql for DocumentKind {
-    fn to_sql(&self) -> duckdb::Result<duckdb::types::ToSqlOutput<'_>> {
-        Ok(duckdb::types::ToSqlOutput::from(self.as_str()))
-    }
-}
-
-impl duckdb::types::FromSql for DocumentKind {
-    fn column_result(value: duckdb::types::ValueRef<'_>) -> duckdb::types::FromSqlResult<Self> {
-        String::column_result(value).map(Self::from)
-    }
-}
-
 /// Parse a node kind at the MCP/store boundary, rejecting unknown values
 /// (`GRAPH_DESIGN.md` §1.1). The enum itself lives in `rag_mcp_core`.
 pub fn parse_node_kind(raw: &str) -> crate::error::Result<NodeKind> {

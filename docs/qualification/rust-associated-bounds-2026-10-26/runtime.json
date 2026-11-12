@@ -1,0 +1,1253 @@
+{
+  "status": "passed",
+  "binary_sha256": "17ffb90de46f54298382f9cbba95a91b3bc9be3709a1af1628cc8e45d1e01b30",
+  "fixture_sha256": {
+    "Cargo.toml": "458d1735e4063f1f6723b4e26c5edff0d84a764633c02c3d5f6cf59705ec42cf",
+    "src/lib.rs": "8941441f2967c09b5c7ed616c1604b22dbf55fbf9018458dca3e5b9a8fbea283"
+  },
+  "index_format": 78,
+  "runs": [
+    {
+      "phase": "alternate",
+      "selected": [
+        {
+          "expected": "Factory::make",
+          "edge": {
+            "candidates": [
+              "69e3f291-dc2e-49a7-863c-29f4343df9c9:301:make@eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+              "caller": "69e3f291-dc2e-49a7-863c-29f4343df9c9:718:run@eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+              "column": 8,
+              "content_hash": "a89825e6540dff325ddded7b3dc8a891ba54a6e7c6d7ffacf3531a823f5360aa",
+              "document_id": "69e3f291-dc2e-49a7-863c-29f4343df9c9",
+              "expression": "T::make",
+              "is_call": true,
+              "line": 33,
+              "name": "make",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/src/lib.rs",
+              "revision": 1,
+              "start_byte": 755
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "rust_trait_declaration"
+          },
+          "target": {
+            "build_context": "eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+            "content_hash": "a89825e6540dff325ddded7b3dc8a891ba54a6e7c6d7ffacf3531a823f5360aa",
+            "document_id": "69e3f291-dc2e-49a7-863c-29f4343df9c9",
+            "documentation_examined": true,
+            "end_byte": 319,
+            "end_line": 14,
+            "id": "69e3f291-dc2e-49a7-863c-29f4343df9c9:301:make@eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+            "kind": "function_signature_item",
+            "name": "make",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/src/lib.rs",
+            "qualified_name": "Factory::make",
+            "revision": 1,
+            "signature": "fn make() -> Self;",
+            "start_byte": 301,
+            "start_line": 14
+          }
+        },
+        {
+          "expected": "Factory::output",
+          "edge": {
+            "candidates": [
+              "69e3f291-dc2e-49a7-863c-29f4343df9c9:324:output@eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+              "caller": "69e3f291-dc2e-49a7-863c-29f4343df9c9:718:run@eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+              "column": 15,
+              "content_hash": "a89825e6540dff325ddded7b3dc8a891ba54a6e7c6d7ffacf3531a823f5360aa",
+              "document_id": "69e3f291-dc2e-49a7-863c-29f4343df9c9",
+              "expression": "T::make().output",
+              "is_call": true,
+              "line": 33,
+              "name": "output",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/src/lib.rs",
+              "revision": 1,
+              "start_byte": 755
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "rust_trait_declaration"
+          },
+          "target": {
+            "build_context": "eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+            "content_hash": "a89825e6540dff325ddded7b3dc8a891ba54a6e7c6d7ffacf3531a823f5360aa",
+            "document_id": "69e3f291-dc2e-49a7-863c-29f4343df9c9",
+            "documentation_examined": true,
+            "end_byte": 356,
+            "end_line": 15,
+            "id": "69e3f291-dc2e-49a7-863c-29f4343df9c9:324:output@eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+            "kind": "function_signature_item",
+            "name": "output",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/src/lib.rs",
+            "qualified_name": "Factory::output",
+            "revision": 1,
+            "signature": "fn output(self) -> Self::Output;",
+            "start_byte": 324,
+            "start_line": 15
+          }
+        },
+        {
+          "expected": "OtherDone::again",
+          "edge": {
+            "candidates": [
+              "69e3f291-dc2e-49a7-863c-29f4343df9c9:100:again@eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+              "caller": "69e3f291-dc2e-49a7-863c-29f4343df9c9:718:run@eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+              "column": 24,
+              "content_hash": "a89825e6540dff325ddded7b3dc8a891ba54a6e7c6d7ffacf3531a823f5360aa",
+              "document_id": "69e3f291-dc2e-49a7-863c-29f4343df9c9",
+              "expression": "T::make().output().again",
+              "is_call": true,
+              "line": 33,
+              "name": "again",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/src/lib.rs",
+              "revision": 1,
+              "start_byte": 755
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "rust_trait_declaration"
+          },
+          "target": {
+            "build_context": "eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+            "content_hash": "a89825e6540dff325ddded7b3dc8a891ba54a6e7c6d7ffacf3531a823f5360aa",
+            "document_id": "69e3f291-dc2e-49a7-863c-29f4343df9c9",
+            "documentation_examined": true,
+            "end_byte": 123,
+            "end_line": 6,
+            "id": "69e3f291-dc2e-49a7-863c-29f4343df9c9:100:again@eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+            "kind": "function_signature_item",
+            "name": "again",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/src/lib.rs",
+            "qualified_name": "OtherDone::again",
+            "revision": 1,
+            "signature": "fn again(self) -> Self;",
+            "start_byte": 100,
+            "start_line": 6
+          }
+        },
+        {
+          "expected": "OtherDone::ready",
+          "edge": {
+            "candidates": [
+              "69e3f291-dc2e-49a7-863c-29f4343df9c9:128:ready@eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+              "caller": "69e3f291-dc2e-49a7-863c-29f4343df9c9:718:run@eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+              "column": 32,
+              "content_hash": "a89825e6540dff325ddded7b3dc8a891ba54a6e7c6d7ffacf3531a823f5360aa",
+              "document_id": "69e3f291-dc2e-49a7-863c-29f4343df9c9",
+              "expression": "T::make().output().again().ready",
+              "is_call": true,
+              "line": 33,
+              "name": "ready",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/src/lib.rs",
+              "revision": 1,
+              "start_byte": 755
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "rust_trait_declaration"
+          },
+          "target": {
+            "build_context": "eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+            "content_hash": "a89825e6540dff325ddded7b3dc8a891ba54a6e7c6d7ffacf3531a823f5360aa",
+            "document_id": "69e3f291-dc2e-49a7-863c-29f4343df9c9",
+            "documentation_examined": true,
+            "end_byte": 150,
+            "end_line": 7,
+            "id": "69e3f291-dc2e-49a7-863c-29f4343df9c9:128:ready@eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+            "kind": "function_signature_item",
+            "name": "ready",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/src/lib.rs",
+            "qualified_name": "OtherDone::ready",
+            "revision": 1,
+            "signature": "fn ready(&self) -> u8;",
+            "start_byte": 128,
+            "start_line": 7
+          }
+        }
+      ],
+      "indexed": {
+        "indexed": 2,
+        "unchanged": 0,
+        "unsupported": 0,
+        "parse_errors": [],
+        "index_revision": 1,
+        "revision_created": true,
+        "stage_timings": {
+          "contract_version": 1,
+          "run_id": "f8e75f9b-78a8-45df-9dc3-879a289f6ce1",
+          "lock_wait_ms": 0.0006670000000000001,
+          "source_load_decode_ms": 2.029792,
+          "cache_parse_serialize_ms": 8.636084,
+          "cache_replace_ms": 5.805708,
+          "revision_publish_ms": 19.392875,
+          "transaction_body_ms": 36.113459,
+          "before_metrics_write_ms": 36.114208000000005,
+          "documents_loaded": 2,
+          "cache_hits": 0,
+          "cache_misses": 2,
+          "unsupported_documents": 0,
+          "parse_error_documents": 0,
+          "commit_included": false,
+          "metrics_write_included": false,
+          "embedding_fts_included": false
+        },
+        "resolution": {
+          "contract_version": 1,
+          "documents_total": 2,
+          "documents_resolved": 2,
+          "documents_reused": 0,
+          "reference_sites_resolved": 37,
+          "reference_sites_reused": 0,
+          "rust_package_scopes": 1,
+          "project_fallback_scopes": 0,
+          "empty_reference_documents": 1,
+          "dependency_inputs_hashed": 2,
+          "invalid_cache_entries": 0,
+          "forced_full": false,
+          "cache_available": false,
+          "no_resolution_required": false,
+          "resolution_ms": 4.940291,
+          "equivalent_to_existing": null
+        },
+        "completion": {
+          "contract_version": 1,
+          "native_total_ms": 40.334666999999996,
+          "commit_ms": 1.681417,
+          "metrics_write_ms": 2.538625,
+          "commit_included": true,
+          "process_lifetime_peak_rss_bytes": 153403392
+        }
+      },
+      "warm": {
+        "indexed": 0,
+        "unchanged": 2,
+        "unsupported": 0,
+        "parse_errors": [],
+        "index_revision": 1,
+        "revision_created": false,
+        "stage_timings": {
+          "contract_version": 1,
+          "run_id": "69f012da-0156-4c1c-9741-ff1ffd632332",
+          "lock_wait_ms": 4.2e-05,
+          "source_load_decode_ms": 2.296084,
+          "cache_parse_serialize_ms": 1.3745829999999999,
+          "cache_replace_ms": 0.0018750000000000001,
+          "revision_publish_ms": 1.845417,
+          "transaction_body_ms": 5.676834,
+          "before_metrics_write_ms": 5.676958,
+          "documents_loaded": 2,
+          "cache_hits": 2,
+          "cache_misses": 0,
+          "unsupported_documents": 0,
+          "parse_error_documents": 0,
+          "commit_included": false,
+          "metrics_write_included": false,
+          "embedding_fts_included": false
+        },
+        "resolution": {
+          "contract_version": 1,
+          "documents_total": 0,
+          "documents_resolved": 0,
+          "documents_reused": 0,
+          "reference_sites_resolved": 0,
+          "reference_sites_reused": 0,
+          "rust_package_scopes": 0,
+          "project_fallback_scopes": 0,
+          "empty_reference_documents": 0,
+          "dependency_inputs_hashed": 0,
+          "invalid_cache_entries": 0,
+          "forced_full": false,
+          "cache_available": false,
+          "no_resolution_required": true,
+          "resolution_ms": 0.0,
+          "equivalent_to_existing": null
+        },
+        "completion": {
+          "contract_version": 1,
+          "native_total_ms": 8.535083,
+          "commit_ms": 0.7436670000000001,
+          "metrics_write_ms": 2.1138749999999997,
+          "commit_included": true,
+          "process_lifetime_peak_rss_bytes": 157958144
+        }
+      },
+      "stale": null,
+      "diff": null,
+      "compiler": {
+        "command": [
+          "cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/Cargo.toml",
+          "--no-default-features",
+          "--features",
+          "alternate"
+        ],
+        "exit_code": 0,
+        "stdout": "\nrunning 1 test\ntest values ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+        "stderr": "   Compiling associated-bounds-fixture v0.1.0 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.18s\n     Running unittests src/lib.rs (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/cargo-target/debug/build/associated-bounds-fixture/03f54ee3bf8fd1b0/out/associated_bounds_fixture-03f54ee3bf8fd1b0)\n   Doc-tests associated_bounds_fixture\n"
+      }
+    },
+    {
+      "phase": "default",
+      "selected": [
+        {
+          "expected": "Factory::make",
+          "edge": {
+            "candidates": [
+              "69e3f291-dc2e-49a7-863c-29f4343df9c9:301:make@90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+              "caller": "69e3f291-dc2e-49a7-863c-29f4343df9c9:718:run@90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+              "column": 8,
+              "content_hash": "a89825e6540dff325ddded7b3dc8a891ba54a6e7c6d7ffacf3531a823f5360aa",
+              "document_id": "69e3f291-dc2e-49a7-863c-29f4343df9c9",
+              "expression": "T::make",
+              "is_call": true,
+              "line": 33,
+              "name": "make",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/src/lib.rs",
+              "revision": 1,
+              "start_byte": 755
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "rust_trait_declaration"
+          },
+          "target": {
+            "build_context": "90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+            "content_hash": "a89825e6540dff325ddded7b3dc8a891ba54a6e7c6d7ffacf3531a823f5360aa",
+            "document_id": "69e3f291-dc2e-49a7-863c-29f4343df9c9",
+            "documentation_examined": true,
+            "end_byte": 319,
+            "end_line": 14,
+            "id": "69e3f291-dc2e-49a7-863c-29f4343df9c9:301:make@90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+            "kind": "function_signature_item",
+            "name": "make",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/src/lib.rs",
+            "qualified_name": "Factory::make",
+            "revision": 1,
+            "signature": "fn make() -> Self;",
+            "start_byte": 301,
+            "start_line": 14
+          }
+        },
+        {
+          "expected": "Factory::output",
+          "edge": {
+            "candidates": [
+              "69e3f291-dc2e-49a7-863c-29f4343df9c9:324:output@90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+              "caller": "69e3f291-dc2e-49a7-863c-29f4343df9c9:718:run@90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+              "column": 15,
+              "content_hash": "a89825e6540dff325ddded7b3dc8a891ba54a6e7c6d7ffacf3531a823f5360aa",
+              "document_id": "69e3f291-dc2e-49a7-863c-29f4343df9c9",
+              "expression": "T::make().output",
+              "is_call": true,
+              "line": 33,
+              "name": "output",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/src/lib.rs",
+              "revision": 1,
+              "start_byte": 755
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "rust_trait_declaration"
+          },
+          "target": {
+            "build_context": "90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+            "content_hash": "a89825e6540dff325ddded7b3dc8a891ba54a6e7c6d7ffacf3531a823f5360aa",
+            "document_id": "69e3f291-dc2e-49a7-863c-29f4343df9c9",
+            "documentation_examined": true,
+            "end_byte": 356,
+            "end_line": 15,
+            "id": "69e3f291-dc2e-49a7-863c-29f4343df9c9:324:output@90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+            "kind": "function_signature_item",
+            "name": "output",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/src/lib.rs",
+            "qualified_name": "Factory::output",
+            "revision": 1,
+            "signature": "fn output(self) -> Self::Output;",
+            "start_byte": 324,
+            "start_line": 15
+          }
+        },
+        {
+          "expected": "Done::again",
+          "edge": {
+            "candidates": [
+              "69e3f291-dc2e-49a7-863c-29f4343df9c9:21:again@90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+              "caller": "69e3f291-dc2e-49a7-863c-29f4343df9c9:718:run@90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+              "column": 24,
+              "content_hash": "a89825e6540dff325ddded7b3dc8a891ba54a6e7c6d7ffacf3531a823f5360aa",
+              "document_id": "69e3f291-dc2e-49a7-863c-29f4343df9c9",
+              "expression": "T::make().output().again",
+              "is_call": true,
+              "line": 33,
+              "name": "again",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/src/lib.rs",
+              "revision": 1,
+              "start_byte": 755
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "rust_trait_declaration"
+          },
+          "target": {
+            "build_context": "90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+            "content_hash": "a89825e6540dff325ddded7b3dc8a891ba54a6e7c6d7ffacf3531a823f5360aa",
+            "document_id": "69e3f291-dc2e-49a7-863c-29f4343df9c9",
+            "documentation_examined": true,
+            "end_byte": 44,
+            "end_line": 2,
+            "id": "69e3f291-dc2e-49a7-863c-29f4343df9c9:21:again@90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+            "kind": "function_signature_item",
+            "name": "again",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/src/lib.rs",
+            "qualified_name": "Done::again",
+            "revision": 1,
+            "signature": "fn again(self) -> Self;",
+            "start_byte": 21,
+            "start_line": 2
+          }
+        },
+        {
+          "expected": "Done::ready",
+          "edge": {
+            "candidates": [
+              "69e3f291-dc2e-49a7-863c-29f4343df9c9:49:ready@90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+              "caller": "69e3f291-dc2e-49a7-863c-29f4343df9c9:718:run@90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+              "column": 32,
+              "content_hash": "a89825e6540dff325ddded7b3dc8a891ba54a6e7c6d7ffacf3531a823f5360aa",
+              "document_id": "69e3f291-dc2e-49a7-863c-29f4343df9c9",
+              "expression": "T::make().output().again().ready",
+              "is_call": true,
+              "line": 33,
+              "name": "ready",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/src/lib.rs",
+              "revision": 1,
+              "start_byte": 755
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "rust_trait_declaration"
+          },
+          "target": {
+            "build_context": "90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+            "content_hash": "a89825e6540dff325ddded7b3dc8a891ba54a6e7c6d7ffacf3531a823f5360aa",
+            "document_id": "69e3f291-dc2e-49a7-863c-29f4343df9c9",
+            "documentation_examined": true,
+            "end_byte": 71,
+            "end_line": 3,
+            "id": "69e3f291-dc2e-49a7-863c-29f4343df9c9:49:ready@90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+            "kind": "function_signature_item",
+            "name": "ready",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/src/lib.rs",
+            "qualified_name": "Done::ready",
+            "revision": 1,
+            "signature": "fn ready(&self) -> u8;",
+            "start_byte": 49,
+            "start_line": 3
+          }
+        }
+      ],
+      "indexed": {
+        "indexed": 1,
+        "unchanged": 1,
+        "unsupported": 0,
+        "parse_errors": [],
+        "index_revision": 2,
+        "revision_created": true,
+        "stage_timings": {
+          "contract_version": 1,
+          "run_id": "a43cae70-0fae-4b50-beab-0886c5a92580",
+          "lock_wait_ms": 0.000417,
+          "source_load_decode_ms": 1.7667920000000001,
+          "cache_parse_serialize_ms": 1.345667,
+          "cache_replace_ms": 3.233292,
+          "revision_publish_ms": 28.097709,
+          "transaction_body_ms": 34.640917,
+          "before_metrics_write_ms": 34.641417000000004,
+          "documents_loaded": 2,
+          "cache_hits": 1,
+          "cache_misses": 1,
+          "unsupported_documents": 0,
+          "parse_error_documents": 0,
+          "commit_included": false,
+          "metrics_write_included": false,
+          "embedding_fts_included": false
+        },
+        "resolution": {
+          "contract_version": 1,
+          "documents_total": 2,
+          "documents_resolved": 2,
+          "documents_reused": 0,
+          "reference_sites_resolved": 39,
+          "reference_sites_reused": 0,
+          "rust_package_scopes": 1,
+          "project_fallback_scopes": 0,
+          "empty_reference_documents": 1,
+          "dependency_inputs_hashed": 2,
+          "invalid_cache_entries": 0,
+          "forced_full": false,
+          "cache_available": true,
+          "no_resolution_required": false,
+          "resolution_ms": 4.504333999999999,
+          "equivalent_to_existing": null
+        },
+        "completion": {
+          "contract_version": 1,
+          "native_total_ms": 38.815000000000005,
+          "commit_ms": 1.8610829999999998,
+          "metrics_write_ms": 2.312167,
+          "commit_included": true,
+          "process_lifetime_peak_rss_bytes": 194150400
+        }
+      },
+      "warm": {
+        "indexed": 0,
+        "unchanged": 2,
+        "unsupported": 0,
+        "parse_errors": [],
+        "index_revision": 2,
+        "revision_created": false,
+        "stage_timings": {
+          "contract_version": 1,
+          "run_id": "34172745-b111-4558-b9bd-7a353181bd4d",
+          "lock_wait_ms": 0.00025,
+          "source_load_decode_ms": 2.001833,
+          "cache_parse_serialize_ms": 1.331292,
+          "cache_replace_ms": 0.001834,
+          "revision_publish_ms": 1.7897500000000002,
+          "transaction_body_ms": 5.3622499999999995,
+          "before_metrics_write_ms": 5.362583,
+          "documents_loaded": 2,
+          "cache_hits": 2,
+          "cache_misses": 0,
+          "unsupported_documents": 0,
+          "parse_error_documents": 0,
+          "commit_included": false,
+          "metrics_write_included": false,
+          "embedding_fts_included": false
+        },
+        "resolution": {
+          "contract_version": 1,
+          "documents_total": 0,
+          "documents_resolved": 0,
+          "documents_reused": 0,
+          "reference_sites_resolved": 0,
+          "reference_sites_reused": 0,
+          "rust_package_scopes": 0,
+          "project_fallback_scopes": 0,
+          "empty_reference_documents": 0,
+          "dependency_inputs_hashed": 0,
+          "invalid_cache_entries": 0,
+          "forced_full": false,
+          "cache_available": false,
+          "no_resolution_required": true,
+          "resolution_ms": 0.0,
+          "equivalent_to_existing": null
+        },
+        "completion": {
+          "contract_version": 1,
+          "native_total_ms": 8.525542,
+          "commit_ms": 0.7641669999999999,
+          "metrics_write_ms": 2.398542,
+          "commit_included": true,
+          "process_lifetime_peak_rss_bytes": 195149824
+        }
+      },
+      "stale": {
+        "binding_diagnostics": [
+          {
+            "code": "RUST_MANIFEST_BOUNDARY_UNVERIFIED",
+            "document_id": "e92236e2-cb01-4164-a6a8-0fdb92f61e70",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/Cargo.toml"
+          },
+          {
+            "code": "RUST_BUILD_MANIFEST_UNVERIFIED",
+            "document_id": "69e3f291-dc2e-49a7-863c-29f4343df9c9"
+          }
+        ],
+        "index_rev": 1,
+        "items": [
+          {
+            "candidates": [],
+            "provenance": "derived",
+            "reference": {
+              "caller": "69e3f291-dc2e-49a7-863c-29f4343df9c9:718:run",
+              "column": 8,
+              "content_hash": "a89825e6540dff325ddded7b3dc8a891ba54a6e7c6d7ffacf3531a823f5360aa",
+              "document_id": "69e3f291-dc2e-49a7-863c-29f4343df9c9",
+              "expression": "T::make",
+              "is_call": true,
+              "line": 33,
+              "name": "make",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/src/lib.rs",
+              "revision": 1,
+              "start_byte": 755
+            },
+            "resolution": "unresolved",
+            "resolution_basis": "RUST_BUILD_MANIFEST_UNVERIFIED"
+          },
+          {
+            "candidates": [],
+            "provenance": "derived",
+            "reference": {
+              "caller": "69e3f291-dc2e-49a7-863c-29f4343df9c9:718:run",
+              "column": 15,
+              "content_hash": "a89825e6540dff325ddded7b3dc8a891ba54a6e7c6d7ffacf3531a823f5360aa",
+              "document_id": "69e3f291-dc2e-49a7-863c-29f4343df9c9",
+              "expression": "T::make().output",
+              "is_call": true,
+              "line": 33,
+              "name": "output",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/src/lib.rs",
+              "revision": 1,
+              "start_byte": 755
+            },
+            "resolution": "unresolved",
+            "resolution_basis": "RUST_BUILD_MANIFEST_UNVERIFIED"
+          },
+          {
+            "candidates": [],
+            "provenance": "derived",
+            "reference": {
+              "caller": "69e3f291-dc2e-49a7-863c-29f4343df9c9:718:run",
+              "column": 24,
+              "content_hash": "a89825e6540dff325ddded7b3dc8a891ba54a6e7c6d7ffacf3531a823f5360aa",
+              "document_id": "69e3f291-dc2e-49a7-863c-29f4343df9c9",
+              "expression": "T::make().output().again",
+              "is_call": true,
+              "line": 33,
+              "name": "again",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/src/lib.rs",
+              "revision": 1,
+              "start_byte": 755
+            },
+            "resolution": "unresolved",
+            "resolution_basis": "RUST_BUILD_MANIFEST_UNVERIFIED"
+          },
+          {
+            "candidates": [],
+            "provenance": "derived",
+            "reference": {
+              "caller": "69e3f291-dc2e-49a7-863c-29f4343df9c9:718:run",
+              "column": 32,
+              "content_hash": "a89825e6540dff325ddded7b3dc8a891ba54a6e7c6d7ffacf3531a823f5360aa",
+              "document_id": "69e3f291-dc2e-49a7-863c-29f4343df9c9",
+              "expression": "T::make().output().again().ready",
+              "is_call": true,
+              "line": 33,
+              "name": "ready",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/src/lib.rs",
+              "revision": 1,
+              "start_byte": 755
+            },
+            "resolution": "unresolved",
+            "resolution_basis": "RUST_BUILD_MANIFEST_UNVERIFIED"
+          }
+        ],
+        "matched_symbols": 1,
+        "parse_errors": [],
+        "resolution": "conservative_static_bindings",
+        "rust_build_contexts": [],
+        "rust_build_contexts_total": 0,
+        "stale_documents": [
+          "e92236e2-cb01-4164-a6a8-0fdb92f61e70"
+        ],
+        "total": 4,
+        "truncated": false,
+        "unindexed_documents": [],
+        "view": "fresh_subset_of_revision_inputs"
+      },
+      "diff": {
+        "after": 2,
+        "after_format_version": 78,
+        "analysis_format_changed": false,
+        "before": 1,
+        "before_format_version": 78,
+        "bodies_included": false,
+        "client_endpoint_relations_available": true,
+        "csharp_relations_available": true,
+        "css_url_classification_comparable": true,
+        "edge_semantics": "resolved_static_candidate_links",
+        "edges_added": [
+          "69e3f291-dc2e-49a7-863c-29f4343df9c9::run::function_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac -> 69e3f291-dc2e-49a7-863c-29f4343df9c9::Done::again::function_signature_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+          "69e3f291-dc2e-49a7-863c-29f4343df9c9::run::function_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac -> 69e3f291-dc2e-49a7-863c-29f4343df9c9::Done::ready::function_signature_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+          "69e3f291-dc2e-49a7-863c-29f4343df9c9::run::function_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac -> 69e3f291-dc2e-49a7-863c-29f4343df9c9::Factory::make::function_signature_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+          "69e3f291-dc2e-49a7-863c-29f4343df9c9::run::function_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac -> 69e3f291-dc2e-49a7-863c-29f4343df9c9::Factory::output::function_signature_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+        ],
+        "edges_added_total": 4,
+        "edges_removed": [
+          "69e3f291-dc2e-49a7-863c-29f4343df9c9::run::function_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8 -> 69e3f291-dc2e-49a7-863c-29f4343df9c9::Factory::make::function_signature_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+          "69e3f291-dc2e-49a7-863c-29f4343df9c9::run::function_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8 -> 69e3f291-dc2e-49a7-863c-29f4343df9c9::Factory::output::function_signature_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+          "69e3f291-dc2e-49a7-863c-29f4343df9c9::run::function_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8 -> 69e3f291-dc2e-49a7-863c-29f4343df9c9::OtherDone::again::function_signature_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+          "69e3f291-dc2e-49a7-863c-29f4343df9c9::run::function_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8 -> 69e3f291-dc2e-49a7-863c-29f4343df9c9::OtherDone::ready::function_signature_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+        ],
+        "edges_removed_total": 4,
+        "file_changes_total": 1,
+        "file_import_relations_available": true,
+        "file_resource_relations_available": true,
+        "files": [
+          {
+            "after": {
+              "hash": "a43fdeda4f15691bb1fb3c3c1926c1d811e92df717b03f8e3466e69e9f7d15df",
+              "id": "e92236e2-cb01-4164-a6a8-0fdb92f61e70",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/Cargo.toml",
+              "project": "fixture",
+              "revision": 2
+            },
+            "before": {
+              "hash": "05a16b59d2e1a695e73cbcb51b5ad9d19765e657f6faa142423709db1051bbfd",
+              "id": "e92236e2-cb01-4164-a6a8-0fdb92f61e70",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/Cargo.toml",
+              "project": "fixture",
+              "revision": 1
+            },
+            "kind": "changed"
+          }
+        ],
+        "immutable": true,
+        "inline_style_relations_available": true,
+        "method_relations_available": true,
+        "perl_relations_available": true,
+        "php_inheritance_comparison": {
+          "after_available": true,
+          "available": true,
+          "before_available": true,
+          "source_semantic_change_proven": false
+        },
+        "php_name_binding_comparison": {
+          "after_available": true,
+          "available": true,
+          "before_available": true,
+          "relevant": false,
+          "scope": "captured_syntactic_candidates_not_runtime_load_or_dispatch",
+          "source_semantic_change_proven": false
+        },
+        "php_trait_context_comparison": {
+          "after_available": true,
+          "available": true,
+          "before_available": true,
+          "context_correlation_proven": false,
+          "source_semantic_change_proven": false
+        },
+        "php_traits_comparison": {
+          "after_available": true,
+          "available": true,
+          "before_available": true,
+          "source_semantic_change_proven": false
+        },
+        "powershell_relations_available": true,
+        "project": "fixture",
+        "relations_added": [
+          {
+            "entrypoint_kind": "public_api",
+            "kind": "entrypoint",
+            "method": null,
+            "resolution": "resolved_static",
+            "route": null,
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::run::function_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "entrypoint_kind": "test_function",
+            "kind": "entrypoint",
+            "method": null,
+            "resolution": "resolved_static",
+            "route": null,
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::values::function_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "hierarchy_status": "complete_static",
+            "kind": "inheritance",
+            "relation": "implements",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::struct_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Factory::trait_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "hierarchy_status": "incomplete_or_invalid",
+            "kind": "inheritance",
+            "relation": "implements",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::User::struct_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Done::trait_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "hierarchy_status": "incomplete_or_invalid",
+            "kind": "inheritance",
+            "relation": "implements",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::User::struct_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::OtherDone::trait_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::<module>",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Done::trait_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::<module>",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Factory::trait_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::<module>",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::OtherDone::trait_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::<module>",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::struct_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::<module>",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::User::struct_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Factory::trait_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Done::trait_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::Output::type_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::User::struct_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::make::function_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::struct_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::output::function_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::Output::type_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::output::function_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::User::struct_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::run::function_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Factory::trait_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          }
+        ],
+        "relations_added_total": 16,
+        "relations_available": true,
+        "relations_removed": [
+          {
+            "entrypoint_kind": "public_api",
+            "kind": "entrypoint",
+            "method": null,
+            "resolution": "resolved_static",
+            "route": null,
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::run::function_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "entrypoint_kind": "test_function",
+            "kind": "entrypoint",
+            "method": null,
+            "resolution": "resolved_static",
+            "route": null,
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::values::function_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "hierarchy_status": "complete_static",
+            "kind": "inheritance",
+            "relation": "implements",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::struct_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Factory::trait_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "hierarchy_status": "incomplete_or_invalid",
+            "kind": "inheritance",
+            "relation": "implements",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::User::struct_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Done::trait_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "hierarchy_status": "incomplete_or_invalid",
+            "kind": "inheritance",
+            "relation": "implements",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::User::struct_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::OtherDone::trait_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::<module>",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Done::trait_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::<module>",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Factory::trait_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::<module>",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::OtherDone::trait_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::<module>",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::struct_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::<module>",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::User::struct_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Factory::trait_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::OtherDone::trait_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::Output::type_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::User::struct_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::make::function_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::struct_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::output::function_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::Output::type_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::output::function_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::User::struct_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "69e3f291-dc2e-49a7-863c-29f4343df9c9::run::function_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+            "target": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Factory::trait_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          }
+        ],
+        "relations_removed_total": 16,
+        "relations_scope": "uses_key_candidates_non_call_candidates_file_import_candidates_file_resource_candidates_inheritance_method_override_candidates_entrypoints_unbound_routes_and_endpoint_references",
+        "relations_truncated": false,
+        "resource_target_relations_available": true,
+        "responsive_resource_relations_available": true,
+        "ruby_relations_available": true,
+        "rust_build_contexts": {
+          "after": [
+            {
+              "available": true,
+              "cfg_flags": [],
+              "cfg_flags_total": 0,
+              "cfg_flags_truncated": false,
+              "cfg_values": {},
+              "cfg_values_truncated": false,
+              "compiler_verified": false,
+              "configuration_id": "90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac",
+              "default_features": true,
+              "dependency_feature_forwarding_verified": true,
+              "disabled_conditions": 2,
+              "excluded_source_files": 0,
+              "features": [],
+              "features_total": 0,
+              "features_truncated": false,
+              "manifest_hash": "a43fdeda4f15691bb1fb3c3c1926c1d811e92df717b03f8e3466e69e9f7d15df",
+              "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/Cargo.toml",
+              "manifest_revision": 2,
+              "multi_target_instantiation": false,
+              "project": "fixture",
+              "scope": "one_explicit_compilation_target_per_package",
+              "target_kind": "lib",
+              "target_name": null,
+              "target_triple": null,
+              "unknown_conditions": 0
+            }
+          ],
+          "after_total": 1,
+          "available": true,
+          "before": [
+            {
+              "available": true,
+              "cfg_flags": [],
+              "cfg_flags_total": 0,
+              "cfg_flags_truncated": false,
+              "cfg_values": {},
+              "cfg_values_truncated": false,
+              "compiler_verified": false,
+              "configuration_id": "eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8",
+              "default_features": true,
+              "dependency_feature_forwarding_verified": true,
+              "disabled_conditions": 2,
+              "excluded_source_files": 0,
+              "features": [
+                "alternate"
+              ],
+              "features_total": 1,
+              "features_truncated": false,
+              "manifest_hash": "05a16b59d2e1a695e73cbcb51b5ad9d19765e657f6faa142423709db1051bbfd",
+              "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/Cargo.toml",
+              "manifest_revision": 1,
+              "multi_target_instantiation": false,
+              "project": "fixture",
+              "scope": "one_explicit_compilation_target_per_package",
+              "target_kind": "lib",
+              "target_name": null,
+              "target_triple": null,
+              "unknown_conditions": 0
+            }
+          ],
+          "before_total": 1,
+          "changed": true,
+          "truncated": false
+        },
+        "schema_diff": {
+          "after_diagnostics": [],
+          "after_diagnostics_total": 0,
+          "available": true,
+          "before_diagnostics": [],
+          "before_diagnostics_total": 0,
+          "constraint_changes_available": true,
+          "expression_changes_available": true,
+          "expression_comparison": "canonical_sql_ast_text_not_semantic_equivalence",
+          "items": [],
+          "live_database_verified": false,
+          "replay_performed": false,
+          "scope": "derived_table_columns_and_completeness",
+          "total": 0,
+          "truncated": false
+        },
+        "symbol_changes_total": 36,
+        "symbols": [
+          {
+            "kind": "added",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Done::again::function_signature_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Done::again::function_signature_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Done::ready::function_signature_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Done::ready::function_signature_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Done::trait_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Done::trait_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Factory::make::function_signature_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Factory::make::function_signature_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Factory::output::function_signature_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Factory::output::function_signature_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Factory::trait_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Factory::trait_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::OtherDone::again::function_signature_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::OtherDone::again::function_signature_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::OtherDone::ready::function_signature_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::OtherDone::ready::function_signature_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::OtherDone::trait_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::OtherDone::trait_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::Output::type_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::Output::type_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::make::function_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::make::function_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::output::function_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::output::function_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::struct_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::Producer::struct_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::User::again::function_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::User::again::function_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::User::ready::function_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::User::ready::function_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::User::struct_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::User::struct_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::run::function_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::run::function_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::values::function_item::build:90750d97f7615e65f7f769591880a0dfe866759cc0d2bb0ca6f3ca7ec2b226ac"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "69e3f291-dc2e-49a7-863c-29f4343df9c9::values::function_item::build:eeac15c1d23d19da2575985baa675e68aac3bceaa44599c7b2f1a27575684db8"
+          }
+        ],
+        "translation_key_comparison": {
+          "absence_proven": false,
+          "available": true,
+          "comparison": "source_owner_key_syntax_kind_and_occurrence_count_ignore_position_only_changes",
+          "complete_for_supported_documents": true,
+          "eligible_documents": 0,
+          "excluded_documents": [],
+          "excluded_documents_total": 0,
+          "excluded_documents_truncated": false
+        },
+        "translation_key_relations_available": true,
+        "truncated": false
+      },
+      "compiler": {
+        "command": [
+          "cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source/Cargo.toml",
+          "--no-default-features"
+        ],
+        "exit_code": 0,
+        "stdout": "\nrunning 1 test\ntest values ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+        "stderr": "   Compiling associated-bounds-fixture v0.1.0 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/source)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.10s\n     Running unittests src/lib.rs (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-h10nubni/cargo-target/debug/build/associated-bounds-fixture/0269cb588720240d/out/associated_bounds_fixture-0269cb588720240d)\n   Doc-tests associated_bounds_fixture\n"
+      }
+    }
+  ],
+  "limitations": [
+    "trait declaration candidates, not concrete dispatch; GAT/generic-trait bounds unsupported"
+  ]
+}

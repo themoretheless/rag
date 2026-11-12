@@ -101,8 +101,8 @@ impl Store {
     /// invalidate one vector snapshot and force one lexical rebuild, but it can
     /// never publish stale BM25 rows as current.
     pub(super) fn mark_fts_dirty_for_retry(&self) -> Result<()> {
-        let conn = self.lock()?;
-        crate::db::fts::mark_fts_dirty(&conn)?;
+        let mut w = self.write()?;
+        crate::db::fts::mark_fts_dirty(&mut w)?;
         Ok(())
     }
 

@@ -829,7 +829,8 @@ pub(super) fn resolve_document(
     let resolver = Resolver::new(doc, docs);
     doc.references.iter().map(|r|{
         let mut candidates=doc.perl.as_ref().unwrap().sites.get(&format!("{}:{}",r.start_byte,r.is_call)).map_or_else(Vec::new,|s|resolver.candidates(r,s));candidates.sort();candidates.dedup();
-        CallEdge {reference:r.clone(),resolution:match candidates.len(){0=>"unresolved",1=>"resolved_static",_=>"ambiguous"}.into(),candidates,provenance:"derived",resolution_basis:"perl_captured_package_or_lexical_candidates;INC_exports_symbol_table_runtime_unverified".into()}
+        CallEdge {
+            context_evidence: None,reference:r.clone(),resolution:match candidates.len(){0=>"unresolved",1=>"resolved_static",_=>"ambiguous"}.into(),candidates,provenance:"derived",resolution_basis:"perl_captured_package_or_lexical_candidates;INC_exports_symbol_table_runtime_unverified".into()}
     }).collect()
 }
 pub(super) fn edges(
@@ -1242,22 +1243,10 @@ mod tests {
         store.upsert_document(&child).unwrap();
         store.index_code().unwrap();
         assert_eq!(store.code_index_diff(&query).unwrap(), diff);
-        let conn = store.lock().unwrap();
-        let raw: String = conn
-            .query_row(
-                "SELECT graph_json FROM code_index_revisions WHERE id=1",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let raw = crate::code_index::test_get_rev_graph_json(&store, 1);
         let mut graph: serde_json::Value = serde_json::from_str(&raw).unwrap();
         graph.as_object_mut().unwrap().remove("perl_syntax_format");
-        conn.execute(
-            "UPDATE code_index_revisions SET graph_json=? WHERE id=1",
-            [graph.to_string()],
-        )
-        .unwrap();
-        drop(conn);
+        crate::code_index::test_set_rev_graph_json(&store, 1, &graph.to_string());
         let legacy = store.code_index_diff(&query).unwrap();
         assert_eq!(legacy["perl_relations_available"], false);
         assert!(!legacy["relations_removed"]

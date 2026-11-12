@@ -1,70 +1,47 @@
 //! Wiki index catalog: upsert, rebuild, field updates and markdown rendering.
 
 use super::*;
+use crate::db::lin_engine::cell_str;
 
 impl Store {
     /// Upsert a wiki index catalog entry (by primary key `id` or by `slug`).
     pub fn upsert_wiki_index_entry(&self, entry: &WikiIndexEntry) -> Result<()> {
-        let conn = self.lock()?;
-        upsert_wiki_index_entry_locked(&conn, entry)
+        let mut w = self.write()?;
+        upsert_wiki_index_entry_locked(&mut w, entry)
     }
 
     /// List all wiki index entries (catalog).
     pub fn list_wiki_index(&self) -> Result<Vec<WikiIndexEntry>> {
-        let conn = self.lock()?;
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT id,
-                   COALESCE(slug, COALESCE(label, id)),
-                   COALESCE(title, COALESCE(label, id)),
-                   COALESCE(kind, 'wiki'),
-                   category, summary,
-                   COALESCE(page_id, document_id),
-                   CAST(updated_at AS VARCHAR)
-            FROM wiki_index
-            ORDER BY COALESCE(title, label, id) ASC
-            "#,
-        )?;
-        let out = crate::db::rows::query_vec(&mut stmt, [], row_to_wiki_index)?;
+        let r = self.read()?;
+        let mut out = r.filter_map_rows("wiki_index", |row| Ok(Some(rows::wiki_index_entry(row)?)))?;
+        out.sort_by(|a, b| a.title.cmp(&b.title).then_with(|| a.id.cmp(&b.id)));
         Ok(out)
     }
 
     /// Find wiki index entry by slug.
     pub fn get_wiki_index_by_slug(&self, slug: &str) -> Result<Option<WikiIndexEntry>> {
-        let conn = self.lock()?;
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT id,
-                   COALESCE(slug, COALESCE(label, id)),
-                   COALESCE(title, COALESCE(label, id)),
-                   COALESCE(kind, 'wiki'),
-                   category, summary,
-                   COALESCE(page_id, document_id),
-                   CAST(updated_at AS VARCHAR)
-            FROM wiki_index
-            WHERE slug = ? OR label = ? OR id = ?
-            LIMIT 1
-            "#,
-        )?;
-        let mut rows = stmt.query(params![slug, slug, slug])?;
-        match rows.next()? {
-            Some(row) => Ok(Some(row_to_wiki_index(row)?)),
-            None => Ok(None),
+        let r = self.read()?;
+        if let Some(row) = r.get_by_id("wiki_index", slug)? {
+            return Ok(Some(rows::wiki_index_entry(&row)?));
         }
+        let mut found = None;
+        r.scan_each("wiki_index", |row| {
+            if cell_str(row, "slug") == Some(slug) || cell_str(row, "label") == Some(slug) {
+                found = Some(rows::wiki_index_entry(row)?);
+                return Ok(false);
+            }
+            Ok(true)
+        })?;
+        Ok(found)
     }
 
     /// Delete wiki index entry by id.
     pub fn delete_wiki_index_entry(&self, id: &str) -> Result<bool> {
-        let conn = self.lock()?;
-        let n = conn.execute("DELETE FROM wiki_index WHERE id = ?", params![id])?;
-        Ok(n > 0)
+        let mut w = self.write()?;
+        w.delete_by_id("wiki_index", id)
     }
 
     /// Clear and rebuild wiki_index from all `layer=wiki` documents.
-    ///
-    /// One catalog row per wiki page with a one-line summary taken from content
-    /// (or `metadata_json.summary` when present). Category from
-    /// `metadata_json.category` when set.
     pub fn rebuild_wiki_index_from_docs(&self) -> Result<usize> {
         let docs = self.list_documents_by_layer("wiki")?;
         let now = Utc::now();
@@ -91,10 +68,16 @@ impl Store {
                 }
             })
             .collect();
-        // Clear and refill atomically: readers never observe an empty or
-        // half-built catalog, and the rebuild is one commit instead of N.
+
         self.with_tx(|tx| {
-            tx.execute("DELETE FROM wiki_index", [])?;
+            let mut existing_ids = Vec::new();
+            tx.scan_each("wiki_index", |row| {
+                if let Some(id) = cell_str(row, "id") {
+                    existing_ids.push(id.to_string());
+                }
+                Ok(true)
+            })?;
+            tx.delete_by_ids("wiki_index", &existing_ids)?;
             for entry in &entries {
                 upsert_wiki_index_entry_locked(tx, entry)?;
             }
@@ -103,9 +86,6 @@ impl Store {
     }
 
     /// Create or merge-update a catalog entry keyed by `slug`.
-    ///
-    /// Empty optional fields leave existing values unchanged. On insert, missing
-    /// title defaults to slug; kind defaults to `wiki`.
     pub fn update_wiki_index_entry_fields(
         &self,
         slug: &str,
@@ -211,11 +191,7 @@ impl Store {
         Ok(out)
     }
 
-    /// Index-first catalog lookup: rank `wiki_index` rows by simple term overlap
-    /// against slug / title / summary / category / kind (case-insensitive).
-    ///
-    /// Empty `query` returns catalog entries in title order (score 1.0), limited
-    /// by `limit`. Used by the `query_with_index` MCP tool.
+    /// Index-first catalog lookup: rank `wiki_index` rows by simple term overlap.
     pub fn query_wiki_index(
         &self,
         query: &str,
@@ -256,7 +232,6 @@ impl Store {
     }
 }
 
-/// Whitespace / punctuation tokenization for index query matching.
 pub(super) fn tokenize_index_query(query: &str) -> Vec<String> {
     query
         .split(|c: char| !c.is_alphanumeric())
@@ -266,9 +241,6 @@ pub(super) fn tokenize_index_query(query: &str) -> Vec<String> {
         .collect()
 }
 
-/// Field-weighted catalog score so top_k discriminates (slug > title > summary > kind).
-///
-/// Whole-token match (same tokenizer as query). Exact phrase on slug/title boosts hard.
 pub(super) fn score_index_entry(entry: &WikiIndexEntry, terms: &[String]) -> f32 {
     if terms.is_empty() {
         return 1.0;
@@ -303,7 +275,6 @@ pub(super) fn score_index_entry(entry: &WikiIndexEntry, terms: &[String]) -> f32
             score += 0.5;
             hit = true;
         }
-        // Substring on slug/title only (e.g. "spine" in "spine-tools")
         if !hit {
             if slug_lc.contains(t.as_str()) {
                 score += 2.0;
@@ -324,10 +295,8 @@ pub(super) fn score_index_entry(entry: &WikiIndexEntry, terms: &[String]) -> f32
         return 0.0;
     }
 
-    // Average per query term so longer queries do not dominate by raw sum alone.
     score /= terms.len() as f32;
 
-    // Full-phrase identity / containment boosts ranking head.
     let phrase = terms.join(" ");
     let slug_phrase = slug_tokens.join(" ");
     let title_phrase = title_tokens.join(" ");
@@ -336,7 +305,6 @@ pub(super) fn score_index_entry(entry: &WikiIndexEntry, terms: &[String]) -> f32
     } else if slug_lc.contains(&phrase) || title_lc.contains(&phrase) {
         score += 1.0;
     }
-    // Prefer covering all query terms.
     if terms_hit as usize == terms.len() {
         score += 0.5;
     }
@@ -347,13 +315,8 @@ pub(super) fn slugify(s: &str) -> String {
     shared_slugify(s, SlugPolicy::IndexLookup)
 }
 
-// ---------------------------------------------------------------------------
-// Wiki catalog listing: SQL filter/count/page + lean DTO map
-// (kept free of search ranking and CAS upsert paths)
-// ---------------------------------------------------------------------------
-
 pub(super) fn upsert_wiki_index_entry_locked(
-    conn: &Connection,
+    w: &mut impl LinWriter,
     entry: &WikiIndexEntry,
 ) -> Result<()> {
     let title = if entry.title.is_empty() {
@@ -364,39 +327,37 @@ pub(super) fn upsert_wiki_index_entry_locked(
     let label = title.clone();
     let page_id = entry.page_id.clone();
     let document_id = page_id.clone();
-    conn.execute(
-        r#"
-        INSERT OR REPLACE INTO wiki_index
-          (id, slug, title, label, kind, summary, category, document_id, page_id, updated_at)
-        VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP))
-        "#,
-        params![
-            entry.id,
-            entry.slug,
-            title,
-            label,
-            entry.kind,
-            entry.summary,
-            entry.category,
-            document_id,
-            page_id,
-            format_ts(entry.updated_at),
-        ],
-    )?;
-    Ok(())
-}
 
-pub(super) fn row_to_wiki_index(row: &duckdb::Row<'_>) -> Result<WikiIndexEntry> {
-    let updated_raw: String = row.get(7)?;
-    Ok(WikiIndexEntry {
-        id: row.get(0)?,
-        slug: row.get(1)?,
-        title: row.get(2)?,
-        kind: row.get(3)?,
-        category: row.get(4)?,
-        summary: row.get(5)?,
-        page_id: row.get(6)?,
-        updated_at: parse_ts(&updated_raw)?,
-    })
+    // Enforce unique `slug`: if a row with the same non-empty slug exists under another `id`, delete it first
+    // (mirroring SQL `UNIQUE(slug)` + `INSERT OR REPLACE`).
+    if !entry.slug.is_empty() {
+        let mut stale_ids = Vec::new();
+        w.scan_each("wiki_index", |row| {
+            if cell_str(row, "slug") == Some(entry.slug.as_str())
+                && cell_str(row, "id") != Some(entry.id.as_str())
+                && let Some(other_id) = cell_str(row, "id")
+            {
+                stale_ids.push(other_id.to_string());
+            }
+            Ok(true)
+        })?;
+        w.delete_by_ids("wiki_index", &stale_ids)?;
+    }
+
+    w.upsert_by_id(
+        "wiki_index",
+        &entry.id,
+        RecBuilder::new()
+            .str("id", &entry.id)
+            .str("slug", &entry.slug)
+            .str("title", title)
+            .str("label", label)
+            .str("kind", &entry.kind)
+            .opt_string("summary", &entry.summary)
+            .opt_string("category", &entry.category)
+            .opt_string("document_id", &document_id)
+            .opt_string("page_id", &page_id)
+            .str("updated_at", format_ts(entry.updated_at))
+            .build(),
+    )
 }

@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/Users/themoretheless/Documents/Sources/rag/scripts/smoke_rust_associated_bounds.py", line 88, in <module>
+    main()
+    ~~~~^^
+  File "/Users/themoretheless/Documents/Sources/rag/scripts/smoke_rust_associated_bounds.py", line 55, in main
+    assert len(edge["candidates"]) == 1, edge
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: {'candidates': [], 'provenance': 'derived', 'reference': {'build_context': '44b6eba67c4ac314475b1d7fb06846f1082c68951b8122cb8de66a9f72705b4f', 'caller': 'cb3c8820-ea54-414e-b38d-1135579be89a:718:run@44b6eba67c4ac314475b1d7fb06846f1082c68951b8122cb8de66a9f72705b4f', 'column': 8, 'content_hash': 'a89825e6540dff325ddded7b3dc8a891ba54a6e7c6d7ffacf3531a823f5360aa', 'document_id': 'cb3c8820-ea54-414e-b38d-1135579be89a', 'expression': 'T::make', 'is_call': True, 'line': 33, 'name': 'make', 'path': '/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-associated-bounds-si45acel/source/src/lib.rs', 'revision': 1, 'start_byte': 755}, 'resolution': 'unresolved', 'resolution_basis': 'RUST_CFG_NESTED_SEMANTICS_UNMODELED'}

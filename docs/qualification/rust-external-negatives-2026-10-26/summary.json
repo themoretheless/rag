@@ -1,0 +1,212 @@
+{
+  "contract_version": 1,
+  "status": "measured",
+  "original_cases_unchanged": true,
+  "original_observations_and_results_unchanged": true,
+  "identical_source_config_and_binary": true,
+  "native_mcp_parity": true,
+  "final_adapter_oracle_identity": true,
+  "binary_sha256": "172bde2c302ede19df0247c6b907d1710c9dc6013f1646a6e71cb23a35cbb91d",
+  "native_helper_sha256": "cca600b30661f9f0bdeece8e2d92d7ce3518d17a92219ff64dc895b9a074d41a",
+  "repositories": {
+    "itoa": {
+      "original_metrics": {
+        "labelled_sites": 9,
+        "local_positive_sites": 9,
+        "external_negative_sites": 0,
+        "true_positive": 9,
+        "false_positive": 0,
+        "false_negative": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "exact_sites": 9,
+        "exact_site_rate": 1.0
+      },
+      "external_negative_sites": 48,
+      "external_negative_evidence": {
+        "sites": 48,
+        "with_extracted_observation": 48,
+        "without_extracted_observation": 0,
+        "with_false_local_candidate": 0,
+        "limitation": "absence of a local candidate does not prove external-call extraction or external target resolution"
+      },
+      "expanded_metrics": {
+        "labelled_sites": 57,
+        "local_positive_sites": 9,
+        "external_negative_sites": 48,
+        "true_positive": 9,
+        "false_positive": 0,
+        "false_negative": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "exact_sites": 57,
+        "exact_site_rate": 1.0
+      },
+      "baseline_artifact_sha256": {
+        "docs/qualification/rust-raw-pointers-2026-10-26/controlled-itoa-after/report.json": "a381c41352673a0d078d901ee6a71b43171faddb8de91a9c518d6c9977dcb84f",
+        "docs/qualification/rust-raw-pointers-2026-10-26/controlled-itoa-after/scored-cases.json": "860cbf1c1589ce64a13c1ca093bc91fd78e6be906b5be14bb5f2242d3e17c8b7",
+        "docs/qualification/rust-raw-pointers-2026-10-26/controlled-itoa-after/oracle-labels.json": "871ec016fc3cf201ee9bfda017653a5de0a146fc85a2ff3fc0b53be9d3925ea1"
+      }
+    },
+    "ryu": {
+      "original_metrics": {
+        "labelled_sites": 95,
+        "local_positive_sites": 95,
+        "external_negative_sites": 0,
+        "true_positive": 93,
+        "false_positive": 0,
+        "false_negative": 2,
+        "precision": 1.0,
+        "recall": 0.9789473684210527,
+        "exact_sites": 93,
+        "exact_site_rate": 0.9789473684210527
+      },
+      "external_negative_sites": 142,
+      "external_negative_evidence": {
+        "sites": 142,
+        "with_extracted_observation": 142,
+        "without_extracted_observation": 0,
+        "with_false_local_candidate": 0,
+        "limitation": "absence of a local candidate does not prove external-call extraction or external target resolution"
+      },
+      "expanded_metrics": {
+        "labelled_sites": 237,
+        "local_positive_sites": 95,
+        "external_negative_sites": 142,
+        "true_positive": 93,
+        "false_positive": 0,
+        "false_negative": 2,
+        "precision": 1.0,
+        "recall": 0.9789473684210527,
+        "exact_sites": 235,
+        "exact_site_rate": 0.9915611814345991
+      },
+      "baseline_artifact_sha256": {
+        "docs/qualification/rust-raw-pointers-2026-10-26/controlled-ryu-after/report.json": "e3f94f8fc4adf9e6491ef5a61d0bfd4f1822bd5f47949ffff1ec7c39cf58be12",
+        "docs/qualification/rust-raw-pointers-2026-10-26/controlled-ryu-after/scored-cases.json": "c03db0d3673bbfc4824c74c3a5a9a91f47e6d405c68f8a143cb9c3d5aca634b2",
+        "docs/qualification/rust-raw-pointers-2026-10-26/controlled-ryu-after/oracle-labels.json": "adfa741d87aedfdd2ceada3297cb1605054b26aa842c242de2d16a26e1902494"
+      }
+    },
+    "memchr": {
+      "original_metrics": {
+        "labelled_sites": 466,
+        "local_positive_sites": 466,
+        "external_negative_sites": 0,
+        "true_positive": 357,
+        "false_positive": 0,
+        "false_negative": 109,
+        "precision": 1.0,
+        "recall": 0.7660944206008584,
+        "exact_sites": 357,
+        "exact_site_rate": 0.7660944206008584
+      },
+      "external_negative_sites": 423,
+      "external_negative_evidence": {
+        "sites": 423,
+        "with_extracted_observation": 418,
+        "without_extracted_observation": 5,
+        "with_false_local_candidate": 0,
+        "limitation": "absence of a local candidate does not prove external-call extraction or external target resolution"
+      },
+      "expanded_metrics": {
+        "labelled_sites": 889,
+        "local_positive_sites": 466,
+        "external_negative_sites": 423,
+        "true_positive": 357,
+        "false_positive": 0,
+        "false_negative": 109,
+        "precision": 1.0,
+        "recall": 0.7660944206008584,
+        "exact_sites": 780,
+        "exact_site_rate": 0.8773903262092239
+      },
+      "baseline_artifact_sha256": {
+        "docs/qualification/rust-raw-pointers-2026-10-26/controlled-memchr-after/report.json": "faced94c3c4782f056b48114bd550f813b1f7f2ff3d79df2d9a9c2c510d6a031",
+        "docs/qualification/rust-raw-pointers-2026-10-26/controlled-memchr-after/scored-cases.json": "3979aca365751636c75aad5ec5fbe3a47696360217a56cb3b695174e0b6c17a8",
+        "docs/qualification/rust-raw-pointers-2026-10-26/controlled-memchr-after/oracle-labels.json": "28405c58fb9976cccae8db48c47e737b5a67c0aa36629eb4b916bbfd4096d885"
+      }
+    }
+  },
+  "original_metrics": {
+    "labelled_sites": 570,
+    "local_positive_sites": 570,
+    "external_negative_sites": 0,
+    "true_positive": 459,
+    "false_positive": 0,
+    "false_negative": 111,
+    "precision": 1.0,
+    "recall": 0.8052631578947368,
+    "exact_sites": 459,
+    "exact_site_rate": 0.8052631578947368
+  },
+  "external_negatives": {
+    "sites": 613,
+    "with_extracted_observation": 608,
+    "without_extracted_observation": 5,
+    "false_local_candidates": 0,
+    "sites_with_false_local_candidate": 0,
+    "packages": {
+      "core": 611,
+      "alloc": 2
+    },
+    "missing_observations": [
+      {
+        "path": "src/vector.rs",
+        "range": [
+          365,
+          25,
+          365,
+          45
+        ],
+        "symbol": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core lib/core_arch/arm_shared/neon/generated/vreinterpretq_u16_u8()."
+      },
+      {
+        "path": "src/vector.rs",
+        "range": [
+          365,
+          46,
+          365,
+          56
+        ],
+        "symbol": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core lib/core_arch/arm_shared/neon/generated/vrev16q_u8()."
+      },
+      {
+        "path": "src/vector.rs",
+        "range": [
+          366,
+          23,
+          366,
+          34
+        ],
+        "symbol": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core lib/core_arch/arm_shared/neon/generated/vshrn_n_u16()."
+      },
+      {
+        "path": "src/vector.rs",
+        "range": [
+          367,
+          24,
+          367,
+          43
+        ],
+        "symbol": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core lib/core_arch/arm_shared/neon/generated/vreinterpret_u64_u8()."
+      },
+      {
+        "path": "src/vector.rs",
+        "range": [
+          369,
+          27,
+          369,
+          40
+        ],
+        "symbol": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core lib/core_arch/arm_shared/neon/generated/vget_lane_u64()."
+      }
+    ]
+  },
+  "limitations": [
+    "additive external-package negative labels; not an improvement in positive recall",
+    "no local candidate is not proof of external resolution or extraction",
+    "core/alloc references only; no broad third-party negative qualification",
+    "original RA error/exclusion/configuration limits remain; no compiler/runtime proof",
+    "no release performance or competitor-superiority evidence"
+  ]
+}

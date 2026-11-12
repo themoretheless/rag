@@ -24,7 +24,9 @@ mod tests {
     #[test]
     fn parse_bind_loopback_ipv4_ok_without_allow_remote() {
         let _g = ALLOW_REMOTE_LOCK.lock().unwrap();
-        std::env::remove_var("RAG_HTTP_ALLOW_REMOTE");
+        unsafe {
+            std::env::remove_var("RAG_HTTP_ALLOW_REMOTE");
+        }
         let addr = parse_bind("127.0.0.1:7432").unwrap().expect("some");
         assert_eq!(addr.ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
         assert_eq!(addr.port(), 7432);
@@ -51,7 +53,9 @@ mod tests {
     #[test]
     fn parse_bind_remote_denied_without_allow() {
         let _g = ALLOW_REMOTE_LOCK.lock().unwrap();
-        std::env::remove_var("RAG_HTTP_ALLOW_REMOTE");
+        unsafe {
+            std::env::remove_var("RAG_HTTP_ALLOW_REMOTE");
+        }
         let err = parse_bind("0.0.0.0:7432").unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("not loopback"), "{msg}");
@@ -62,25 +66,33 @@ mod tests {
     fn parse_bind_remote_allowed_when_env_truthy() {
         let _g = ALLOW_REMOTE_LOCK.lock().unwrap();
         for val in ["1", "true", "TRUE", "yes", "on", " Yes "] {
-            std::env::set_var("RAG_HTTP_ALLOW_REMOTE", val);
+            unsafe {
+                std::env::set_var("RAG_HTTP_ALLOW_REMOTE", val);
+            }
             let addr = parse_bind("0.0.0.0:9000")
                 .unwrap_or_else(|e| panic!("allow={val:?}: {e}"))
                 .expect("some");
             assert_eq!(addr.port(), 9000);
             assert!(!addr.ip().is_loopback());
         }
-        std::env::remove_var("RAG_HTTP_ALLOW_REMOTE");
+        unsafe {
+            std::env::remove_var("RAG_HTTP_ALLOW_REMOTE");
+        }
     }
 
     #[test]
     fn parse_bind_remote_denied_when_env_non_truthy() {
         let _g = ALLOW_REMOTE_LOCK.lock().unwrap();
         for val in ["0", "false", "no", "off", "", "maybe"] {
-            std::env::set_var("RAG_HTTP_ALLOW_REMOTE", val);
+            unsafe {
+                std::env::set_var("RAG_HTTP_ALLOW_REMOTE", val);
+            }
             let err = parse_bind("192.168.1.10:7432").unwrap_err();
             let msg = err.to_string();
             assert!(msg.contains("not loopback"), "allow={val:?}: {msg}");
         }
-        std::env::remove_var("RAG_HTTP_ALLOW_REMOTE");
+        unsafe {
+            std::env::remove_var("RAG_HTTP_ALLOW_REMOTE");
+        }
     }
 }

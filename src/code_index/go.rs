@@ -714,6 +714,7 @@ pub(super) fn resolve(
     candidates.sort_by_key(|s| &s.id);
     candidates.dedup_by_key(|s| &s.id);
     CallEdge {
+        context_evidence: None,
         reference: r.clone(),
         resolution: match candidates.len() {
             0 => "unresolved",

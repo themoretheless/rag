@@ -606,10 +606,17 @@ mod tests {
         s.inferred_relations = Some(infer(&s));
         s.validate_format().unwrap();
         let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("frozen.duckdb");
+        let path = root.path().join("frozen.lin");
         let store = Store::open(&path).unwrap();
         let save = |s: &Snapshot| {
-            store.lock().unwrap().execute("INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",duckdb::params![s.id,s.connection,s.captured_ms,serde_json::to_string(s).unwrap()]).unwrap();
+            store
+                .insert_external_db_snapshot(
+                    &s.id,
+                    &s.connection,
+                    s.captured_ms,
+                    &serde_json::to_string(s).unwrap(),
+                )
+                .unwrap();
         };
         save(&s);
         let q = Query {

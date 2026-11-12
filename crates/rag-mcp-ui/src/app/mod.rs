@@ -737,12 +737,12 @@ impl GraphApp {
 
     fn shell_read_only_source(&self) -> Option<&'static str> {
         match self.source.as_ref() {
-            Some(GraphSourceKind::LiveStore { .. }) => Some("duckdb · только чтение"),
+            Some(GraphSourceKind::LiveStore { .. }) => Some("lin · только чтение"),
             Some(GraphSourceKind::SnapshotFile { .. }) => Some("snapshot · только чтение"),
             Some(GraphSourceKind::VaultGraphJson { .. }) => Some("vault graph · только чтение"),
             Some(GraphSourceKind::HttpService { .. }) => None,
             None => match self.open.source.as_ref() {
-                Some(CliSource::Db(_)) => Some("duckdb · загрузка только для чтения"),
+                Some(CliSource::Db(_)) => Some("lin · загрузка только для чтения"),
                 Some(CliSource::Snapshot(_)) => Some("snapshot · загрузка только для чтения"),
                 Some(CliSource::Http(_)) | None => None,
             },

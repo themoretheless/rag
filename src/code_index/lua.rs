@@ -378,6 +378,7 @@ pub(super) fn resolve(doc: &IndexedDocument, r: &Reference) -> CallEdge {
         "lua_global_import_or_environment_unverified"
     };
     CallEdge {
+        context_evidence: None,
         reference: r.clone(),
         resolution: if candidates.len() == 1 {
             "resolved_static"

@@ -1,0 +1,424 @@
+{
+  "contract_version": 1,
+  "identical_inputs_and_labels": true,
+  "native_mcp_parity": true,
+  "repositories": {
+    "itoa": {
+      "before": {
+        "metrics": {
+          "labelled_sites": 57,
+          "local_positive_sites": 9,
+          "external_negative_sites": 48,
+          "true_positive": 9,
+          "false_positive": 0,
+          "false_negative": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "exact_sites": 57,
+          "exact_site_rate": 1.0
+        },
+        "metrics_by_syntax": {
+          "direct_call": {
+            "labelled_sites": 57,
+            "local_positive_sites": 9,
+            "external_negative_sites": 48,
+            "true_positive": 9,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "exact_sites": 57,
+            "exact_site_rate": 1.0
+          }
+        },
+        "binary_sha256": "1650abf294d2bc57585c5fd053556d9c39bf417950ab89cec3970aaa5adb89c3",
+        "native_capture_sha256": "d5e078e5626a3f05170959393681a44ebb76304f30eb3c7466074f78895991e6"
+      },
+      "after": {
+        "metrics": {
+          "labelled_sites": 57,
+          "local_positive_sites": 9,
+          "external_negative_sites": 48,
+          "true_positive": 9,
+          "false_positive": 0,
+          "false_negative": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "exact_sites": 57,
+          "exact_site_rate": 1.0
+        },
+        "metrics_by_syntax": {
+          "direct_call": {
+            "labelled_sites": 57,
+            "local_positive_sites": 9,
+            "external_negative_sites": 48,
+            "true_positive": 9,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "exact_sites": 57,
+            "exact_site_rate": 1.0
+          }
+        },
+        "binary_sha256": "17ffb90de46f54298382f9cbba95a91b3bc9be3709a1af1628cc8e45d1e01b30",
+        "native_capture_sha256": "b3e36f5931b41a594cda6cf6ecd01f7a632b6e165dc5193fd642a210af6e30da"
+      }
+    },
+    "ryu": {
+      "before": {
+        "metrics": {
+          "labelled_sites": 237,
+          "local_positive_sites": 95,
+          "external_negative_sites": 142,
+          "true_positive": 93,
+          "false_positive": 0,
+          "false_negative": 2,
+          "precision": 1.0,
+          "recall": 0.9789473684210527,
+          "exact_sites": 235,
+          "exact_site_rate": 0.9915611814345991
+        },
+        "metrics_by_syntax": {
+          "direct_call": {
+            "labelled_sites": 213,
+            "local_positive_sites": 71,
+            "external_negative_sites": 142,
+            "true_positive": 69,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 1.0,
+            "recall": 0.971830985915493,
+            "exact_sites": 211,
+            "exact_site_rate": 0.9906103286384976
+          },
+          "import": {
+            "labelled_sites": 24,
+            "local_positive_sites": 24,
+            "external_negative_sites": 0,
+            "true_positive": 24,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "exact_sites": 24,
+            "exact_site_rate": 1.0
+          }
+        },
+        "binary_sha256": "1650abf294d2bc57585c5fd053556d9c39bf417950ab89cec3970aaa5adb89c3",
+        "native_capture_sha256": "d5e078e5626a3f05170959393681a44ebb76304f30eb3c7466074f78895991e6"
+      },
+      "after": {
+        "metrics": {
+          "labelled_sites": 237,
+          "local_positive_sites": 95,
+          "external_negative_sites": 142,
+          "true_positive": 93,
+          "false_positive": 0,
+          "false_negative": 2,
+          "precision": 1.0,
+          "recall": 0.9789473684210527,
+          "exact_sites": 235,
+          "exact_site_rate": 0.9915611814345991
+        },
+        "metrics_by_syntax": {
+          "direct_call": {
+            "labelled_sites": 213,
+            "local_positive_sites": 71,
+            "external_negative_sites": 142,
+            "true_positive": 69,
+            "false_positive": 0,
+            "false_negative": 2,
+            "precision": 1.0,
+            "recall": 0.971830985915493,
+            "exact_sites": 211,
+            "exact_site_rate": 0.9906103286384976
+          },
+          "import": {
+            "labelled_sites": 24,
+            "local_positive_sites": 24,
+            "external_negative_sites": 0,
+            "true_positive": 24,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "exact_sites": 24,
+            "exact_site_rate": 1.0
+          }
+        },
+        "binary_sha256": "17ffb90de46f54298382f9cbba95a91b3bc9be3709a1af1628cc8e45d1e01b30",
+        "native_capture_sha256": "b3e36f5931b41a594cda6cf6ecd01f7a632b6e165dc5193fd642a210af6e30da"
+      }
+    },
+    "memchr": {
+      "before": {
+        "metrics": {
+          "labelled_sites": 889,
+          "local_positive_sites": 466,
+          "external_negative_sites": 423,
+          "true_positive": 365,
+          "false_positive": 0,
+          "false_negative": 101,
+          "precision": 1.0,
+          "recall": 0.7832618025751072,
+          "exact_sites": 788,
+          "exact_site_rate": 0.8863892013498312
+        },
+        "metrics_by_syntax": {
+          "direct_call": {
+            "labelled_sites": 829,
+            "local_positive_sites": 406,
+            "external_negative_sites": 423,
+            "true_positive": 343,
+            "false_positive": 0,
+            "false_negative": 63,
+            "precision": 1.0,
+            "recall": 0.8448275862068966,
+            "exact_sites": 766,
+            "exact_site_rate": 0.9240048250904704
+          },
+          "import": {
+            "labelled_sites": 15,
+            "local_positive_sites": 15,
+            "external_negative_sites": 0,
+            "true_positive": 15,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "exact_sites": 15,
+            "exact_site_rate": 1.0
+          },
+          "macro_token": {
+            "labelled_sites": 38,
+            "local_positive_sites": 38,
+            "external_negative_sites": 0,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 38,
+            "precision": null,
+            "recall": 0.0,
+            "exact_sites": 0,
+            "exact_site_rate": 0.0
+          },
+          "value_or_other": {
+            "labelled_sites": 7,
+            "local_positive_sites": 7,
+            "external_negative_sites": 0,
+            "true_positive": 7,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "exact_sites": 7,
+            "exact_site_rate": 1.0
+          }
+        },
+        "binary_sha256": "1650abf294d2bc57585c5fd053556d9c39bf417950ab89cec3970aaa5adb89c3",
+        "native_capture_sha256": "d5e078e5626a3f05170959393681a44ebb76304f30eb3c7466074f78895991e6"
+      },
+      "after": {
+        "metrics": {
+          "labelled_sites": 889,
+          "local_positive_sites": 466,
+          "external_negative_sites": 423,
+          "true_positive": 371,
+          "false_positive": 0,
+          "false_negative": 95,
+          "precision": 1.0,
+          "recall": 0.796137339055794,
+          "exact_sites": 794,
+          "exact_site_rate": 0.8931383577052868
+        },
+        "metrics_by_syntax": {
+          "direct_call": {
+            "labelled_sites": 829,
+            "local_positive_sites": 406,
+            "external_negative_sites": 423,
+            "true_positive": 349,
+            "false_positive": 0,
+            "false_negative": 57,
+            "precision": 1.0,
+            "recall": 0.8596059113300493,
+            "exact_sites": 772,
+            "exact_site_rate": 0.9312424607961399
+          },
+          "import": {
+            "labelled_sites": 15,
+            "local_positive_sites": 15,
+            "external_negative_sites": 0,
+            "true_positive": 15,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "exact_sites": 15,
+            "exact_site_rate": 1.0
+          },
+          "macro_token": {
+            "labelled_sites": 38,
+            "local_positive_sites": 38,
+            "external_negative_sites": 0,
+            "true_positive": 0,
+            "false_positive": 0,
+            "false_negative": 38,
+            "precision": null,
+            "recall": 0.0,
+            "exact_sites": 0,
+            "exact_site_rate": 0.0
+          },
+          "value_or_other": {
+            "labelled_sites": 7,
+            "local_positive_sites": 7,
+            "external_negative_sites": 0,
+            "true_positive": 7,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "exact_sites": 7,
+            "exact_site_rate": 1.0
+          }
+        },
+        "binary_sha256": "17ffb90de46f54298382f9cbba95a91b3bc9be3709a1af1628cc8e45d1e01b30",
+        "native_capture_sha256": "b3e36f5931b41a594cda6cf6ecd01f7a632b6e165dc5193fd642a210af6e30da"
+      }
+    }
+  },
+  "combined": {
+    "before": {
+      "metrics": {
+        "labelled_sites": 1183,
+        "local_positive_sites": 570,
+        "external_negative_sites": 613,
+        "true_positive": 467,
+        "false_positive": 0,
+        "false_negative": 103,
+        "precision": 1.0,
+        "recall": 0.8192982456140351,
+        "exact_sites": 1080,
+        "exact_site_rate": 0.9129332206255283
+      },
+      "metrics_by_syntax": {
+        "direct_call": {
+          "labelled_sites": 1099,
+          "local_positive_sites": 486,
+          "external_negative_sites": 613,
+          "true_positive": 421,
+          "false_positive": 0,
+          "false_negative": 65,
+          "precision": 1.0,
+          "recall": 0.8662551440329218,
+          "exact_sites": 1034,
+          "exact_site_rate": 0.9408553230209281
+        },
+        "import": {
+          "labelled_sites": 39,
+          "local_positive_sites": 39,
+          "external_negative_sites": 0,
+          "true_positive": 39,
+          "false_positive": 0,
+          "false_negative": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "exact_sites": 39,
+          "exact_site_rate": 1.0
+        },
+        "macro_token": {
+          "labelled_sites": 38,
+          "local_positive_sites": 38,
+          "external_negative_sites": 0,
+          "true_positive": 0,
+          "false_positive": 0,
+          "false_negative": 38,
+          "precision": null,
+          "recall": 0.0,
+          "exact_sites": 0,
+          "exact_site_rate": 0.0
+        },
+        "value_or_other": {
+          "labelled_sites": 7,
+          "local_positive_sites": 7,
+          "external_negative_sites": 0,
+          "true_positive": 7,
+          "false_positive": 0,
+          "false_negative": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "exact_sites": 7,
+          "exact_site_rate": 1.0
+        }
+      }
+    },
+    "after": {
+      "metrics": {
+        "labelled_sites": 1183,
+        "local_positive_sites": 570,
+        "external_negative_sites": 613,
+        "true_positive": 473,
+        "false_positive": 0,
+        "false_negative": 97,
+        "precision": 1.0,
+        "recall": 0.8298245614035088,
+        "exact_sites": 1086,
+        "exact_site_rate": 0.9180050718512257
+      },
+      "metrics_by_syntax": {
+        "direct_call": {
+          "labelled_sites": 1099,
+          "local_positive_sites": 486,
+          "external_negative_sites": 613,
+          "true_positive": 427,
+          "false_positive": 0,
+          "false_negative": 59,
+          "precision": 1.0,
+          "recall": 0.8786008230452675,
+          "exact_sites": 1040,
+          "exact_site_rate": 0.9463148316651502
+        },
+        "import": {
+          "labelled_sites": 39,
+          "local_positive_sites": 39,
+          "external_negative_sites": 0,
+          "true_positive": 39,
+          "false_positive": 0,
+          "false_negative": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "exact_sites": 39,
+          "exact_site_rate": 1.0
+        },
+        "macro_token": {
+          "labelled_sites": 38,
+          "local_positive_sites": 38,
+          "external_negative_sites": 0,
+          "true_positive": 0,
+          "false_positive": 0,
+          "false_negative": 38,
+          "precision": null,
+          "recall": 0.0,
+          "exact_sites": 0,
+          "exact_site_rate": 0.0
+        },
+        "value_or_other": {
+          "labelled_sites": 7,
+          "local_positive_sites": 7,
+          "external_negative_sites": 0,
+          "true_positive": 7,
+          "false_positive": 0,
+          "false_negative": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "exact_sites": 7,
+          "exact_site_rate": 1.0
+        }
+      }
+    }
+  },
+  "limitations": [
+    "language-server source-definition correspondence, not runtime or compiler proof",
+    "small library corpus; no representative whole-program precision/recall claim",
+    "same-source quality comparison only; performance and competitors unqualified"
+  ]
+}

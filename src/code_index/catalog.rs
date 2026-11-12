@@ -1,6 +1,6 @@
 //! Lean frozen manifests and captured project registry; never scans live files.
 use super::*;
-use duckdb::{Connection, OptionalExt};
+use crate::db::lin_engine::{cell_bool, cell_i64, cell_opt_string, cell_str, cell_string, LinReader};
 use std::collections::BTreeMap;
 
 #[derive(
@@ -39,7 +39,7 @@ fn scope(q: &CatalogQuery) -> Result<String> {
         &q.selection.path,
     ))?))
 }
-fn revision(conn: &Connection, q: &CatalogQuery, cursor: Option<&Cursor>) -> Result<Option<i64>> {
+fn revision(r: &impl LinReader, q: &CatalogQuery, cursor: Option<&Cursor>) -> Result<Option<i64>> {
     let selected = if let Some(c) = cursor {
         if q.selection.index_revision.is_some() && q.selection.index_revision != c.revision {
             return Err(AppError::Invalid(
@@ -50,17 +50,13 @@ fn revision(conn: &Connection, q: &CatalogQuery, cursor: Option<&Cursor>) -> Res
     } else if q.selection.index_revision.is_some() {
         q.selection.index_revision
     } else {
-        conn.query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| r.get(0))?
+        crate::analysis_tasks::latest_code_index_rev(r)?
     };
-    if let Some(id) = selected {
-        let exists: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM code_index_revisions WHERE id=?",
-            [id],
-            |r| r.get(0),
-        )?;
-        if exists != 1 {
-            return Err(AppError::not_found(format!("unknown index revision {id}")));
-        }
+    if let Some(id) = selected
+        && r.get_by_id("code_index_revisions", &id.to_string())?
+            .is_none()
+    {
+        return Err(AppError::not_found(format!("unknown index revision {id}")));
     }
     Ok(selected)
 }
@@ -80,54 +76,73 @@ fn cursor(
     })?)
 }
 fn files(
-    conn: &Connection,
+    r: &impl LinReader,
     q: &CatalogQuery,
     rev: Option<i64>,
     previous: Option<&Cursor>,
 ) -> Result<serde_json::Value> {
     let rev = rev.ok_or_else(|| AppError::not_found("run index_code or sync_sources first"))?;
-    let filter="f.index_revision=? AND (CAST(? AS VARCHAR) IS NULL OR f.project=?) AND (CAST(? AS VARCHAR) IS NULL OR f.document_id=?) AND (CAST(? AS VARCHAR) IS NULL OR f.path=?)";
     let s = &q.selection;
-    let total: i64 = conn.query_row(
-        &format!("SELECT COUNT(*) FROM code_index_revision_files f WHERE {filter}"),
-        params![
-            rev,
-            s.project,
-            s.project,
-            s.document_id,
-            s.document_id,
-            s.path,
-            s.path
-        ],
-        |r| r.get(0),
-    )?;
+    let mut matched = Vec::new();
+    for row in r.find_by_eq("code_index_revision_files", "index_revision", rev)? {
+        let proj = cell_opt_string(&row, "project");
+        if let Some(ref p) = s.project
+            && proj.as_deref() != Some(p.as_str())
+        {
+            continue;
+        }
+        let doc_id = cell_string(&row, "document_id");
+        if let Some(ref id) = s.document_id
+            && &doc_id != id
+        {
+            continue;
+        }
+        let path = cell_string(&row, "path");
+        if let Some(ref p) = s.path
+            && &path != p
+        {
+            continue;
+        }
+        let doc_rev = cell_i64(&row, "document_revision", 1);
+        let hash = cell_string(&row, "content_hash");
+        let syntax_indexed = cell_str(&row, "analysis_json").is_some();
+        matched.push((doc_id, path, proj, doc_rev, hash, syntax_indexed));
+    }
+    matched.sort_by(|a, b| a.0.cmp(&b.0));
+    let total = matched.len() as i64;
     let after = previous.map(|c| c.after.as_str());
     let limit = s.limit.unwrap_or(100).clamp(1, 1000);
-    let sql=format!("SELECT f.document_id,f.path,f.project,f.document_revision,f.content_hash,strlen(b.content),f.analysis_json IS NOT NULL,b.content IS NOT NULL FROM code_index_revision_files f LEFT JOIN code_index_source_blobs b ON b.content_hash=f.content_hash WHERE {filter} AND (CAST(? AS VARCHAR) IS NULL OR f.document_id>?) ORDER BY f.document_id LIMIT ?");
-    let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query(params![
-        rev,
-        s.project,
-        s.project,
-        s.document_id,
-        s.document_id,
-        s.path,
-        s.path,
-        after,
-        after,
-        (limit + 1) as i64
-    ])?;
-    let mut items = Vec::new();
-    while let Some(r) = rows.next()? {
-        items.push(serde_json::json!({"document_id":r.get::<_,String>(0)?,"path":r.get::<_,String>(1)?,"project":r.get::<_,Option<String>>(2)?,"document_revision":r.get::<_,i64>(3)?,"content_hash":r.get::<_,String>(4)?,"bytes":r.get::<_,Option<i64>>(5)?,"syntax_indexed":r.get::<_,bool>(6)?,"source_available":r.get::<_,bool>(7)?}));
+    let mut page = Vec::new();
+    for (doc_id, path, proj, doc_rev, hash, syntax_indexed) in matched {
+        if let Some(a) = after
+            && doc_id.as_str() <= a
+        {
+            continue;
+        }
+        let blob_bytes = r
+            .get_by_id("code_index_source_blobs", &hash)?
+            .and_then(|b| cell_str(&b, "content").map(|c| c.len() as i64));
+        page.push(serde_json::json!({
+            "document_id": doc_id,
+            "path": path,
+            "project": proj,
+            "document_revision": doc_rev,
+            "content_hash": hash,
+            "bytes": blob_bytes,
+            "syntax_indexed": syntax_indexed,
+            "source_available": blob_bytes.is_some(),
+        }));
+        if page.len() > limit {
+            break;
+        }
     }
-    let more = items.len() > limit;
-    items.truncate(limit);
+    let more = page.len() > limit;
+    page.truncate(limit);
     let next = if more {
         Some(cursor(
             q,
             Some(rev),
-            items.last().unwrap()["document_id"]
+            page.last().unwrap()["document_id"]
                 .as_str()
                 .unwrap()
                 .into(),
@@ -137,7 +152,7 @@ fn files(
         None
     };
     Ok(
-        serde_json::json!({"index_rev":rev,"items":items,"total":total,"truncated":more||previous.is_some(),"has_more":more,"next_cursor":next,"view":"immutable_revision_manifest","query_contract_version":1,"content_checksums_verified":false,"source_text_loaded_into_rust":false,"observation_consistency":"single_read_transaction"}),
+        serde_json::json!({"index_rev":rev,"items":page,"total":total,"truncated":more||previous.is_some(),"has_more":more,"next_cursor":next,"view":"immutable_revision_manifest","query_contract_version":1,"content_checksums_verified":false,"source_text_loaded_into_rust":false,"observation_consistency":"single_read_transaction"}),
     )
 }
 #[derive(Default)]
@@ -165,7 +180,7 @@ fn group(map: &mut BTreeMap<Option<String>, Group>, project: Option<String>) -> 
     })
 }
 fn projects(
-    conn: &Connection,
+    r: &impl LinReader,
     q: &CatalogQuery,
     rev: Option<i64>,
     previous: Option<&Cursor>,
@@ -179,15 +194,33 @@ fn projects(
     let mut current = BTreeMap::new();
     let mut indexed = BTreeMap::new();
     let project = q.selection.project.as_deref();
+    let mut active_doc_wings: HashMap<String, Option<String>> = HashMap::new();
     {
-        let mut stmt=conn.prepare("SELECT id,COALESCE(source_file,uri),wing,content_hash,metadata_json FROM documents WHERE COALESCE(status,'active') NOT IN ('archived','tombstone','consolidated') AND (CAST(? AS VARCHAR) IS NULL OR wing=?) ORDER BY id")?;
-        let mut rows = stmt.query(params![project, project])?;
-        while let Some(r) = rows.next()? {
-            let id: String = r.get(0)?;
-            let path: String = r.get(1)?;
-            let wing: Option<String> = r.get(2)?;
-            let declared: Option<String> = r.get(3)?;
-            let meta: String = r.get(4)?;
+        let mut doc_rows = Vec::new();
+        r.scan_each("documents", |row| {
+            let status = cell_str(row, "status").unwrap_or("active");
+            if matches!(status, "archived" | "tombstone" | "consolidated") {
+                return Ok(true);
+            }
+            let wing = cell_opt_string(row, "wing");
+            if let Some(p) = project
+                && wing.as_deref() != Some(p)
+            {
+                return Ok(true);
+            }
+            let id = cell_string(row, "id");
+            let path = cell_str(row, "source_file")
+                .or_else(|| cell_str(row, "uri"))
+                .unwrap_or("")
+                .to_string();
+            let declared = cell_opt_string(row, "content_hash");
+            let meta = cell_str(row, "metadata_json").unwrap_or("{}").to_string();
+            doc_rows.push((id, path, wing, declared, meta));
+            Ok(true)
+        })?;
+        doc_rows.sort_by(|a, b| a.0.cmp(&b.0));
+        for (id, path, wing, declared, meta) in doc_rows {
+            active_doc_wings.insert(id.clone(), wing.clone());
             let hash = if meta.contains("code_source_hash") {
                 match serde_json::from_str::<serde_json::Value>(&meta) {
                     Ok(value) => value
@@ -204,34 +237,71 @@ fn projects(
         }
     }
     if let Some(rev) = rev {
-        let mut stmt=conn.prepare("SELECT document_id,path,project,content_hash,analysis_json IS NOT NULL FROM code_index_revision_files WHERE index_revision=? AND (CAST(? AS VARCHAR) IS NULL OR project=?) ORDER BY document_id")?;
-        let mut rows = stmt.query(params![rev, project, project])?;
-        while let Some(r) = rows.next()? {
-            let id: String = r.get(0)?;
-            let path: String = r.get(1)?;
-            let wing: Option<String> = r.get(2)?;
-            let hash: String = r.get(3)?;
+        let mut rf_rows = Vec::new();
+        for row in r.find_by_eq("code_index_revision_files", "index_revision", rev)? {
+            let wing = cell_opt_string(&row, "project");
+            if let Some(p) = project
+                && wing.as_deref() != Some(p)
+            {
+                continue;
+            }
+            rf_rows.push((
+                cell_string(&row, "document_id"),
+                cell_string(&row, "path"),
+                wing,
+                cell_string(&row, "content_hash"),
+                cell_str(&row, "analysis_json").is_some(),
+            ));
+        }
+        rf_rows.sort_by(|a, b| a.0.cmp(&b.0));
+        for (id, path, wing, hash, has_syntax) in rf_rows {
             let g = group(&mut indexed, wing);
             add(g, &id, &path, Some(&hash))?;
-            g.syntax += usize::from(r.get::<_, bool>(4)?);
+            g.syntax += usize::from(has_syntax);
         }
     }
     {
-        let mut stmt=conn.prepare("SELECT d.wing,sm.canonical_root,COUNT(*),CAST(MAX(sm.last_seen) AS VARCHAR),CAST(MAX(sm.last_synced) AS VARCHAR) FROM source_manifest sm JOIN documents d ON d.id=sm.document_id WHERE COALESCE(d.status,'active') NOT IN ('archived','tombstone','consolidated') AND (CAST(? AS VARCHAR) IS NULL OR d.wing=?) GROUP BY d.wing,sm.canonical_root ORDER BY d.wing NULLS FIRST,sm.canonical_root")?;
-        let mut rows = stmt.query(params![project, project])?;
-        while let Some(r) = rows.next()? {
-            let wing: Option<String> = r.get(0)?;
-            group(&mut current,wing).roots.push(serde_json::json!({"canonical_root":r.get::<_,String>(1)?,"manifest_files":r.get::<_,i64>(2)?,"last_seen":r.get::<_,Option<String>>(3)?,"last_synced":r.get::<_,Option<String>>(4)?}));
+        type RootKey = (Option<String>, String);
+        type RootStats = (i64, Option<String>, Option<String>);
+        let mut root_groups: BTreeMap<RootKey, RootStats> = BTreeMap::new();
+        r.scan_each("source_manifest", |row| {
+            let Some(doc_id) = cell_str(row, "document_id") else {
+                return Ok(true);
+            };
+            let Some(wing) = active_doc_wings.get(doc_id) else {
+                return Ok(true);
+            };
+            let root = cell_string(row, "canonical_root");
+            let seen = cell_opt_string(row, "last_seen");
+            let synced = cell_opt_string(row, "last_synced");
+            let entry = root_groups
+                .entry((wing.clone(), root))
+                .or_insert((0, None, None));
+            entry.0 += 1;
+            if let Some(s) = seen
+                && entry.1.as_ref().is_none_or(|cur| &s > cur)
+            {
+                entry.1 = Some(s);
+            }
+            if let Some(s) = synced
+                && entry.2.as_ref().is_none_or(|cur| &s > cur)
+            {
+                entry.2 = Some(s);
+            }
+            Ok(true)
+        })?;
+        for ((wing, canonical_root), (manifest_files, last_seen, last_synced)) in root_groups {
+            group(&mut current, wing).roots.push(serde_json::json!({
+                "canonical_root": canonical_root,
+                "manifest_files": manifest_files,
+                "last_seen": last_seen,
+                "last_synced": last_synced,
+            }));
         }
     }
     let published: Option<String> = if let Some(rev) = rev {
-        conn.query_row(
-            "SELECT CAST(created_at AS VARCHAR) FROM code_index_revisions WHERE id=?",
-            [rev],
-            |r| r.get(0),
-        )
-        .optional()?
-        .flatten()
+        r.get_by_id("code_index_revisions", &rev.to_string())?
+            .and_then(|row| cell_opt_string(&row, "created_at"))
     } else {
         None
     };
@@ -298,7 +368,7 @@ struct RunAnchor {
     run_id: Option<String>,
 }
 fn runs(
-    conn: &Connection,
+    r: &impl LinReader,
     q: &CatalogQuery,
     previous: Option<&Cursor>,
 ) -> Result<serde_json::Value> {
@@ -322,26 +392,21 @@ fn runs(
             "run cursor revision does not match index_revision".into(),
         ));
     }
-    if let Some(id) = revision {
-        let exists: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM code_index_revisions WHERE id=?",
-            [id],
-            |r| r.get(0),
-        )?;
-        if exists != 1 {
-            return Err(AppError::not_found("unknown index revision"));
-        }
+    if let Some(id) = revision
+        && r.get_by_id("code_index_revisions", &id.to_string())?
+            .is_none()
+    {
+        return Err(AppError::not_found("unknown index revision"));
     }
     let anchor = if let Some(c) = previous {
         let a: RunAnchor = serde_json::from_str(c.observation.as_deref().unwrap_or(""))
             .map_err(|_| AppError::Invalid("invalid run cursor anchor".into()))?;
-        let id: Option<String> = conn
-            .query_row(
-                "SELECT run_id FROM code_index_runs WHERE seq=?",
-                [a.seq],
-                |r| r.get(0),
-            )
-            .optional()?;
+        let id = if a.seq > 0 && r.has_collection("code_index_runs") {
+            r.get_by_id("code_index_runs", &a.seq.to_string())?
+                .and_then(|row| cell_opt_string(&row, "run_id"))
+        } else {
+            None
+        };
         if a.seq <= 0 || a.run_id.is_none() || id != a.run_id {
             return Err(AppError::Invalid(
                 "run history anchor changed or is unavailable".into(),
@@ -349,16 +414,19 @@ fn runs(
         }
         a
     } else {
-        let row: Option<(i64, String)> = conn
-            .query_row(
-                "SELECT seq,run_id FROM code_index_runs ORDER BY seq DESC LIMIT 1",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()?;
+        let mut best: Option<(i64, String)> = None;
+        if r.has_collection("code_index_runs") {
+            r.scan_each("code_index_runs", |row| {
+                let seq = cell_i64(row, "seq", 0);
+                if best.as_ref().is_none_or(|b| seq > b.0) {
+                    best = Some((seq, cell_string(row, "run_id")));
+                }
+                Ok(true)
+            })?;
+        }
         RunAnchor {
-            seq: row.as_ref().map_or(0, |r| r.0),
-            run_id: row.map(|r| r.1),
+            seq: best.as_ref().map_or(0, |r| r.0),
+            run_id: best.map(|r| r.1),
         }
     };
     let after = previous
@@ -369,38 +437,62 @@ fn runs(
         })
         .transpose()?;
     if after.is_some_and(|n| n <= 0 || n > anchor.seq) {
-        return Err(AppError::Invalid("invalid run cursor range".into()));
+        return Err(AppError::Invalid("invalid run cursor sequence range".into()));
     }
-    let total:i64=conn.query_row("SELECT COUNT(*) FROM code_index_runs WHERE seq<=? AND (CAST(? AS BIGINT) IS NULL OR index_revision=?)",params![anchor.seq,revision,revision],|r|r.get(0))?;
+    let mut total = 0_i64;
+    let mut rows: Vec<(i64, String, String, i64, bool, Option<String>)> = Vec::new();
+    if r.has_collection("code_index_runs") {
+        r.scan_each("code_index_runs", |row| {
+            let seq = cell_i64(row, "seq", 0);
+            if seq > anchor.seq {
+                return Ok(true);
+            }
+            let rev = cell_i64(row, "index_revision", 0);
+            if let Some(target_rev) = revision
+                && rev != target_rev
+            {
+                return Ok(true);
+            }
+            total += 1;
+            if let Some(a) = after
+                && seq >= a
+            {
+                return Ok(true);
+            }
+            let metrics = cell_str(row, "metrics_json")
+                .filter(|m| m.len() <= 16384)
+                .map(str::to_string);
+            rows.push((
+                seq,
+                cell_string(row, "run_id"),
+                cell_string(row, "recorded_at"),
+                rev,
+                cell_bool(row, "revision_created", false),
+                metrics,
+            ));
+            Ok(true)
+        })?;
+    }
+    rows.sort_by_key(|a| std::cmp::Reverse(a.0));
     let limit = s.limit.unwrap_or(50).clamp(1, 500);
-    let mut stmt=conn.prepare("SELECT seq,run_id,CAST(recorded_at AS VARCHAR),index_revision,revision_created,CASE WHEN octet_length(encode(metrics_json))<=16384 THEN metrics_json ELSE NULL END FROM code_index_runs WHERE seq<=? AND (CAST(? AS BIGINT) IS NULL OR index_revision=?) AND (CAST(? AS BIGINT) IS NULL OR seq<?) ORDER BY seq DESC LIMIT ?")?;
-    let rows = stmt.query_map(
-        params![
-            anchor.seq,
-            revision,
-            revision,
-            after,
-            after,
-            (limit + 1) as i64
-        ],
-        |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, i64>(3)?,
-                r.get::<_, bool>(4)?,
-                r.get::<_, Option<String>>(5)?,
-            ))
-        },
-    )?;
-    let mut rows = rows.collect::<std::result::Result<Vec<_>, _>>()?;
     let more = rows.len() > limit;
     rows.truncate(limit);
-    let items:Vec<_>=rows.iter().map(|(seq,id,at,rev,created,json)|{
-        let decoded=json.as_deref().and_then(|j|timings::decode(*seq,id,at,*created,*rev,j).ok());
-        decoded.map(|mut row|{row["metrics_available"]=serde_json::json!(true);row}).unwrap_or_else(||serde_json::json!({"seq":seq,"run_id":id,"recorded_at":at,"index_rev":rev,"revision_created":created,"metrics":null,"metrics_available":false,"reason":"invalid_or_oversized_run_metrics"}))
-    }).collect();
+    let items: Vec<_> = rows
+        .iter()
+        .map(|(seq, id, at, rev, created, json)| {
+            let decoded = json
+                .as_deref()
+                .and_then(|j| timings::decode(*seq, id, at, *created, *rev, j).ok());
+            decoded
+                .map(|mut row| {
+                    row["metrics_available"] = serde_json::json!(true);
+                    row
+                })
+                .unwrap_or_else(|| {
+                    serde_json::json!({"seq":seq,"run_id":id,"recorded_at":at,"index_rev":rev,"revision_created":created,"metrics":null,"metrics_available":false,"reason":"invalid_or_oversized_run_metrics"})
+                })
+        })
+        .collect();
     let next = if more {
         rows.last()
             .map(|r| {
@@ -444,21 +536,16 @@ impl Store {
                 "catalog cursor does not match view/filters".into(),
             ));
         }
-        let mut connection = self.lock()?;
-        let transaction = connection.transaction()?;
+        let r = self.read()?;
         if q.view == CatalogView::Runs {
-            let result = runs(&transaction, q, previous.as_ref())?;
-            transaction.commit()?;
-            return Ok(result);
+            return runs(&*r, q, previous.as_ref());
         }
-        let rev = revision(&transaction, q, previous.as_ref())?;
-        let result = match q.view {
-            CatalogView::Files => files(&transaction, q, rev, previous.as_ref())?,
-            CatalogView::Projects => projects(&transaction, q, rev, previous.as_ref())?,
+        let rev = revision(&*r, q, previous.as_ref())?;
+        match q.view {
+            CatalogView::Files => files(&*r, q, rev, previous.as_ref()),
+            CatalogView::Projects => projects(&*r, q, rev, previous.as_ref()),
             CatalogView::Runs => unreachable!(),
-        };
-        transaction.commit()?;
-        Ok(result)
+        }
     }
 }
 
@@ -552,11 +639,14 @@ mod tests {
         assert!(store.code_catalog_query(&q).is_err());
         q.selection.project = None;
         store
-            .lock()
+            .write()
             .unwrap()
-            .execute(
-                "UPDATE code_index_runs SET run_id='replaced' WHERE seq=2",
-                [],
+            .update_where(
+                "code_index_runs",
+                lin::query::pred::eq("seq", 2_i64),
+                crate::db::lin_engine::RecBuilder::new()
+                    .str("run_id", "replaced")
+                    .build(),
             )
             .unwrap();
         assert!(store.code_catalog_query(&q).is_err());
@@ -568,19 +658,25 @@ mod tests {
         store.index_code().unwrap();
         store.index_code().unwrap();
         store
-            .lock()
+            .write()
             .unwrap()
-            .execute(
-                "UPDATE code_index_runs SET metrics_json=? WHERE seq=1",
-                ["PRIVATE_BODY".repeat(2000)],
+            .update_where(
+                "code_index_runs",
+                lin::query::pred::eq("seq", 1_i64),
+                crate::db::lin_engine::RecBuilder::new()
+                    .str("metrics_json", "PRIVATE_BODY".repeat(2000))
+                    .build(),
             )
             .unwrap();
         store
-            .lock()
+            .write()
             .unwrap()
-            .execute(
-                "UPDATE code_index_runs SET metrics_json='{}' WHERE seq=2",
-                [],
+            .update_where(
+                "code_index_runs",
+                lin::query::pred::eq("seq", 2_i64),
+                crate::db::lin_engine::RecBuilder::new()
+                    .str("metrics_json", "{}")
+                    .build(),
             )
             .unwrap();
         let r = store.code_catalog_query(&run_query(10)).unwrap();
@@ -648,11 +744,14 @@ mod tests {
             Err(AppError::Invalid(_))
         ));
         store
-            .lock()
+            .write()
             .unwrap()
-            .execute(
-                "UPDATE code_index_revision_files SET analysis_json='broken' WHERE document_id='a'",
-                [],
+            .update_where(
+                "code_index_revision_files",
+                lin::query::pred::eq("document_id", "a"),
+                crate::db::lin_engine::RecBuilder::new()
+                    .str("analysis_json", "broken")
+                    .build(),
             )
             .unwrap();
         assert_eq!(
@@ -695,9 +794,15 @@ mod tests {
         assert_eq!(drift["items"][0]["state"], "captured_drift");
         assert_eq!(drift["items"][0]["captured_hashes_match"], false);
         store
-            .lock()
+            .write()
             .unwrap()
-            .execute("UPDATE documents SET status='archived' WHERE id='a'", [])
+            .update_where(
+                "documents",
+                lin::query::pred::eq("id", "a"),
+                crate::db::lin_engine::RecBuilder::new()
+                    .str("status", "archived")
+                    .build(),
+            )
             .unwrap();
         assert_eq!(
             store.code_catalog_query(&query).unwrap()["items"][0]["state"],

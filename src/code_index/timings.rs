@@ -1,25 +1,67 @@
 //! Committed successful native index-run measurements, separate from revision facts.
 use super::*;
-use duckdb::{Connection, OptionalExt};
+use crate::db::lin_engine::{
+    cell_bool, cell_i64, cell_i64_opt, cell_string, format_db_timestamp, LinReader, LinWriter,
+    RecBuilder,
+};
+use chrono::Utc;
 use rag_mcp_core::IndexStageTimings;
 
 pub(super) fn record(
-    conn: &Connection,
+    w: &mut impl LinWriter,
     revision: i64,
     created: bool,
     m: &IndexStageTimings,
 ) -> Result<()> {
-    let seq: i64 = conn.query_row(
-        "SELECT COALESCE(MAX(seq),0)+1 FROM code_index_runs",
-        [],
-        |r| r.get(0),
+    let mut max_seq: i64 = 0;
+    w.scan_each("code_index_runs", |row| {
+        if let Some(s) = cell_i64_opt(row, "seq")
+            && s > max_seq
+        {
+            max_seq = s;
+        }
+        Ok(true)
+    })?;
+    let seq = max_seq
+        .checked_add(1)
+        .ok_or_else(|| AppError::db("code_index_runs sequence overflow"))?;
+    let id = seq.to_string();
+    let now = format_db_timestamp(Utc::now());
+    w.insert_one(
+        "code_index_runs",
+        RecBuilder::new()
+            .id(&id)
+            .i64("seq", seq)
+            .str("run_id", &m.run_id)
+            .i64("index_revision", revision)
+            .bool("revision_created", created)
+            .str("recorded_at", now)
+            .str("metrics_json", serde_json::to_string(m)?)
+            .build(),
     )?;
-    conn.execute("INSERT INTO code_index_runs(seq,run_id,index_revision,revision_created,metrics_json) VALUES (?,?,?,?,?)",params![seq,m.run_id,revision,created,serde_json::to_string(m)?])?;
     Ok(())
 }
-fn read(conn: &Connection, revision: i64, publication: bool) -> Result<Option<serde_json::Value>> {
-    let row:Option<(i64,String,String,bool,String)>=conn.query_row("SELECT seq,run_id,CAST(recorded_at AS VARCHAR),revision_created,metrics_json FROM code_index_runs WHERE index_revision=? AND (?=false OR revision_created=true) ORDER BY seq DESC LIMIT 1",params![revision,publication],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?;
-    let Some((seq, id, at, created, json)) = row else {
+fn read(r: &impl LinReader, revision: i64, publication: bool) -> Result<Option<serde_json::Value>> {
+    let mut best: Option<(i64, String, String, bool, String)> = None;
+    r.scan_each("code_index_runs", |row| {
+        if cell_i64(row, "index_revision", 0) == revision {
+            let created = cell_bool(row, "revision_created", false);
+            if !publication || created {
+                let seq = cell_i64(row, "seq", 0);
+                if best.as_ref().is_none_or(|b| seq > b.0) {
+                    best = Some((
+                        seq,
+                        cell_string(row, "run_id"),
+                        cell_string(row, "recorded_at"),
+                        created,
+                        cell_string(row, "metrics_json"),
+                    ));
+                }
+            }
+        }
+        Ok(true)
+    })?;
+    let Some((seq, id, at, created, json)) = best else {
         return Ok(None);
     };
     Ok(Some(decode(seq, &id, &at, created, revision, &json)?))
@@ -59,16 +101,15 @@ pub(super) fn decode(
         serde_json::json!({"seq":seq,"run_id":id,"recorded_at":at,"revision_created":created,"index_rev":revision,"metrics":metrics}),
     )
 }
-pub(super) fn status(conn: &Connection, revision: Option<i64>) -> serde_json::Value {
+pub(super) fn status(r: &impl LinReader, revision: Option<i64>) -> serde_json::Value {
     let base = |reason: &str| serde_json::json!({"available":false,"reason":reason,"scope":"corpus_global","successful_committed_runs_only":true,"commit_measured":false});
     let Some(revision) = revision else {
         return base("no_published_revision");
     };
-    let exists=conn.query_row("SELECT COUNT(*) FROM information_schema.tables WHERE table_name='code_index_runs' AND table_schema='main'",[],|r|r.get::<_,i64>(0));
-    if !matches!(exists, Ok(1)) {
+    if !r.has_collection("code_index_runs") {
         return base("run_ledger_unavailable");
     }
-    match (read(conn, revision, true), read(conn, revision, false)) {
+    match (read(r, revision, true), read(r, revision, false)) {
         (Ok(publication), Ok(latest)) => {
             serde_json::json!({"available":publication.is_some()||latest.is_some(),"reason":if publication.is_none()&&latest.is_none(){Some("no_measured_run_for_revision")}else{None},"scope":"corpus_global","index_rev":revision,"publication_run":publication,"latest_successful_run":latest,"successful_committed_runs_only":true,"commit_measured":false,"metrics_write_measured":false,"embedding_fts_measured":false,"mcp_queue_wait_measured":false})
         }
@@ -82,7 +123,7 @@ mod tests {
     use crate::models::Document;
     fn setup() -> (tempfile::TempDir, Store) {
         let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("timings.duckdb")).unwrap();
+        let store = Store::open(&root.path().join("timings.lin")).unwrap();
         (root, store)
     }
     fn put(store: &Store, text: &str) {
@@ -124,16 +165,16 @@ mod tests {
         assert_eq!(second.index_revision, first.index_revision);
         assert_eq!(b.cache_hits, 1);
         assert_ne!(a.run_id, b.run_id);
-        let report = status(&store.lock().unwrap(), first.index_revision);
+        let report = status(&*store.read().unwrap(), first.index_revision);
         assert_eq!(report["publication_run"]["run_id"], a.run_id);
         assert_eq!(report["latest_successful_run"]["run_id"], b.run_id);
         put(&store, "def revised(): pass\n");
         let third = store.index_code().unwrap();
         assert_ne!(third.index_revision, first.index_revision);
-        assert_eq!(status(&store.lock().unwrap(), first.index_revision), report);
+        assert_eq!(status(&*store.read().unwrap(), first.index_revision), report);
         drop(store);
-        let reopened = Store::open(&root.path().join("timings.duckdb")).unwrap();
-        let persisted = status(&reopened.lock().unwrap(), first.index_revision);
+        let reopened = Store::open(&root.path().join("timings.lin")).unwrap();
+        let persisted = status(&*reopened.read().unwrap(), first.index_revision);
         assert_eq!(persisted, report);
     }
     #[test]
@@ -141,34 +182,38 @@ mod tests {
         let (_root, store) = setup();
         put(&store, "def before(): pass\n");
         let first = store.index_code().unwrap();
-        let before: String = store
-            .lock()
+        let before = {
+            let r = store.read().unwrap();
+            let row = r.get_by_id("code_index_documents", "a").unwrap().unwrap();
+            cell_string(&row, "payload")
+        };
+        store
+            .write()
             .unwrap()
-            .query_row(
-                "SELECT payload FROM code_index_documents WHERE document_id='a'",
-                [],
-                |r| r.get(0),
+            .insert_one(
+                "code_index_runs",
+                RecBuilder::new()
+                    .id(i64::MAX.to_string())
+                    .i64("seq", i64::MAX)
+                    .str("run_id", "forced-overflow")
+                    .i64("index_revision", -1)
+                    .bool("revision_created", false)
+                    .str("recorded_at", format_db_timestamp(Utc::now()))
+                    .str("metrics_json", "{}")
+                    .build(),
             )
             .unwrap();
-        store.lock().unwrap().execute("INSERT INTO code_index_runs(seq,run_id,index_revision,revision_created,metrics_json) VALUES (9223372036854775807,'forced-overflow',-1,false,'{}')",[]).unwrap();
         put(&store, "def after(): pass\n");
         assert!(store.index_code().is_err());
-        let conn = store.lock().unwrap();
-        let revision: Option<i64> = conn
-            .query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| r.get(0))
-            .unwrap();
+        let r = store.read().unwrap();
+        let revision = crate::analysis_tasks::latest_code_index_rev(&*r).unwrap();
         assert_eq!(revision, first.index_revision);
-        let payload: String = conn
-            .query_row(
-                "SELECT payload FROM code_index_documents WHERE document_id='a'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let payload = {
+            let row = r.get_by_id("code_index_documents", "a").unwrap().unwrap();
+            cell_string(&row, "payload")
+        };
         assert_eq!(payload, before);
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM code_index_runs", [], |r| r.get(0))
-            .unwrap();
+        let count = r.count_rows("code_index_runs", None).unwrap();
         assert_eq!(count, 2);
     }
     #[test]
@@ -177,33 +222,35 @@ mod tests {
         put(&store, "def work(): pass\n");
         let first = store.index_code().unwrap();
         store
-            .lock()
+            .write()
             .unwrap()
-            .execute("DELETE FROM code_index_runs", [])
+            .delete_where("code_index_runs", crate::db::lin_engine::pred_all())
             .unwrap();
-        let empty = status(&store.lock().unwrap(), first.index_revision);
+        let empty = status(&*store.read().unwrap(), first.index_revision);
         assert_eq!(empty["available"], false);
         assert_eq!(empty["reason"], "no_measured_run_for_revision");
         store.index_code().unwrap();
-        let measured = status(&store.lock().unwrap(), first.index_revision);
+        let measured = status(&*store.read().unwrap(), first.index_revision);
         assert!(measured["publication_run"].is_null());
         assert!(measured["latest_successful_run"].is_object());
         store
-            .lock()
+            .write()
             .unwrap()
-            .execute("UPDATE code_index_runs SET metrics_json='bad metrics'", [])
+            .update_where(
+                "code_index_runs",
+                crate::db::lin_engine::pred_all(),
+                RecBuilder::new().str("metrics_json", "bad metrics").build(),
+            )
             .unwrap();
-        let corrupt = status(&store.lock().unwrap(), first.index_revision);
+        let corrupt = status(&*store.read().unwrap(), first.index_revision);
         assert_eq!(corrupt["available"], false);
         assert_eq!(corrupt["reason"], "invalid_or_unreadable_run_metrics");
         assert!(!corrupt.to_string().contains("bad metrics"));
         store
-            .lock()
-            .unwrap()
-            .execute("DROP TABLE code_index_runs", [])
+            .drop_collection_for_test("code_index_runs")
             .unwrap();
         assert_eq!(
-            status(&store.lock().unwrap(), first.index_revision)["reason"],
+            status(&*store.read().unwrap(), first.index_revision)["reason"],
             "run_ledger_unavailable"
         );
     }
@@ -222,18 +269,23 @@ mod tests {
             })
             .unwrap();
         let original = store.index_code().unwrap();
+        store
+            .drop_collection_for_test("code_index_runs")
+            .unwrap();
         {
-            let conn = store.lock().unwrap();
-            conn.execute("DROP TABLE code_index_runs", []).unwrap();
-            conn.execute("UPDATE schema_version SET version=24 WHERE version=25", [])
-                .unwrap();
-            conn.execute("UPDATE meta SET value='24' WHERE key='schema_version'", [])
-                .unwrap();
+            let mut w = store.write().unwrap();
+            w.update_where(
+                "schema_version",
+                lin::query::pred::eq("version", 25_i64),
+                RecBuilder::new().i64("version", 24).build(),
+            )
+            .unwrap();
+            crate::db::schema::upsert_meta(&mut *w, "schema_version", "24").unwrap();
         }
         drop(store);
-        let upgraded = Store::open(&root.path().join("timings.duckdb")).unwrap();
+        let upgraded = Store::open(&root.path().join("timings.lin")).unwrap();
         assert_eq!(
-            status(&upgraded.lock().unwrap(), original.index_revision)["reason"],
+            status(&*upgraded.read().unwrap(), original.index_revision)["reason"],
             "no_measured_run_for_revision"
         );
         let report = upgraded.index_code().unwrap();

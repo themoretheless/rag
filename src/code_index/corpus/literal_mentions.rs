@@ -89,7 +89,7 @@ impl<'a> Identities<'a> {
     }
 }
 pub(super) fn scan(
-    conn: &duckdb::Connection,
+    r: &impl crate::db::lin_engine::LinReader,
     snapshot: &CodeSnapshot,
     targets: &[&File],
     project: Option<&str>,
@@ -128,24 +128,18 @@ pub(super) fn scan(
         .max_source_bytes
         .unwrap_or(2 * 1024 * 1024)
         .clamp(1, 8 * 1024 * 1024);
-    let sql=format!("SELECT d.id,d.source_file,d.wing,COALESCE(d.revision,1),json_extract_string(try_cast(d.metadata_json AS JSON),'$.code_source_hash'),octet_length(encode({text})),json_valid(d.metadata_json) {sources} ORDER BY d.source_file,d.id",text=super::super::dead_files::TEXT,sources=super::super::dead_files::SOURCES);
-    let sources = {
-        let mut statement = conn.prepare(&sql)?;
-        let rows = statement.query_map(params![project, project], |r| {
-            Ok(Source {
-                id: r.get(0)?,
-                path: r.get(1)?,
-                project: r.get(2)?,
-                revision: r.get(3)?,
-                preserved: r.get(4)?,
-                bytes: r
-                    .get::<_, Option<i64>>(5)?
-                    .and_then(|v| usize::try_from(v).ok()),
-                metadata_valid: r.get(6)?,
-            })
-        })?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()?
-    };
+    let sources: Vec<Source> = super::super::dead_files::list_stored_source_meta(r, project)?
+        .into_iter()
+        .map(|m| Source {
+            id: m.id,
+            path: m.path,
+            project: m.project,
+            revision: m.revision,
+            preserved: m.preserved,
+            bytes: m.bytes,
+            metadata_valid: m.metadata_valid,
+        })
+        .collect();
     let mut basenames: BTreeMap<(Option<String>, String), usize> = BTreeMap::new();
     let mut roots: BTreeMap<Option<String>, PathBuf> = BTreeMap::new();
     let mut path_counts: BTreeMap<(Option<String>, String), usize> = BTreeMap::new();
@@ -245,7 +239,6 @@ pub(super) fn scan(
             covered.insert((edge.document_id.clone(), target.clone()));
         }
     }
-    let source_sql=format!("SELECT CASE WHEN octet_length(encode({text}))<=? THEN {text} ELSE NULL END {sources} AND d.id=?",text=super::super::dead_files::TEXT,sources=super::super::dead_files::SOURCES);
     let mut evidence = vec![];
     let mut counts: HashMap<String, usize> = HashMap::new();
     let mut total_bytes = 0;
@@ -292,10 +285,11 @@ pub(super) fn scan(
             continue;
         }
         reads += 1;
-        let text: Option<String> = conn.query_row(
-            &source_sql,
-            params![per_source as i64, project, project, source.id],
-            |r| r.get(0),
+        let text = super::super::dead_files::read_stored_source_bounded(
+            r,
+            &source.id,
+            project,
+            per_source,
         )?;
         let Some(text) = text else {
             skipped += 1;

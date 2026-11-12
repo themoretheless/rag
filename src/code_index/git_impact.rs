@@ -200,6 +200,15 @@ fn bindings(graph: &Graph) -> BTreeMap<&str, Vec<String>> {
             .filter_map(|id| graph.keys.get(id))
             .collect();
         targets.sort();
+        let context_binding=edge.context_evidence.as_ref().map(|evidence| {
+            let mut rows:Vec<_>=evidence.contexts.iter().map(|context| {
+                let mut candidates:Vec<_>=context.candidates.iter().filter_map(|id|graph.keys.get(id)).collect();
+                candidates.sort();
+                json!({"owner":graph.keys.get(&context.owner),"target_owner":context.target_owner.as_ref().and_then(|id|graph.keys.get(id)),"candidates":candidates,"resolution":context.resolution,"resolution_basis":context.resolution_basis})
+            }).collect();
+            rows.sort_by_key(Value::to_string);
+            json!({"kind":evidence.kind,"enumeration_complete":evidence.enumeration_complete,"truncated":evidence.truncated,"contexts":rows,"runtime_contexts_complete":false,"context_correlation_proven":false})
+        });
         let value = serde_json::to_string(&(
             edge.reference
                 .start_byte
@@ -209,6 +218,7 @@ fn bindings(graph: &Graph) -> BTreeMap<&str, Vec<String>> {
             &edge.resolution,
             &edge.resolution_basis,
             targets,
+            context_binding,
         ))
         .unwrap();
         out.entry(caller).or_default().push(value);
@@ -240,7 +250,7 @@ fn impacts(graph: &Graph, seeds: &[&Symbol], q: &GitImpactQuery) -> Value {
         PathRelations::References => "references",
         PathRelations::All => "all",
     };
-    let mut result = impact::query(
+    let mut result = impact::query_with_paths(
         &graph.snapshot,
         &CodeQuery {
             depth: q.depth,
@@ -249,6 +259,7 @@ fn impacts(graph: &Graph, seeds: &[&Symbol], q: &GitImpactQuery) -> Value {
         },
         seeds,
         q.max_affected.unwrap_or(100).clamp(1, 500),
+        true,
     );
     let by_id: HashMap<_, _> = graph
         .snapshot
@@ -257,21 +268,36 @@ fn impacts(graph: &Graph, seeds: &[&Symbol], q: &GitImpactQuery) -> Value {
         .map(|s| (s.id.as_str(), s))
         .collect();
     let items = result["items"].as_array().cloned().unwrap_or_default();
-    let by_source: HashMap<_, _> = items
-        .iter()
-        .filter_map(|v| v["symbol_id"].as_str().map(|id| (id, v)))
-        .collect();
     let seed_ids: HashSet<_> = seeds.iter().map(|s| s.id.as_str()).collect();
     let witnessed:Vec<_>=items.iter().map(|item| {
-        let mut current=item["symbol_id"].as_str().unwrap();let mut steps=Vec::new();let mut nodes=vec![by_id[current]];
-        while !seed_ids.contains(current) {
-            let Some(edge)=by_source.get(current) else {break;};
-            let target=edge["via_target"].as_str().unwrap();
-            steps.push(json!({"source_symbol_id":current,"target_symbol_id":target,"relation":edge["via_kind"],"evidence":edge["via"]}));
-            nodes.push(by_id[target]);current=target;
-            if steps.len()>10 {break;}
+        let path=&item["state_path"];
+        let steps=path["steps"].as_array().cloned().unwrap_or_default();
+        let start=item["symbol_id"].as_str().unwrap();
+        let mut current=start;
+        let mut nodes=vec![by_id[start]];
+        let mut contexts=BTreeSet::new();
+        let mut contiguous=true;
+        let mut expected_context=None;
+        for (index,step) in steps.iter().enumerate() {
+            if step["source_symbol_id"].as_str()!=Some(current) || index>0 && step["source_context"].as_str()!=expected_context {contiguous=false;break}
+            let Some(target)=step["target_symbol_id"].as_str().filter(|id|by_id.contains_key(id)) else {contiguous=false;break};
+            for field in ["source_context","target_context"] {
+                if let Some(id)=step[field].as_str() {if by_id.contains_key(id) {contexts.insert(id);} else {contiguous=false}}
+            }
+            let evidence=&step["evidence"]["context_evidence"];
+            for row in evidence["contexts"].as_array().into_iter().flatten() {
+                let matches_target=row["candidates"].as_array().is_some_and(|ids|ids.iter().any(|id|id.as_str()==Some(target)));
+                let matches_source=evidence["kind"]=="php_captured_trait_entry" || row["owner"].as_str()==step["source_context"].as_str();
+                let matches_context=step["target_context"].is_null() || row["target_owner"]==step["target_context"];
+                if matches_target && matches_source && matches_context {
+                    for field in ["owner","target_owner"] {if let Some(id)=row[field].as_str() {if by_id.contains_key(id) {contexts.insert(id);} else {contiguous=false}}}
+                }
+            }
+            expected_context=step["target_context"].as_str();
+            current=target;nodes.push(by_id[target]);
         }
-        json!({"symbol":by_id[item["symbol_id"].as_str().unwrap()],"depth":item["depth"],"seed_symbol_id":current,"seed_change_key":graph.keys.get(current),"path":{"symbols":nodes,"steps":steps,"complete_to_seed":seed_ids.contains(current)}})
+        let complete=contiguous && path["complete_to_seed"]==true && path["seed_symbol_id"].as_str()==Some(current) && path["seed_context"].is_null() && expected_context.is_none() && seed_ids.contains(current);
+        json!({"symbol":by_id[start],"depth":item["depth"],"seed_symbol_id":current,"seed_change_key":graph.keys.get(current),"path":{"symbols":nodes,"steps":steps,"complete_to_seed":complete,"trait_context_symbols":contexts.into_iter().map(|id|by_id[id]).collect::<Vec<_>>(),"captured_trait_frames_matched":path["captured_trait_frames_matched"],"runtime_context_correlation_proven":false}})
     }).collect();
     result["items"] = witnessed.into();
     result["direct_changed_symbols"] = seeds
@@ -284,6 +310,7 @@ fn impacts(graph: &Graph, seeds: &[&Symbol], q: &GitImpactQuery) -> Value {
             &graph.snapshot,
             seeds,
             &AffectedTestsQuery {
+                include_host_dependencies: None,
                 symbols: vec![],
                 path: None,
                 project: None,
@@ -483,8 +510,7 @@ pub fn git_diff_impact(q: &GitImpactQuery, roots: &[PathBuf]) -> Result<Value> {
         }
         git.validate_working(&after, roots)?;
     }
-    Ok(
-        json!({"status":"captured","scope":match scope{GitScope::WorkingTree=>"working_tree",GitScope::Staged=>"staged",GitScope::All=>"all",GitScope::Commits=>"commits"},"repository":git.root,"project":project,
+    let mut report = json!({"status":"captured","scope":match scope{GitScope::WorkingTree=>"working_tree",GitScope::Staged=>"staged",GitScope::All=>"all",GitScope::Commits=>"commits"},"repository":git.root,"project":project,
         "graph_origin":"ephemeral_git_source_snapshots","persistent_index_used":false,"index_format":INDEX_FORMAT_VERSION,"before":identity(&before),"after":identity(&after),
         "before_graph":graph_evidence(&old),"after_graph":graph_evidence(&new),
         "files":files,"files_changed_total":files_total,"files_truncated":files_total>limit,"changes":changes,"changed_symbol_groups_total":total,"changes_truncated":total>limit,
@@ -492,8 +518,9 @@ pub fn git_diff_impact(q: &GitImpactQuery, roots: &[PathBuf]) -> Result<Value> {
         "test_cfg_overlay":q.include_tests.unwrap_or(false),"test_command_source_requirement":"run only against the matching before/after captured source state",
         "capture":{"source_bytes":git.bytes,"git_commands":git.commands,"source_bytes_revalidation_additional":matches!(scope,GitScope::All|GitScope::WorkingTree)},
         "working_unsupported_files_checked":false,"rename_detection":false,"complete_cargo_semantics":false,"runtime_impact_proven":false,"absence_proven":false,"program_impact_complete":false,
-        "limitations":["supported source and manifest formats only; working unsupported files are not read","no rename pairing across paths","source identity is captured Git/blob or revalidated filesystem evidence, not a stored-index revision","static resolver and depth/return limits apply; no complete runtime impact or absence proof"]}),
-    )
+        "limitations":["supported source and manifest formats only; working unsupported files are not read","no rename pairing across paths","source identity is captured Git/blob or revalidated filesystem evidence, not a stored-index revision","static resolver and depth/return limits apply; no complete runtime impact or absence proof"]});
+    report["analysis_contract"] = json!({"version":2,"binding_change_scope":"captured_targets_and_consumer_contexts","path_witness_scope":"exact_bounded_walk_states","runtime_context_correlation_proven":false});
+    Ok(report)
 }
 
 #[cfg(test)]
@@ -792,5 +819,180 @@ mod tests {
         assert_eq!(result["changed_symbol_groups_total"], 0, "{result}");
         assert_eq!(result["files_changed_total"], 0);
         assert!(result["after"]["source_files"].as_u64().unwrap() > 0);
+    }
+    fn php_fixture(repo: &Repo, source: &str) {
+        repo.write("code.php", source);
+        repo.git(&["add", "code.php"]);
+    }
+    fn affected_names(report: &Value, side: &str) -> BTreeSet<String> {
+        report[side]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["symbol"]["qualified_name"].as_str().unwrap().to_string())
+            .collect()
+    }
+    fn qualified_change<'a>(report: &'a Value, name: &str) -> &'a Value {
+        report["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| {
+                ["before", "after"].iter().any(|side| {
+                    c[*side]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|s| s["qualified_name"] == name)
+                })
+            })
+            .unwrap()
+    }
+    #[test]
+    fn php_trait_git_paths_preserve_each_shared_body_context_to_its_seed() {
+        let repo = Repo::new();
+        let source="<?php trait T {public function run(){self::leaf();}} class Root {public static function leaf(){return 1;}} class A extends Root {use T;public function entry(){$this->run();}} class B extends Root {use T;public function entry(){$this->run();}}";
+        php_fixture(&repo, source);
+        repo.write("code.php", &source.replace("return 1", "return 2"));
+        let report = repo.run(&repo.query("working_tree"));
+        assert_eq!(report["analysis_contract"]["version"], 2);
+        for side in ["before_impact", "after_impact"] {
+            assert_eq!(
+                affected_names(&report, side),
+                BTreeSet::from(["T::run".into(), "A::entry".into(), "B::entry".into()])
+            );
+            for owner in ["A", "B"] {
+                let item = report[side]["items"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|r| r["symbol"]["qualified_name"] == format!("{owner}::entry"))
+                    .unwrap();
+                assert_eq!(item["path"]["complete_to_seed"], true, "{item}");
+                let steps = item["path"]["steps"].as_array().unwrap();
+                assert_eq!(steps.len(), 2);
+                assert_eq!(steps[0]["target_context"], steps[1]["source_context"]);
+                let context = steps[0]["target_context"].as_str().unwrap();
+                assert!(item["path"]["trait_context_symbols"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|s| s["id"] == context && s["qualified_name"] == owner));
+                assert_eq!(item["path"]["runtime_context_correlation_proven"], false);
+                assert_eq!(
+                    item["seed_change_key"],
+                    qualified_change(&report, "Root::leaf")["change_key"]
+                );
+            }
+        }
+    }
+    #[test]
+    fn php_trait_git_context_swaps_change_binding_even_when_target_union_and_body_are_equal() {
+        let repo = Repo::new();
+        let source="<?php trait T {public function run(){self::leaf();}} class P1 {public static function leaf(){}} class P2 {public static function leaf(){}} class A extends P1 {use T;public function entry(){$this->run();}} class B extends P2 {use T;public function entry(){$this->run();}}";
+        php_fixture(&repo, source);
+        repo.write(
+            "code.php",
+            &source
+                .replace("A extends P1", "A extends P2")
+                .replace("B extends P2", "B extends P1"),
+        );
+        let report = repo.run(&repo.query("working_tree"));
+        let changed = qualified_change(&report, "T::run");
+        assert_eq!(changed["kind"], "binding_changed");
+        for side in ["before_impact", "after_impact"] {
+            let names = affected_names(&report, side);
+            assert!(
+                names.contains("A::entry") && names.contains("B::entry"),
+                "{report}"
+            );
+            for owner in ["A", "B"] {
+                let entry = report[side]["items"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|i| i["symbol"]["qualified_name"] == format!("{owner}::entry"))
+                    .unwrap();
+                assert!(entry["path"]["trait_context_symbols"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|s| s["qualified_name"] == owner));
+            }
+        }
+    }
+    #[test]
+    fn php_trait_git_padding_does_not_turn_owner_ids_into_binding_changes() {
+        let repo = Repo::new();
+        repo.write(
+            "trait.php",
+            "<?php trait T {public function run(){self::leaf();}}",
+        );
+        let hosts="<?php class A {use T;public static function leaf(){} public function entry(){$this->run();}}";
+        repo.write("hosts.php", hosts);
+        repo.git(&["add", "trait.php", "hosts.php"]);
+        repo.write(
+            "hosts.php",
+            &hosts.replace(
+                "<?php",
+                "<?php /* padding shifts every captured class and method ID */",
+            ),
+        );
+        let report = repo.run(&repo.query("working_tree"));
+        assert_eq!(report["changed_symbol_groups_total"], 0, "{report}");
+        assert_eq!(report["files_changed_total"], 1);
+    }
+    #[test]
+    fn php_trait_git_incompatible_classes_and_value_only_entries_stay_separate() {
+        let repo = Repo::new();
+        let source="<?php trait T {public function run(){self::leaf();}} class A {use T;public static function leaf(){return 1;} public function entry(){$f=$this->run(...);}} class B {use T;public static function leaf(){} public function entry(){$this->run();}}";
+        php_fixture(&repo, source);
+        repo.write("code.php", &source.replace("return 1", "return 2"));
+        let mut q = repo.query("working_tree");
+        let calls = repo.run(&q);
+        assert_eq!(
+            affected_names(&calls, "after_impact"),
+            BTreeSet::from(["T::run".into()])
+        );
+        q.relations = Some(PathRelations::References);
+        let references = repo.run(&q);
+        for side in ["before_impact", "after_impact"] {
+            assert_eq!(
+                affected_names(&references, side),
+                BTreeSet::from(["T::run".into(), "A::entry".into()])
+            );
+        }
+    }
+    #[test]
+    fn php_trait_git_nested_paths_preserve_different_source_and_target_frames() {
+        let repo = Repo::new();
+        let source="<?php trait Inner {public function inner(){self::leaf();}} trait Outer {public function outer(){$this->inner();}} class Base1 {use Inner;public static function leaf(){return 1;}} class Base2 {use Inner;public static function leaf(){}} class N1 extends Base1 {use Outer;public function entry(){$this->outer();}} class N2 extends Base2 {use Outer;public function entry(){$this->outer();}}";
+        php_fixture(&repo, source);
+        repo.write("code.php", &source.replace("return 1", "return 2"));
+        let mut q = repo.query("working_tree");
+        q.depth = Some(10);
+        let report = repo.run(&q);
+        for side in ["before_impact", "after_impact"] {
+            assert_eq!(
+                affected_names(&report, side),
+                BTreeSet::from([
+                    "Inner::inner".into(),
+                    "Outer::outer".into(),
+                    "N1::entry".into()
+                ])
+            );
+            let item = report[side]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["symbol"]["qualified_name"] == "N1::entry")
+                .unwrap();
+            assert_eq!(item["path"]["complete_to_seed"], true);
+            let steps = item["path"]["steps"].as_array().unwrap();
+            assert_eq!(steps.len(), 3);
+            assert_eq!(steps[0]["target_context"], steps[1]["source_context"]);
+            assert_eq!(steps[1]["target_context"], steps[2]["source_context"]);
+            assert_ne!(steps[1]["source_context"], steps[1]["target_context"]);
+        }
     }
 }

@@ -1,0 +1,27 @@
+{
+  "passed": true,
+  "versions": {
+    "index_format": 82,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "checks": [
+    "forward-back-both-context-matching",
+    "incompatible-consumers-excluded-even-with-ambiguity-opt-in",
+    "within-context-target-uniqueness",
+    "conditional-root-alternatives",
+    "nested-inherited-trait-frames",
+    "value-reference-not-call",
+    "enum-consumer",
+    "step-context-and-source-provenance",
+    "project-scope",
+    "depth-result-work-budgets",
+    "determinism",
+    "full-cache-equivalence",
+    "stale-owner-exclusion",
+    "source-sync-target-refresh"
+  ],
+  "runtime_path_proven": false,
+  "production_database_touched": false,
+  "source_applications_executed": false
+}

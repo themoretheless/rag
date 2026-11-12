@@ -346,45 +346,55 @@ fn merge_literal_roles(
     }
 }
 fn corpus_files_locked(
-    conn: &duckdb::Connection,
+    r: &impl crate::db::lin_engine::LinReader,
     project: Option<&str>,
     prefix: Option<&str>,
 ) -> Result<Vec<File>> {
-    let selected = {
-        let mut statement=conn.prepare("SELECT id,COALESCE(source_file,uri) FROM documents WHERE COALESCE(status,'active') NOT IN ('archived','tombstone','consolidated') AND (? IS NULL OR wing=?) ORDER BY 2,id")?;
-        let rows = statement.query_map(params![project, project], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        })?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()?
-            .into_iter()
-            .filter(|(_, path)| in_scope(path, prefix))
-            .collect::<Vec<_>>()
-    };
-    let mut files = Vec::new();
+    use crate::db::lin_engine::{cell_i64_opt, cell_opt_string, cell_str, cell_string};
+    let mut selected = Vec::new();
+    r.scan_each("documents", |row| {
+        let status = cell_str(row, "status").unwrap_or("active");
+        if matches!(status, "archived" | "tombstone" | "consolidated") {
+            return Ok(true);
+        }
+        if let Some(p) = project
+            && cell_str(row, "wing") != Some(p)
+        {
+            return Ok(true);
+        }
+        let path = cell_str(row, "source_file")
+            .or_else(|| cell_str(row, "uri"))
+            .unwrap_or("");
+        if in_scope(path, prefix) {
+            selected.push((cell_string(row, "id"), path.to_string()));
+        }
+        Ok(true)
+    })?;
+    selected.sort_by(|a, b| (&a.1, &a.0).cmp(&(&b.1, &b.0)));
+
+    let mut files = Vec::with_capacity(selected.len());
     for batch in selected.chunks(512) {
-        let placeholders = std::iter::repeat_n("?", batch.len())
-            .collect::<Vec<_>>()
-            .join(",");
-        let sql=format!("SELECT id,COALESCE(source_file,uri),wing,COALESCE(revision,1),content,metadata_json FROM documents WHERE id IN ({placeholders}) ORDER BY 2,id");
-        let mut statement = conn.prepare(&sql)?;
-        let rows = statement.query_map(
-            duckdb::params_from_iter(batch.iter().map(|(id, _)| id)),
-            |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, Option<String>>(2)?,
-                    r.get::<_, i64>(3)?,
-                    r.get::<_, String>(4)?,
-                    r.get::<_, String>(5)?,
-                ))
-            },
-        )?;
-        let rows = rows.collect::<std::result::Result<Vec<_>, _>>()?;
-        for row in rows {
-            let (id, path, project, revision, content, metadata) = row;
+        let mut rows = Vec::with_capacity(batch.len());
+        for (id, _) in batch {
+            if let Some(row) = r.get_by_id("documents", id)? {
+                let path = cell_str(&row, "source_file")
+                    .or_else(|| cell_str(&row, "uri"))
+                    .unwrap_or("")
+                    .to_string();
+                rows.push((
+                    cell_string(&row, "id"),
+                    path,
+                    cell_opt_string(&row, "wing"),
+                    cell_i64_opt(&row, "revision").unwrap_or(1),
+                    cell_string(&row, "content"),
+                    cell_str(&row, "metadata_json").unwrap_or("{}").to_string(),
+                ));
+            }
+        }
+        rows.sort_by(|a, b| (&a.1, &a.0).cmp(&(&b.1, &b.0)));
+        for (id, path, project, revision, content, metadata) in rows {
             if in_scope(&path, prefix) {
-                let content = source::read(conn, &content, &metadata)?.into_owned();
+                let content = source::read(r, &content, &metadata)?.into_owned();
                 let hash = content_hash(&content);
                 let meta = serde_json::from_str::<serde_json::Value>(&metadata).ok();
                 let verified = meta.as_ref().filter(|m| {
@@ -412,8 +422,8 @@ fn corpus_files_locked(
 impl Store {
     #[cfg(test)]
     fn corpus_files(&self, project: Option<&str>, prefix: Option<&str>) -> Result<Vec<File>> {
-        let conn = self.lock()?;
-        corpus_files_locked(&conn, project, prefix)
+        let r = self.read()?;
+        corpus_files_locked(&*r, project, prefix)
     }
     pub fn search_multi(&self, q: &MultiSearch) -> Result<serde_json::Value> {
         if q.queries.is_empty()
@@ -449,10 +459,10 @@ impl Store {
                 Ok(regex)
             })
             .collect::<Result<_>>()?;
-        let mut connection = self.lock()?;
-        let transaction = connection.transaction()?;
+        let guard = self.read()?;
+        let r = &*guard;
         let files =
-            corpus_files_locked(&transaction, q.project.as_deref(), q.path_prefix.as_deref())?;
+            corpus_files_locked(r, q.project.as_deref(), q.path_prefix.as_deref())?;
         let limit = q.limit.unwrap_or(50).clamp(1, 500);
         let mut items = Vec::new();
         let mut counts = vec![0usize; patterns.len()];
@@ -500,7 +510,7 @@ impl Store {
             serde_json::json!({"query_index":i,"query":q.queries[i],"items":hits,"matching_documents_total":counts[i],"truncated":counts[i]>limit,"occurrences_per_document_limit":3})
         }).collect();
         let snapshot = if union_total > 0 {
-            Some(super::snapshot_locked(&transaction, q.project.as_deref())?)
+            Some(super::snapshot_locked(r, q.project.as_deref())?)
         } else {
             None
         };
@@ -519,7 +529,7 @@ impl Store {
             .collect();
         let literal = if let Some(snapshot) = &snapshot {
             literal_mentions::scan(
-                &transaction,
+                r,
                 snapshot,
                 &literal_targets,
                 q.project.as_deref(),
@@ -577,7 +587,6 @@ impl Store {
         let family_items: Vec<_> = ranked.into_iter().take(limit).collect();
         let role_analysis = snapshot.as_ref().map(|s| serde_json::json!({"index_rev":s.index_revision,"basis":"fresh_static_index_candidates","runtime_activity_verified":false,"stale_documents":s.stale_documents,"unindexed_documents":s.unindexed_documents,"parse_errors":s.parse_errors,"role_contract_version":2,"markup_references_included":true,"file_import_references_included":true,"literal_path_mentions_included":true,"role_source_scope":"fresh_selected_project_index_before_target_path_prefix","observation_consistency":"single_read_transaction"}));
         let result = serde_json::json!({"items":items,"per_query":per_query,"families":family_items,"families_retained_total":family_total,"families_truncated":family_total>limit,"family_coverage":"retained_per_query_windows","family_roles_verified":false,"family_role_analysis":role_analysis,"union_matching_documents_total":union_total,"matching_documents_total":matched,"documents_scanned":files.len(),"truncated":matched>limit,"per_query_document_counts":counts,"match_mode":mode,"regex":q.regex,"case_insensitive":q.case_insensitive,"snapshot":"current_stored_documents","literal_path_analysis":literal.report,"observation_consistency":"single_read_transaction","chunk_boundary_independent":true,"filesystem_read":false});
-        transaction.commit()?;
         Ok(result)
     }
     pub fn duplicates(&self, q: &DuplicateQuery) -> Result<serde_json::Value> {
@@ -589,11 +598,11 @@ impl Store {
         if !threshold.is_finite() || !(0.5..=1.0).contains(&threshold) {
             return Err(AppError::config("min_similarity must be between 0.5 and 1"));
         }
-        let mut connection = self.lock()?;
-        let transaction = connection.transaction()?;
+        let guard = self.read()?;
+        let r = &*guard;
         let files =
-            corpus_files_locked(&transaction, q.project.as_deref(), q.path_prefix.as_deref())?;
-        let snapshot = super::snapshot_locked(&transaction, q.project.as_deref())?;
+            corpus_files_locked(r, q.project.as_deref(), q.path_prefix.as_deref())?;
+        let snapshot = super::snapshot_locked(r, q.project.as_deref())?;
         let mut roles = search_roles(&snapshot, &files);
         let mut exact: BTreeMap<(Option<String>, &str), Vec<usize>> = BTreeMap::new();
         let mut families: BTreeMap<(Option<String>, String), Vec<usize>> = BTreeMap::new();
@@ -690,7 +699,7 @@ impl Store {
             .collect();
         let literal_targets: Vec<_> = target_indices.iter().map(|i| &files[*i]).collect();
         let literal = literal_mentions::scan(
-            &transaction,
+            r,
             &snapshot,
             &literal_targets,
             q.project.as_deref(),
@@ -772,7 +781,6 @@ impl Store {
         }
         let source_byte_identity = source_bytes::enrich(&mut results, &files);
         let result = serde_json::json!({"source_byte_identity":source_byte_identity,"primary_comparison":primary_comparison,"groups":results,"groups_total":total,"documents_checked":files.len(),"truncated":total>limit,"comparison_limit_reached":truncated,"comparisons":comparisons,"sampled_documents":sampled.iter().map(|i|&files[*i].document_id).collect::<Vec<_>>(),"index_rev":snapshot.index_revision,"group_semantics":if byte_view{"captured_source_byte_digest_partitions"}else if family_view{"independent_exact_partitions_and_directory_sensitive_numbered_name_families"}else{"connected_similarity_components"},"grouping":if byte_view{"source_byte_copies"}else if family_view{"exact_and_name_families"}else{"similarity_components"},"grouping_contract_version":1,"pairwise_token_grouping_performed":!family_view && !byte_view,"family_classification_threshold":if family_view{Some(threshold)}else{None},"overlapping_groups_possible":family_view,"exactness":if byte_view{"captured_source_byte_digest_and_count_not_live_filesystem"}else{"stored_utf8_text_not_original_binary"},"role_contract_version":2,"literal_path_analysis":literal.report,"role_order":["usage_score_desc","observed_evidence_count_desc","path_length_asc","path_asc","document_id_asc"],"role_relations":["entrypoints","bound_calls","bound_values_and_types","file_imports","file_resources"],"role_source_scope":"fresh_selected_project_index_before_target_path_prefix","role_observation_consistency":"single_read_transaction","liveness_semantics":"observed_static_evidence_not_runtime_proof","stale_documents":snapshot.stale_documents,"unindexed_documents":snapshot.unindexed_documents,"parse_errors":snapshot.parse_errors});
-        transaction.commit()?;
         Ok(result)
     }
 }
@@ -1632,11 +1640,14 @@ mod tests {
         put(&store, "q", "/q/a.py", "def work(): return 'needle'", "q");
         store.index_code().unwrap();
         store
-            .lock()
+            .write()
             .unwrap()
-            .execute(
-                "UPDATE code_index_documents SET payload='not-json' WHERE document_id='q'",
-                [],
+            .update_where(
+                "code_index_documents",
+                lin::query::pred::eq("document_id", "q"),
+                crate::db::lin_engine::RecBuilder::new()
+                    .str("payload", "not-json")
+                    .build(),
             )
             .unwrap();
         let mut query = search(&["needle"]);
@@ -1646,11 +1657,14 @@ mod tests {
             1
         );
         store
-            .lock()
+            .write()
             .unwrap()
-            .execute(
-                "UPDATE code_index_documents SET payload='not-json' WHERE document_id='p'",
-                [],
+            .update_where(
+                "code_index_documents",
+                lin::query::pred::eq("document_id", "p"),
+                crate::db::lin_engine::RecBuilder::new()
+                    .str("payload", "not-json")
+                    .build(),
             )
             .unwrap();
         assert!(store.search_multi(&query).is_err());
@@ -1662,88 +1676,55 @@ mod tests {
     #[test]
     fn corpus_read_transaction_keeps_roles_consistent_across_a_concurrent_publication() {
         let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("snapshot.duckdb");
-        let reader = Store::open(&path).unwrap();
-        let mut writer = reader.lock().unwrap().try_clone().unwrap();
+        let path = temp.path().join("snapshot.lin");
+        let writer = Store::open(&path).unwrap();
         put(
-            &reader,
+            &writer,
             "a",
             "/p/copies/mod.js",
             "//needle\nconst value=1;",
             "p",
         );
         put(
-            &reader,
+            &writer,
             "b",
             "/p/copies/mod2.js",
             "//needle\nconst value=1;",
             "p",
         );
         put(
-            &reader,
+            &writer,
             "source",
             "/p/use.js",
             "import './copies/mod2.js';",
             "p",
         );
-        reader.index_code().unwrap();
-        let mut conn = reader.lock().unwrap();
-        let transaction = conn.transaction().unwrap();
-        let files = corpus_files_locked(&transaction, Some("p"), Some("/p/copies")).unwrap();
-        // A cloned connection shares this DuckDB instance, unlike a second open.
-        // Publish real parsed facts/history while the first read view stays open.
-        let write = writer.transaction().unwrap();
-        write.execute("UPDATE documents SET content='const removed=1;',revision=revision+1 WHERE id='source'",[]).unwrap();
-        let docs = {
-            let mut statement=write.prepare("SELECT id,source_file,content,COALESCE(revision,1),wing,source_file IS NOT NULL FROM documents ORDER BY id").unwrap();
-            let rows = statement
-                .query_map([], |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        r.get::<_, String>(1)?,
-                        r.get::<_, String>(2)?,
-                        r.get::<_, i64>(3)?,
-                        r.get::<_, Option<String>>(4)?,
-                        r.get::<_, bool>(5)?,
-                    ))
-                })
-                .unwrap();
-            rows.collect::<std::result::Result<Vec<_>, _>>().unwrap()
-        };
-        let analyses: Vec<_> = docs
-            .iter()
-            .map(|(id, path, source, revision, project, _)| {
-                let mut parsed = parse(id, path, source, *revision).unwrap();
-                parsed.project = project.clone();
-                (id.clone(), serde_json::to_string(&parsed).unwrap())
-            })
-            .collect();
-        for (id, payload) in &analyses {
-            write
-                .execute(
-                    "UPDATE code_index_documents SET payload=? WHERE document_id=?",
-                    params![payload, id],
-                )
-                .unwrap();
-        }
-        let published = history::publish(&write, &docs, &analyses, false).unwrap();
-        assert!(published.1);
-        assert_eq!(published.0, 2);
-        write.commit().unwrap();
-        let old = super::super::snapshot_locked(&transaction, Some("p")).unwrap();
+        writer.index_code().unwrap();
+        // Open a pinned OS-shared read-only snapshot (`Db::open_read`) before mutating `writer`.
+        let pinned_reader = Store::open_read_only(&path).unwrap();
+        let r_guard = pinned_reader.read().unwrap();
+        let files = corpus_files_locked(&*r_guard, Some("p"), Some("/p/copies")).unwrap();
+        // Publish real parsed facts/history on the writer while the read-only snapshot stays open.
+        put(&writer, "source", "/p/use.js", "const removed=1;", "p");
+        let published = writer.index_code().unwrap();
+        assert!(published.revision_created);
+        assert_eq!(published.index_revision, Some(2));
+
+        let old = super::super::snapshot_locked(&*r_guard, Some("p")).unwrap();
         assert_eq!(old.index_revision, Some(1));
         let roles = search_roles(&old, &files);
         assert_eq!(roles.get("b").unwrap().0, 3);
-        transaction.commit().unwrap();
-        drop(conn);
+        drop(r_guard);
+        drop(pinned_reader);
+
         let mut query = search(&["needle"]);
         query.project = Some("p".into());
         query.path_prefix = Some("/p/copies".into());
         assert_eq!(
-            reader.search_multi(&query).unwrap()["families"][0]["usage_score"],
+            writer.search_multi(&query).unwrap()["families"][0]["usage_score"],
             0
         );
-        let duplicate = reader
+        let duplicate = writer
             .duplicates(&DuplicateQuery {
                 project: Some("p".into()),
                 path_prefix: Some("/p/copies".into()),
@@ -1759,13 +1740,33 @@ mod tests {
     #[test]
     fn scoped_corpus_body_reads_cross_parameter_batches_without_losing_order() {
         let temp = tempfile::tempdir().unwrap();
-        let store = Store::open(&temp.path().join("batches.duckdb")).unwrap();
-        store.lock().unwrap().execute("INSERT INTO documents(id,uri,title,content,source_file,wing,created_at,updated_at) SELECT 'd'||i,'file://d'||i,'doc','needle','/p/copies/f'||i||'.txt','p',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP FROM range(513) t(i)",[]).unwrap();
+        let store = Store::open(&temp.path().join("batches.lin")).unwrap();
+        {
+            let now = crate::db::lin_engine::format_db_timestamp(chrono::Utc::now());
+            let rows: Vec<_> = (0..513)
+                .map(|i| {
+                    let id = format!("d{i}");
+                    crate::db::lin_engine::RecBuilder::new()
+                        .id(&id)
+                        .str("uri", format!("file://d{i}"))
+                        .str("title", "doc")
+                        .str("content", "needle")
+                        .str("source_file", format!("/p/copies/f{i}.txt"))
+                        .str("wing", "p")
+                        .str("metadata_json", "{}")
+                        .str("created_at", &now)
+                        .str("updated_at", &now)
+                        .i64("revision", 1)
+                        .str("status", "active")
+                        .build()
+                })
+                .collect();
+            store.write().unwrap().insert_records("documents", rows).unwrap();
+        }
         put(&store, "quoted'?)", "/p/copies/quoted.txt", "needle", "p");
         put(&store, "outside", "/p/other.txt", "outside", "p");
-        let mut connection = store.lock().unwrap();
-        let tx = connection.transaction().unwrap();
-        let files = corpus_files_locked(&tx, Some("p"), Some("/p/copies")).unwrap();
+        let r = store.read().unwrap();
+        let files = corpus_files_locked(&*r, Some("p"), Some("/p/copies")).unwrap();
         assert_eq!(files.len(), 514);
         assert!(files
             .windows(2)
@@ -1773,7 +1774,6 @@ mod tests {
                 <= (&pair[1].path, &pair[1].document_id)));
         assert!(files.iter().any(|f| f.document_id == "quoted'?)"));
         assert!(files.iter().all(|f| f.content == "needle"));
-        tx.commit().unwrap();
     }
     #[test]
     fn literal_path_roles_find_endpoint_constants_outside_target_scope() {

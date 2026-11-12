@@ -1,0 +1,45 @@
+{
+  "status": "passed",
+  "workspace": {
+    "passed": 1632,
+    "failed": 0,
+    "ignored": 1
+  },
+  "mcp_exit_codes": {
+    "python_bindings": 0,
+    "python_data_flow": 0,
+    "table_impact": 0,
+    "phpunit_host_impact": 0,
+    "phpunit_effective": 0,
+    "affected_tests": 0,
+    "trace_php_contexts": 0,
+    "git_php_contexts": 0
+  },
+  "binary_sha256": "555bfca6c65444b57d002e3c2619afdc2fd003b19359964f9e386c2070e769a6",
+  "binary_unchanged": true,
+  "source_hashes_before": {
+    "Cargo.toml": "3ac449f72872ac529d8863dc561b3084ba29eebe9e3e4d118ce56113215329c1",
+    "Cargo.lock": "bec738712304fba10e5fc85af59ca588df50024c39b85c70fadcc9665266363b",
+    "src/code_index.rs": "a6ef47223cdf09ca647ff6bf0ba7c3005a1de9f13f001e190ddb07aa4a54c002",
+    "src/code_index/resolve.rs": "b39140cf61bb79c5e02fce662c3eba3941626312f2d53809ab213b912b9f3b84",
+    "src/code_index/resolve/python_names.rs": "c4d1a8d68d4fb7aa7d64317c9585c67e7ac8e86532b7657fa409d742629f5d52",
+    "src/code_index/resolve/python_names/tests.rs": "71410b9bcd24c96030b024a400e9591fc79a977215f269480aab4becd3900edd",
+    "src/code_index/history.rs": "63a1a239c98edbbc48e93595b0bb5d3c7479d7a5d20807345dd4fa3c2d416669",
+    "src/code_index/data_flow/capture.rs": "0eeeb71befef0ca4c0878941e222b7d62d4117450e3aba5ac0b621915baf7c87",
+    "src/code_index/data_flow/query.rs": "02402a7c198ab77838495ed09f57e9db556679b74955b289e9a48796fe67e4b2"
+  },
+  "source_hashes_after": {
+    "Cargo.toml": "3ac449f72872ac529d8863dc561b3084ba29eebe9e3e4d118ce56113215329c1",
+    "Cargo.lock": "bec738712304fba10e5fc85af59ca588df50024c39b85c70fadcc9665266363b",
+    "src/code_index.rs": "a6ef47223cdf09ca647ff6bf0ba7c3005a1de9f13f001e190ddb07aa4a54c002",
+    "src/code_index/resolve.rs": "b39140cf61bb79c5e02fce662c3eba3941626312f2d53809ab213b912b9f3b84",
+    "src/code_index/resolve/python_names.rs": "c4d1a8d68d4fb7aa7d64317c9585c67e7ac8e86532b7657fa409d742629f5d52",
+    "src/code_index/resolve/python_names/tests.rs": "71410b9bcd24c96030b024a400e9591fc79a977215f269480aab4becd3900edd",
+    "src/code_index/history.rs": "63a1a239c98edbbc48e93595b0bb5d3c7479d7a5d20807345dd4fa3c2d416669",
+    "src/code_index/data_flow/capture.rs": "0eeeb71befef0ca4c0878941e222b7d62d4117450e3aba5ac0b621915baf7c87",
+    "src/code_index/data_flow/query.rs": "02402a7c198ab77838495ed09f57e9db556679b74955b289e9a48796fe67e4b2"
+  },
+  "selected_sources_unchanged": true,
+  "shared_source_frozen": false,
+  "production_database_touched": false
+}

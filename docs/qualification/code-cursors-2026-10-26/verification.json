@@ -1,0 +1,117 @@
+{
+  "observed_at_utc": "2026-10-26T02:59:50.329003+00:00",
+  "git_head": "facf53372b0beef5f829e618f5d55b4bb38b2f22",
+  "native_gates": {
+    "corrupt-before": {
+      "sha256": "0a7b6276bf6a06b2a01de03d6006fcde8c71cfe9d16fed4c7aefefaa17415c23",
+      "suites": 1,
+      "passed": 0,
+      "failed": 1,
+      "ignored": 0
+    },
+    "rechunk-before": {
+      "sha256": "1fa5e438e23d02a2139cbd613805cfb39353871c6ff1dda80230d1c3e09d7841",
+      "suites": 1,
+      "passed": 0,
+      "failed": 1,
+      "ignored": 0
+    },
+    "focused-final": {
+      "sha256": "56ac7019b57522b69ca8a8d24ee9bdab17d3c70382a35f516a4b96b1fdc2d500",
+      "suites": 1,
+      "passed": 8,
+      "failed": 0,
+      "ignored": 0
+    },
+    "workspace-final": {
+      "sha256": "d17aa46946ba6559972fe2261200f24d42f48d72bc3c7b4cca1253cebcef5285",
+      "suites": 19,
+      "passed": 1528,
+      "failed": 0,
+      "ignored": 1
+    },
+    "clippy-final": {
+      "sha256": "5034c6db23beb93ea67b4a00f1f2b6fc233128436156a6bb37b12fbe068f848a",
+      "suites": 0,
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    "build-final": {
+      "sha256": "6da52fd4b044997a104d1468c4e53087f59999f1976a9e8827c1927a8b98a84a",
+      "suites": 0,
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    }
+  },
+  "post_check_selected_source_hashes": {
+    "src/code_index.rs": "0f3aac5bb433a8c3fa513d1add806d589b9776ca530ea8129848bf5c20f5d25c",
+    "src/code_index/code_read.rs": "ace56dce9c02c8b6687c3a770c07e06199f70db8bcc561f6f82bba8d18183cc1",
+    "src/code_index/code_read/cursor.rs": "f5665c6b77af850969d21584dd9b14ce44d768333b9623cd0e0901f735a91287",
+    "src/mcp/analysis.rs": "cbe3b56e620834375881b4c08ec11a16909f65bee9e7f1984b648f0fc76bee76",
+    "scripts/smoke_code_cursors.py": "4f1204bd4228860d1e1910f5e522bb4246df3ad3662cb3dbfed5137672273888",
+    "Cargo.toml": "3ac449f72872ac529d8863dc561b3084ba29eebe9e3e4d118ce56113215329c1",
+    "Cargo.lock": "bec738712304fba10e5fc85af59ca588df50024c39b85c70fadcc9665266363b"
+  },
+  "atomic_source_snapshot": false,
+  "shared_checkout": true,
+  "copied_executable": {
+    "sha256": "66bd444db2a42c348f214110cbd35affc1ac22b2c19618169e7e08d19f200e98",
+    "bytes": 327564296,
+    "fixed_for_all_MCP_scenarios": true,
+    "scenarios": [
+      "code_cursors",
+      "code_reads",
+      "code_documentation",
+      "php_parameter_contracts",
+      "client_endpoints",
+      "table_impact",
+      "route_queries",
+      "non_code_references"
+    ]
+  },
+  "runtime": {
+    "passed": true,
+    "checks": [
+      "large_single_line_complete_pagination",
+      "changed_page_budget",
+      "cursor_progress",
+      "no_op_sync_preserves_cursor",
+      "foreign_ingest_without_publication_preserves_scoped_cursor",
+      "UTF8_byte_window",
+      "split_UTF8_rejection",
+      "query_conflict",
+      "malformed_cursor",
+      "CSV_array_ID_equivalence",
+      "nested_container_record_and_text_pagination",
+      "no_repeated_bytes_across_pages",
+      "actual_chunk_overlap_pagination",
+      "stale_view_conflict",
+      "republished_view_conflict"
+    ],
+    "large_pages": 3,
+    "nested_pages": 16,
+    "chunk_pages": 2,
+    "actual_chunk_character_ranges": [
+      [
+        0,
+        800
+      ],
+      [
+        680,
+        1480
+      ]
+    ],
+    "actual_chunks_partially_overlap": true,
+    "versions": {
+      "index_format": 70,
+      "package": "0.1.0",
+      "store_schema": 25
+    },
+    "production_database_touched": false,
+    "source_applications_executed": false,
+    "retained_historical_snapshot": false
+  },
+  "whole_RAGRAF_parity_proven": false
+}

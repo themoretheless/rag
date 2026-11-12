@@ -302,7 +302,7 @@ impl Default for Config {
         use crate::llm::LlmProviderKind;
         let llm_provider = LlmProviderKind::Ollama;
         Self {
-            db_path: PathBuf::from("./rag.duckdb"),
+            db_path: PathBuf::from("./rag.lin"),
             embedding_provider: EmbeddingProviderKind::Mock,
             embedding_base_url: "https://api.openai.com/v1".to_string(),
             embedding_api_key: Secret::default(),
@@ -460,7 +460,7 @@ impl Config {
     /// chunk overlap, token/chunk caps, FTS stemmer, and search mode.
     pub fn from_env() -> Result<Self, AppError> {
         let db_path = env::var("RAG_DB_PATH")
-            .unwrap_or_else(|_| "./rag.duckdb".to_string())
+            .unwrap_or_else(|_| "./rag.lin".to_string())
             .into();
 
         let provider_raw =

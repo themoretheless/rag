@@ -20,23 +20,30 @@ fn bounded_recovery_reader_rejects_sparse_oversized_file() {
 #[test]
 fn store_preflight_refuses_document_count_before_materialization() {
     let root = tempfile::tempdir().unwrap();
-    let store = Store::open(&root.path().join("large.duckdb")).unwrap();
+    let store = Store::open(&root.path().join("large.lin")).unwrap();
     {
-        let conn = store.lock().unwrap();
-        conn.execute(
-            r#"
-                INSERT INTO documents (
-                    id, uri, title, content, metadata_json, created_at, updated_at
-                )
-                SELECT
-                    'portable-limit-' || CAST(i AS VARCHAR),
-                    'recovery://portable-limit/' || CAST(i AS VARCHAR),
-                    'limit', '', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-                FROM range(0, ?) AS generated(i)
-                "#,
-            params![i64::try_from(PORTABLE_RECOVERY_MAX_DOCUMENTS + 1).unwrap()],
-        )
-        .unwrap();
+        let mut w = store.write().unwrap();
+        let now = Utc::now().to_rfc3339();
+        let records = (0..=PORTABLE_RECOVERY_MAX_DOCUMENTS)
+            .map(|i| {
+                RecBuilder::new()
+                    .str("id", format!("portable-limit-{i}"))
+                    .str("uri", format!("recovery://portable-limit/{i}"))
+                    .str("title", "limit")
+                    .str("content", "")
+                    .str("metadata_json", "{}")
+                    .str("layer", "raw")
+                    .str("kind", "document")
+                    .str("status", "active")
+                    .bool("pinned", false)
+                    .f64("boost", 1.0)
+                    .i64("revision", 1)
+                    .str("created_at", &now)
+                    .str("updated_at", &now)
+                    .build()
+            })
+            .collect();
+        w.insert_records("documents", records).unwrap();
     }
 
     let error = store.recovery_bundle().unwrap_err();
@@ -104,8 +111,8 @@ fn backup_writes_verified_sidecars_and_inventory_protects_final() {
 #[test]
 fn verify_backup_never_migrates_or_mutates_the_inspected_file() {
     let root = tempfile::tempdir().unwrap();
-    let backup = root.path().join("legacy-empty.duckdb");
-    drop(duckdb::Connection::open(&backup).unwrap());
+    let backup = root.path().join("legacy-empty.lin");
+    lin::Db::empty().export_backup(&backup).unwrap();
     let before = fs::read(&backup).unwrap();
     let before_hash = sha256_file(&backup).unwrap();
 
@@ -126,8 +133,9 @@ fn verify_backup_never_migrates_or_mutates_the_inspected_file() {
 fn verify_backup_fails_closed_for_invalid_embedding_contracts() {
     for case in ["missing", "forged", "incomplete", "dims"] {
         let root = tempfile::tempdir().unwrap();
-        let backup = root.path().join(format!("{case}.duckdb"));
-        let store = Store::open(&backup).unwrap();
+        let source = root.path().join(format!("{case}-src.lin"));
+        let backup = root.path().join(format!("{case}.lin"));
+        let store = Store::open(&source).unwrap();
         let document = recovery_document("document", "recovery://document", "body");
         store.upsert_document(&document).unwrap();
         let mut chunk = recovery_chunk("chunk", "document", "body");
@@ -148,6 +156,10 @@ fn verify_backup_fails_closed_for_invalid_embedding_contracts() {
                 _ => unreachable!(),
             }
             store.set_embedding_manifest(&manifest).unwrap();
+        }
+        {
+            let mut w = store.write().unwrap();
+            w.export_backup(&backup).unwrap();
         }
         drop(store);
         let before = fs::read(&backup).unwrap();
@@ -1083,8 +1095,14 @@ fn backup_failure_after_main_verification_removes_group_and_retry_succeeds() {
 #[test]
 fn backup_refuses_live_database_inode_alias() {
     let root = tempfile::tempdir().unwrap();
-    let source = root.path().join("live.duckdb");
-    let alias = root.path().join("alias.duckdb");
+    let seed = root.path().join("seed.lin");
+    let source = root.path().join("live.lin");
+    let alias = root.path().join("alias.lin");
+    {
+        let seed_store = Store::open(&seed).unwrap();
+        let mut w = seed_store.write().unwrap();
+        w.export_backup(&source).unwrap();
+    }
     let store = Store::open(&source).unwrap();
     fs::hard_link(&source, &alias).unwrap();
     let error = store.backup_database(&alias, false, true).unwrap_err();
@@ -1095,9 +1113,15 @@ fn backup_refuses_live_database_inode_alias() {
 #[test]
 fn backup_refuses_a_sidecar_alias_to_the_live_database() {
     let root = tempfile::tempdir().unwrap();
-    let source = root.path().join("live.duckdb");
-    let backup = root.path().join("backup.duckdb");
+    let seed = root.path().join("seed.lin");
+    let source = root.path().join("live.lin");
+    let backup = root.path().join("backup.lin");
     let metadata_path = PathBuf::from(format!("{}.metadata.json", backup.display()));
+    {
+        let seed_store = Store::open(&seed).unwrap();
+        let mut w = seed_store.write().unwrap();
+        w.export_backup(&source).unwrap();
+    }
     let store = Store::open(&source).unwrap();
     fs::hard_link(&source, &metadata_path).unwrap();
     let original_len = fs::metadata(&source).unwrap().len();

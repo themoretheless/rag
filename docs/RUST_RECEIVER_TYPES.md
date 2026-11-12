@@ -1,5 +1,32 @@
 # Rust receiver typing from captured AST facts
 
+The format81 qualified runtime also retains selected imported standard arch
+struct identities through generic wrappers and captured local trait bounds,
+using explicit architecture/import/shadow guards. It does not create external
+definitions or assume an external inherent-method inventory. See
+[standard arch types](RUST_STDARCH_TYPES.md) and
+[qualification](qualification/rust-stdarch-types-2026-10-26/README.md).
+
+Format79 also propagates declared fn/Fn/FnMut/FnOnce callback outputs and standard
+Option/Result success types through `?`, with lexical/standard-name/arity guards.
+It infers the result receiver without inventing a concrete callback body. See
+[callback outputs](RUST_CALLBACK_OUTPUTS.md) and
+[qualification](qualification/rust-callback-try-2026-10-26/README.md).
+
+The qualified format-78 runtime further propagates generic Self returns and
+declared associated-type bounds through method/static-associated-call chains.
+Targets remain trait declarations; cfg alternatives are selected independently
+and unavailable/ambiguous/GAT/generic-trait cases retain conservative boundaries.
+See [associated bounds](qualification/rust-associated-bounds-2026-10-26/README.md).
+
+Format 76 additionally retains lexical generic parameter identity, trait bounds
+and conservative implicit-Sized evidence. This permits pointer extension-trait
+binding for `*const T`/`*mut T` with captured Sized parameters, while rejecting
+`?Sized`, unknown and known-unsized pointees for Sized blanket impls. Distinct
+parameters do not unify by matching trait sets. See
+[generic-parameter qualification](qualification/rust-generic-parameters-2026-10-26/README.md)
+for exact supported cases and remaining generic/compiler limits.
+
 Index format **31** captures return annotations, async markers, named struct
 fields, simple type aliases, lexical bindings/initializers and bounded expression
 trees. `resolve::references` uses them for Rust member calls. Bare and qualified
@@ -136,3 +163,22 @@ is not added by this milestone. Pointer arithmetic return inference, coercions,
 raw borrows, unsized metadata and dereference execution remain unqualified.
 
 Evidence: [raw pointer qualification](qualification/rust-raw-pointers-2026-10-26/README.md).
+
+
+## Declared union field receivers (format 70)
+
+Union items now have captured nominal definition identities and generic parameter
+facts. Named union fields use the same exact-owner/source-anchor/configuration
+selection as named struct fields. Declared field types propagate through nested
+members and generic substitutions; their methods are static candidate targets.
+Union bodies are type scopes, and union definitions cannot act as callable value
+constructors or hide a same-name function in the value namespace. Existing import
+and namespace filtering applies to union types. Union definitions remain outside
+the supported semantic-rename definition kinds.
+
+This records the declared type of a field access. It does not prove the active
+union member, initialization, unsafe-access validity, layout, aliasing or observed
+runtime dispatch. Unknown/duplicate field alternatives do not yield a unique
+receiver. Full union-related compiler semantics and flow-sensitive active-member
+analysis remain unimplemented. Evidence:
+[union field qualification](qualification/rust-union-fields-2026-10-26/README.md).

@@ -5,8 +5,8 @@ use super::*;
 impl Store {
     /// Refuse a portable export before loading all document and chunk rows.
     pub fn portable_recovery_preflight(&self) -> Result<PortableBundlePreflight> {
-        let conn = self.lock()?;
-        portable_store_preflight_locked(&conn)
+        let r = self.read()?;
+        portable_store_preflight_locked(&r)
     }
 
     /// Back up the database to `path`, optionally as a dry run or overwriting.
@@ -66,16 +66,24 @@ impl Store {
             });
         }
 
-        let snapshot_conn = {
-            let conn = self.lock()?;
-            conn.execute_batch("CHECKPOINT")?;
-            conn.try_clone()?
+        let disk_v2_view = {
+            let r = self.read()?;
+            r.disk_v2().map(|eng| eng.snapshot_view())
         };
         let mut publication = BackupGroupPublication::new(artifacts, overwrite);
-        let (database_stage, bytes) =
-            stage_database_snapshot(snapshot_conn, self.path(), path, || {
+        let (database_stage, bytes) = if let Some(view) = disk_v2_view {
+            stage_disk_v2_backup(view, self.path(), path, || {
                 publish_hook(BackupPublishStage::SnapshotConnectionReady)
-            })?;
+            })?
+        } else {
+            let snapshot = {
+                let mut w = self.write()?;
+                w.capture_portable_snapshot()?
+            };
+            stage_database_snapshot(snapshot, self.path(), path, || {
+                publish_hook(BackupPublishStage::SnapshotConnectionReady)
+            })?
+        };
         publication.set_staged(DATABASE_ARTIFACT, database_stage);
 
         let mut verification = verify_backup(publication.staged_path(DATABASE_ARTIFACT)?)?;
@@ -144,74 +152,40 @@ impl Store {
 
     /// Export all documents and related rows as a portable recovery bundle.
     pub fn recovery_bundle(&self) -> Result<RecoveryBundle> {
-        let conn = self.lock()?;
-        portable_store_preflight_locked(&conn)?;
-        let mut stmt = conn.prepare(
-            "SELECT id, uri, title, content, metadata_json, content_hash, wing, room, \
-            source_file, layer, kind, CAST(created_at AS VARCHAR), CAST(updated_at AS VARCHAR), \
-            COALESCE(status, 'active'), COALESCE(pinned, false), COALESCE(boost, 1.0), \
-            COALESCE(revision, 1) FROM documents ORDER BY id",
-        )?;
-        let rows = stmt.query_map([], |row| {
-            Ok(Document {
-                id: row.get(0)?,
-                uri: row.get(1)?,
-                title: row.get(2)?,
-                content: row.get(3)?,
-                metadata_json: row.get(4)?,
-                content_hash: row.get(5)?,
-                wing: row.get(6)?,
-                room: row.get(7)?,
-                source_file: row.get(8)?,
-                layer: row.get(9)?,
-                kind: row.get(10)?,
-                created_at: parse_ts(row.get::<_, String>(11)?),
-                updated_at: parse_ts(row.get::<_, String>(12)?),
-                status: row.get(13)?,
-                pinned: row.get(14)?,
-                boost: row.get(15)?,
-                revision: row.get(16)?,
-            })
+        let r = self.read()?;
+        portable_store_preflight_locked(&r)?;
+        let mut documents: Vec<Document> = r.filter_map_rows("documents", |row| {
+            Ok(Some(rows::document(row)?))
         })?;
-        let documents = rows.collect::<std::result::Result<Vec<_>, _>>()?;
-        drop(stmt);
+        documents.sort_by(|a, b| a.id.cmp(&b.id));
 
-        // All chunks in one ordered scan, grouped by document in Rust (was
-        // one prepare + query per document).
         let mut chunks_by_document: std::collections::HashMap<String, Vec<Chunk>> =
             std::collections::HashMap::with_capacity(documents.len());
-        {
-            let mut chunks_stmt = conn.prepare(
-                "SELECT id, document_id, chunk_index, content, embedding_json, char_start, \
-                char_end, COALESCE(metadata_json, '{}') FROM chunks ORDER BY document_id, \
-                chunk_index",
-            )?;
-            let mut rows = chunks_stmt.query([])?;
-            crate::db::rows::visit_rows(&mut rows, |row| {
-                let raw: String = row.get(4)?;
-                let embedding = serde_json::from_str(&raw).map_err(|error| {
-                    AppError::db(format!(
-                        "invalid embedding JSON for chunk {} in recovery export: {error}",
-                        row.get::<_, String>(0).unwrap_or_else(|_| "unknown".into())
-                    ))
-                })?;
-                let chunk = Chunk {
-                    id: row.get(0)?,
-                    document_id: row.get(1)?,
-                    chunk_index: row.get(2)?,
-                    content: row.get(3)?,
-                    embedding,
-                    char_start: row.get(5)?,
-                    char_end: row.get(6)?,
-                    metadata_json: row.get(7)?,
-                };
-                chunks_by_document
-                    .entry(chunk.document_id.clone())
-                    .or_default()
-                    .push(chunk);
-                Ok(())
-            })?;
+        r.scan_each("chunks", |row| {
+            if let Some(raw_json) = cell_str(row, "embedding_json")
+                && !raw_json.is_empty()
+                && serde_json::from_str::<Vec<f32>>(raw_json).is_err()
+            {
+                return Err(AppError::db(format!(
+                    "invalid embedding JSON for chunk {} in recovery export",
+                    cell_str(row, "id").unwrap_or("unknown")
+                )));
+            }
+            let chunk = rows::chunk(row)?;
+            chunks_by_document
+                .entry(chunk.document_id.clone())
+                .or_default()
+                .push(chunk);
+            Ok(true)
+        })?;
+        for chunks in chunks_by_document.values_mut() {
+            chunks.sort_by(|a, b| {
+                a.chunk_index
+                    .cmp(&b.chunk_index)
+                    .then_with(|| a.id.cmp(&b.id))
+            });
         }
+
         let bundled: Vec<BundleDocument> = documents
             .into_iter()
             .map(|document| {
@@ -219,21 +193,10 @@ impl Store {
                 BundleDocument { document, chunks }
             })
             .collect();
-        let embedding_manifest = {
-            let mut manifest_stmt = conn.prepare(
-                r#"
-                SELECT id, provider, model, dims, base_url, content_fingerprint,
-                       CAST(updated_at AS VARCHAR)
-                FROM embedding_manifest
-                WHERE id = 'default'
-                "#,
-            )?;
-            let mut rows = manifest_stmt.query([])?;
-            match rows.next()? {
-                Some(row) => Some(crate::db::rows::embedding_manifest(row)?),
-                None => None,
-            }
-        };
+        let embedding_manifest = r
+            .get_by_id("embedding_manifest", "default")?
+            .map(|row| rows::embedding_manifest(&row))
+            .transpose()?;
         let bundle = RecoveryBundle {
             format: "rag-recovery-bundle".into(),
             version: BUNDLE_VERSION,
@@ -289,26 +252,14 @@ impl Store {
             errors: Vec::new(),
         };
         let bundle_manifest = validate_bundle_embeddings(bundle)?;
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
+        let mut w = self.write()?;
+        let mut tx = w.begin_tx()?;
         if let Some(bundle_manifest) = bundle_manifest {
-            let target_chunk_count: i64 =
-                tx.query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))?;
-            let target_manifest = {
-                let mut stmt = tx.prepare(
-                    r#"
-                    SELECT id, provider, model, dims, base_url, content_fingerprint,
-                           CAST(updated_at AS VARCHAR)
-                    FROM embedding_manifest
-                    WHERE id = 'default'
-                    "#,
-                )?;
-                let mut rows = stmt.query([])?;
-                match rows.next()? {
-                    Some(row) => Some(crate::db::rows::embedding_manifest(row)?),
-                    None => None,
-                }
-            };
+            let target_chunk_count = tx.count_rows("chunks", None)? as i64;
+            let target_manifest = tx
+                .get_by_id("embedding_manifest", "default")?
+                .map(|row| rows::embedding_manifest(&row))
+                .transpose()?;
             match target_manifest.as_ref() {
                 Some(target) => {
                     validate_embedding_manifest(target, "target corpus")?;
@@ -331,25 +282,24 @@ impl Store {
                         "target corpus has {target_chunk_count} chunks but no embedding_manifest; run a complete uncapped reembed_all before importing vectors"
                     )));
                 }
-                None => set_embedding_manifest_locked(&tx, bundle_manifest)?,
+                None => set_embedding_manifest_locked(&mut tx, bundle_manifest)?,
             }
         }
         let mut fts_marked_dirty = false;
         let mut fts_full_rebuild_marked = false;
-        // Two equality lookups prepared once (an `id = ? OR uri = ?`
-        // predicate can use neither index and was re-prepared per item).
-        let mut by_id = tx.prepare("SELECT id FROM documents WHERE id = ?")?;
-        let mut by_uri = tx.prepare("SELECT id FROM documents WHERE uri = ?")?;
         for item in &bundle.documents {
             let matching_document_ids = {
-                let mut ids: Vec<String> = by_id
-                    .query_map(params![item.document.id], |row| row.get::<_, String>(0))?
-                    .collect::<std::result::Result<Vec<_>, _>>()?;
-                ids.extend(
-                    by_uri
-                        .query_map(params![item.document.uri], |row| row.get::<_, String>(0))?
-                        .collect::<std::result::Result<Vec<_>, _>>()?,
-                );
+                let mut ids: Vec<String> = Vec::new();
+                if let Some(row) = tx.get_by_id("documents", &item.document.id)?
+                    && let Some(id) = cell_str(&row, "id")
+                {
+                    ids.push(id.to_string());
+                }
+                for row in tx.find_by_eq("documents", "uri", item.document.uri.as_str())? {
+                    if let Some(id) = cell_str(&row, "id") {
+                        ids.push(id.to_string());
+                    }
+                }
                 ids.sort();
                 ids.dedup();
                 ids
@@ -388,43 +338,40 @@ impl Store {
             }
             report.chunks_inserted += item.chunks.len() as u64;
             if let Some(existing_document_id) = existing_document_id {
-                crate::db::store::delete_document_locked(&tx, existing_document_id)?;
+                crate::db::store::delete_document_locked(&mut tx, existing_document_id)?;
                 fts_marked_dirty = true;
             } else if !fts_marked_dirty && !item.chunks.is_empty() {
-                crate::db::fts::mark_fts_dirty(&tx)?;
+                crate::db::fts::mark_fts_dirty(&mut tx)?;
                 fts_marked_dirty = true;
             }
             if !item.chunks.is_empty() && !fts_full_rebuild_marked {
                 // Bundle chunk ids may equal ids already indexed with other
                 // text; an id-diff patch would miss that.
-                crate::db::fts::mark_fts_needs_rebuild(&tx)?;
+                crate::db::fts::mark_fts_needs_rebuild(&mut tx)?;
                 fts_full_rebuild_marked = true;
             }
             let d = &item.document;
-            tx.execute(
-                "INSERT INTO documents (id, uri, title, content, metadata_json, content_hash, \
-                wing, room, source_file, layer, kind, status, pinned, boost, revision, \
-                created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
-                CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP))",
-                params![
-                    d.id,
-                    d.uri,
-                    d.title,
-                    d.content,
-                    d.metadata_json,
-                    d.content_hash,
-                    d.wing,
-                    d.room,
-                    d.source_file,
-                    d.layer,
-                    d.kind,
-                    d.status,
-                    d.pinned,
-                    d.boost,
-                    d.revision,
-                    crate::util::format_db_timestamp(d.created_at),
-                    crate::util::format_db_timestamp(d.updated_at)
-                ],
+            tx.insert_one(
+                "documents",
+                RecBuilder::new()
+                    .str("id", &d.id)
+                    .str("uri", &d.uri)
+                    .str("title", &d.title)
+                    .str("content", &d.content)
+                    .str("metadata_json", &d.metadata_json)
+                    .opt_string("content_hash", &d.content_hash)
+                    .opt_string("wing", &d.wing)
+                    .opt_string("room", &d.room)
+                    .opt_string("source_file", &d.source_file)
+                    .str("layer", &d.layer)
+                    .str("kind", d.kind.as_str())
+                    .str("status", &d.status)
+                    .bool("pinned", d.pinned)
+                    .f64("boost", d.boost)
+                    .i64("revision", d.revision)
+                    .str("created_at", crate::util::format_db_timestamp(d.created_at))
+                    .str("updated_at", crate::util::format_db_timestamp(d.updated_at))
+                    .build(),
             )?;
             // Restore keeps the bundle's revision and timestamps (no CAS bump),
             // but chunk rows go through the same writer as every other path.
@@ -436,13 +383,23 @@ impl Store {
                     ..chunk.clone()
                 })
                 .collect();
+            for chunk in &chunks {
+                if tx.get_by_id("chunks", &chunk.id)?.is_some() {
+                    return Err(AppError::conflict(format!(
+                        "duplicate chunk id '{}' during recovery bundle import",
+                        chunk.id
+                    )));
+                }
+            }
             let embedding_json = crate::db::store::embedding_json(&chunks)?;
-            crate::db::store::insert_chunks_locked(&tx, &chunks, &embedding_json)?;
+            crate::db::store::insert_chunks_locked(&mut tx, &chunks, &embedding_json)?;
         }
         if report.success && !dry_run {
             tx.commit()?;
             report.durable_mutation_committed =
                 report.documents_inserted > 0 || report.documents_overwritten > 0;
+        } else {
+            let _ = tx.rollback();
         }
         Ok(report)
     }

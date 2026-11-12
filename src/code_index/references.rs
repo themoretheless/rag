@@ -173,6 +173,9 @@ pub(super) fn query(
                 item["resolution"] = serde_json::json!(binding.resolution);
                 item["resolution_basis"] = serde_json::json!(binding.resolution_basis);
                 item["provenance"] = serde_json::json!(binding.provenance);
+                if let Some(contexts) = &binding.context_evidence {
+                    item["context_evidence"] = serde_json::json!(contexts);
+                }
                 items.push(item);
             }
         }

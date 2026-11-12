@@ -1,6 +1,7 @@
 //! Versioned, read-only capability and measured-quality diagnostics.
 use super::*;
 use crate::config::Config;
+use crate::db::lin_engine::{cell_opt_string, cell_str, cell_string, LinReader};
 use crate::db::store::{embedding_manifest_matches_config, get_embedding_manifest_locked};
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -78,29 +79,79 @@ struct ChunkQuality {
     problem_rows: usize,
     examples_truncated: bool,
 }
-fn chunks(conn: &duckdb::Connection, q: &StatusQuery, dimensions: usize) -> Result<ChunkQuality> {
-    let mut out = ChunkQuality { total: conn.query_row(
-        "SELECT COUNT(*) FROM chunks c JOIN documents d ON c.document_id=d.id WHERE COALESCE(d.status,'active') NOT IN ('archived','tombstone','consolidated') AND (CAST(? AS VARCHAR) IS NULL OR d.wing=CAST(? AS VARCHAR))",
-        params![q.project, q.project], |r| r.get(0))?, ..Default::default() };
+fn chunks(r: &impl LinReader, q: &StatusQuery, dimensions: usize) -> Result<ChunkQuality> {
+    let mut active_docs = HashSet::new();
+    r.scan_each("documents", |row| {
+        let status = cell_str(row, "status").unwrap_or("active");
+        if matches!(status, "archived" | "tombstone" | "consolidated") {
+            return Ok(true);
+        }
+        if let Some(ref proj) = q.project
+            && cell_str(row, "wing") != Some(proj.as_str())
+        {
+            return Ok(true);
+        }
+        if let Some(id) = cell_str(row, "id") {
+            active_docs.insert(id.to_string());
+        }
+        Ok(true)
+    })?;
+
     let sample_limit = q.sample_limit.unwrap_or(128).clamp(1, 512);
     let threshold = q.max_chunk_tokens.unwrap_or(4096).clamp(1, 100000);
-    let mut stmt = conn.prepare("SELECT substring(c.id,1,128), length(c.id)>128, length(c.content), strlen(c.embedding_json), CASE WHEN length(c.content)<=? THEN c.content ELSE NULL END, CASE WHEN strlen(c.embedding_json)<=? THEN c.embedding_json ELSE NULL END FROM chunks c JOIN documents d ON c.document_id=d.id WHERE COALESCE(d.status,'active') NOT IN ('archived','tombstone','consolidated') AND (CAST(? AS VARCHAR) IS NULL OR d.wing=CAST(? AS VARCHAR)) ORDER BY c.id LIMIT ?")?;
-    let mut rows = stmt.query(params![
-        TEXT_CHARS as i64,
-        VECTOR_BYTES as i64,
-        q.project,
-        q.project,
-        sample_limit as i64
-    ])?;
+
+    let mut chunk_ids: Vec<String> = Vec::new();
+    r.scan_each("chunks", |row| {
+        if let Some(doc_id) = cell_str(row, "document_id")
+            && active_docs.contains(doc_id)
+            && let Some(id) = cell_str(row, "id")
+        {
+            chunk_ids.push(id.to_string());
+        }
+        Ok(true)
+    })?;
+    chunk_ids.sort();
+
+    let mut out = ChunkQuality {
+        total: chunk_ids.len(),
+        ..Default::default()
+    };
     let mut norms = Vec::new();
-    while let Some(row) = rows.next()? {
-        let id: String = row.get(0)?;
-        let id_truncated: bool = row.get(1)?;
-        let chars: usize = row.get(2)?;
-        let vector_bytes: usize = row.get(3)?;
-        let text: Option<String> = row.get(4)?;
-        let vector: Option<String> = row.get(5)?;
-        let cost = text.as_ref().map_or(0, String::len) + vector.as_ref().map_or(0, String::len);
+    for full_id in chunk_ids.into_iter().take(sample_limit) {
+        let Some(row) = r.get_by_id("chunks", &full_id)? else {
+            continue;
+        };
+        let id_chars = full_id.chars().count();
+        let id_truncated = id_chars > 128;
+        let id: String = full_id.chars().take(128).collect();
+
+        let content_raw = cell_str(&row, "content").unwrap_or("");
+        let chars = content_raw.chars().count();
+        let text = (chars <= TEXT_CHARS).then_some(content_raw);
+
+        // Prefer explicit `embedding_json` when non-empty (legacy/test corruption checks),
+        // otherwise inspect native binary `Cell::Vec` in `embedding`.
+        let emb_json = cell_str(&row, "embedding_json").filter(|s| !s.is_empty());
+        let (vector_bytes, vec_cost, parsed_vec): (usize, usize, Option<Option<Vec<f32>>>) =
+            if let Some(raw_json) = emb_json {
+                let bytes = raw_json.len();
+                if bytes > VECTOR_BYTES {
+                    (bytes, 0, None)
+                } else {
+                    (bytes, bytes, Some(serde_json::from_str::<Vec<f32>>(raw_json).ok()))
+                }
+            } else if let Some(lin::Cell::Vec(values)) = row.get("embedding") {
+                let bytes = values.len().saturating_mul(std::mem::size_of::<f32>());
+                if bytes > VECTOR_BYTES {
+                    (bytes, 0, None)
+                } else {
+                    (bytes, bytes, Some(Some(values.to_vec())))
+                }
+            } else {
+                (0, 0, Some(None))
+            };
+
+        let cost = text.map_or(0, str::len) + vec_cost;
         if out.bytes_inspected + cost > SAMPLE_BYTES {
             out.byte_budget_exhausted = true;
             break;
@@ -110,7 +161,7 @@ fn chunks(conn: &duckdb::Connection, q: &StatusQuery, dimensions: usize) -> Resu
         out.max_content_chars = out.max_content_chars.max(chars);
         let mut issues = Vec::new();
         if let Some(text) = text {
-            let count = crate::search_pack::estimate_tokens(&text);
+            let count = crate::search_pack::estimate_tokens(text);
             out.tokenized += 1;
             out.max_estimated_tokens = Some(out.max_estimated_tokens.unwrap_or(0).max(count));
             if count > threshold {
@@ -123,9 +174,9 @@ fn chunks(conn: &duckdb::Connection, q: &StatusQuery, dimensions: usize) -> Resu
         if vector_bytes > VECTOR_BYTES {
             out.large_vectors_unmeasured += 1;
         }
-        if let Some(vector) = vector {
-            match serde_json::from_str::<Vec<f32>>(&vector) {
-                Ok(values) if !values.is_empty() && values.iter().all(|v| v.is_finite()) => {
+        if let Some(maybe_values) = parsed_vec {
+            match maybe_values {
+                Some(values) if !values.is_empty() && values.iter().all(|v| v.is_finite()) => {
                     let norm = values
                         .iter()
                         .fold(0.0_f64, |sum, v| sum.hypot(f64::from(*v)));
@@ -175,26 +226,38 @@ impl Store {
     /// Observe one connection-locked corpus view; never reindex or repair on read.
     pub fn code_index_status(&self, q: &StatusQuery, config: &Config) -> Result<serde_json::Value> {
         let started = Instant::now();
-        let mut connection = self.lock()?;
-        let transaction = connection.transaction()?;
-        let conn = &*transaction;
-        let snapshot_result = snapshot_locked(conn, q.project.as_deref());
+        let guard = self.read()?;
+        let r = &*guard;
+        let snapshot_result = snapshot_locked(r, q.project.as_deref());
         let snapshot_error = snapshot_result.as_ref().err().map(AppError::code);
         let snapshot = snapshot_result.ok();
-        let revision: Option<i64> =
-            conn.query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| r.get(0))?;
-        let schema_version: Option<i32> =
-            conn.query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))?;
+        let revision = crate::analysis_tasks::latest_code_index_rev(r)?;
+        let schema_version = crate::db::schema::current_schema_version(r)?;
         let (eligible, source_documents, extensions, unsupported) = {
-            let mut stmt = conn.prepare("SELECT d.id, COALESCE(d.source_file,d.uri), d.source_file IS NOT NULL FROM documents d WHERE COALESCE(d.status,'active') NOT IN ('archived','tombstone','consolidated') AND (CAST(? AS VARCHAR) IS NULL OR d.wing=CAST(? AS VARCHAR)) ORDER BY d.id")?;
-            let mut rows = stmt.query(params![q.project, q.project])?;
+            let mut doc_entries = Vec::new();
+            r.scan_each("documents", |row| {
+                let status = cell_str(row, "status").unwrap_or("active");
+                if matches!(status, "archived" | "tombstone" | "consolidated") {
+                    return Ok(true);
+                }
+                if let Some(ref proj) = q.project
+                    && cell_str(row, "wing") != Some(proj.as_str())
+                {
+                    return Ok(true);
+                }
+                let id = cell_string(row, "id");
+                let source_file = cell_opt_string(row, "source_file");
+                let has_source = source_file.is_some();
+                let path = source_file.unwrap_or_else(|| cell_string(row, "uri"));
+                doc_entries.push((id, path, has_source));
+                Ok(true)
+            })?;
+            doc_entries.sort_by(|a, b| a.0.cmp(&b.0));
             let mut eligible = 0usize;
             let mut source_documents = 0usize;
             let mut extensions = BTreeMap::<String, usize>::new();
             let mut unsupported = BTreeMap::<String, usize>::new();
-            while let Some(row) = rows.next()? {
-                let path: String = row.get(1)?;
-                let source_file: bool = row.get(2)?;
+            for (_id, path, source_file) in doc_entries {
                 if source_file {
                     source_documents += 1;
                 }
@@ -212,15 +275,15 @@ impl Store {
             }
             (eligible, source_documents, extensions, unsupported)
         };
-        let manifest_result = get_embedding_manifest_locked(conn, "default");
+        let manifest_result = get_embedding_manifest_locked(r, "default");
         let manifest_error = manifest_result.as_ref().err().map(AppError::code);
         let manifest = manifest_result.ok().flatten();
         let identity_match = manifest
             .as_ref()
             .map(|m| embedding_manifest_matches_config(m, config));
-        let chunk_quality = chunks(conn, q, config.embedding_dims)?;
-        let fts = crate::db::fts::fts_status(conn)?;
-        let fts_generation = crate::db::fts::fts_generation_state(conn)?;
+        let chunk_quality = chunks(r, q, config.embedding_dims)?;
+        let fts = crate::db::fts::fts_status(r)?;
+        let fts_generation = crate::db::fts::fts_generation_state(r)?;
         let mut problems = Vec::new();
         if snapshot_error.is_some() {
             problems.push("CODE_SNAPSHOT_UNAVAILABLE");
@@ -338,7 +401,7 @@ impl Store {
                     .collect()
             })
             .unwrap_or_default();
-        let stage_timings = super::timings::status(conn, revision);
+        let stage_timings = super::timings::status(r, revision);
         let mut unmeasured = vec![
             "semantic_precision_recall",
             "runtime_dispatch",
@@ -371,12 +434,15 @@ impl Store {
                 "embedding_identity":{"available":manifest.is_some(),"matches_config":identity_match,"scope":"corpus_global","provider":manifest.as_ref().map(|m|&m.provider),"model":manifest.as_ref().map(|m|&m.model),"dims":manifest.as_ref().map(|m|m.dims),"configured_dims":config.embedding_dims},
                 "unmeasured_checks":unmeasured});
         let rust_trait_typing = serde_json::json!({"backend":"captured_ast","patterns":["cross_file_impl_owner","generic_impl_substitution","explicit_ufcs","generic_and_where_bounds","dyn_and_impl_trait_declarations","associated_type_projections","default_methods","inherent_precedence","explicit_ambiguity"],"bound_receiver_targets":"trait_declarations_only","runtime_dispatch_verified":false,"compiler_verified":false,"limitations":["full_coherence_and_specialization","higher_ranked_and_generic_associated_types","complete_supertrait_and_trait_argument_inference","macro_cfg_and_target_configuration"]});
-        let capabilities = serde_json::json!({"languages":languages(),"calls_and_value_references":"conservative_static_candidates","inheritance":"partial_static",
+        let mut capabilities = serde_json::json!({"languages":languages(),"calls_and_value_references":"conservative_static_candidates","inheritance":"partial_static",
                 "rust_receiver_typing":{"backend":"captured_ast","patterns":["declared_returns","method_chains","async_await","named_fields","arrays_slices_vec","standard_box_arc_rc","local_factory_initializers","explicit_function_type_arguments"],"return_type_context":"declaration_document","runtime_dispatch_verified":false,"compiler_verified":false,"limitations":["complete_trait_solver_and_gats","custom_deref_and_index","macro_and_cfg_expansion","full_compiler_type_inference"]},
                 "rust_trait_typing":rust_trait_typing,
                 "sql_schema":"captured_migration_ddl_subset","slice":"bounded_structural_call_graph","cpg":{"available":false,"reason":"backend_not_implemented"},
-                "runtime_dispatch_verified":false,"data_flow_slicing":false,"representative_precision_recall_verified":false,
+                "runtime_dispatch_verified":false,"data_flow_slicing":true,"representative_precision_recall_verified":false,
                 "graph_compute":{"scope":"structural_graph_operations","backend":"native_cpu","gpu_available":false,"reason":"no_graph_gpu_backend"}});
+        capabilities["data_slice"] = serde_json::json!({"available":true,"backend":"captured_python_ast_value_candidates","capture_format":7,"languages":["python"],"call_contexts":"bounded_positional_argument_and_return_frames","runtime_verified":false,"full_program_slice":false,"control_flow_modeled":false,"finally_completion_paths":true,"protected_expression_error_prefixes":true,"exception_handler_paths":true,"exception_type_matching_proven":false,"exception_filter_evaluation_proven":false,"full_exception_semantics":false,"loop_carried_dependencies":true,"loop_iteration_feasibility_proven":false,"termination_proven":false,"branch_control_dependencies":true,"branch_path_feasibility_proven":false});
+        capabilities["python_binding_evaluation"] = serde_json::json!({"scope_capture_format":5,"receiver_origin_joins":true,"receiver_origin_limit":8,"receiver_loop_iterations":16,"receiver_compiler_proof":false,"rhs_before_write":true,"annotation_only_is_not_initialization":true,"augmented_result_type":"unknown","compiler_verified":false,"runtime_verified":false});
+        capabilities["frozen_value_diff"] = serde_json::json!({"available":true,"normalization_format":3,"supported_capture_formats":[5,6,7],"capture_format":7,"languages":["python"],"scope":"frozen_syntax_value_and_unique_positional_call_candidates","source_semantic_change_proven":false,"runtime_path_proven":false,"bodies_included":false});
         let report = serde_json::json!({
             "contract_version":1,"project":q.project,"index_rev":revision,"state":state,
             "versions":{"index_format":INDEX_FORMAT_VERSION,"store_schema":schema_version,"package":env!("CARGO_PKG_VERSION")},
@@ -398,13 +464,12 @@ impl Store {
                 "stale_count":snapshot.as_ref().map(|_|stale.len()),"unindexed_count":snapshot.as_ref().map(|_|unindexed.len()),"parse_error_count":snapshot.as_ref().map(|_|parse_errors.len()),
                 "evidence_limit":limit,"evidence_truncated":snapshot.as_ref().map(|_|stale.len()>limit||unindexed.len()>limit||parse_errors.len()>limit),
                 "extensions":extensions,"unsupported_source_extensions":unsupported.iter().take(limit).collect::<BTreeMap<_,_>>(),"unsupported_extension_categories":unsupported.len(),"unsupported_extensions_truncated":unsupported.len()>limit,"unsupported_is_not_parse_failure":true},
-            "capability":"static_syntax_bindings","runtime_dispatch_verified":false,"data_flow_slicing":false,
+            "capability":"static_syntax_bindings","runtime_dispatch_verified":false,"data_flow_slicing":true,
             "capabilities":capabilities,
             "quality":quality_report,
             "retrieval":{"lexical":{"scope":"corpus_global","configured":fts.is_some(),"backend":fts.as_ref().map(|s|s.backend.as_str()),"dirty":fts_generation.dirty,"chunks_generation":fts_generation.chunks_generation,"index_generation":fts_generation.index_generation,"generation_gap":crate::db::fts::fts_generation_gap(&fts_generation),"rebuild_count":fts_generation.rebuild_count}},
             "stage_timings":stage_timings,"observation_ms":started.elapsed().as_secs_f64()*1000.0
         });
-        transaction.commit()?;
         Ok(report)
     }
 }
@@ -500,11 +565,14 @@ mod tests {
         chunk(&store, "c-invalid", "a", "short", vec![1.0, 0.0]);
         chunk(&store, "z-foreign", "b", "foreign", vec![0.0, 0.0]);
         store
-            .lock()
+            .write()
             .unwrap()
-            .execute(
-                "UPDATE chunks SET embedding_json='broken JSON' WHERE id='c-invalid'",
-                [],
+            .update_where(
+                "chunks",
+                lin::query::pred::eq("id", "c-invalid"),
+                crate::db::lin_engine::RecBuilder::new()
+                    .str("embedding_json", "broken JSON")
+                    .build(),
             )
             .unwrap();
         let q = StatusQuery {
@@ -597,11 +665,14 @@ mod tests {
             1
         );
         store
-            .lock()
+            .write()
             .unwrap()
-            .execute(
-                "UPDATE code_index_documents SET payload='broken JSON' WHERE document_id='a'",
-                [],
+            .update_where(
+                "code_index_documents",
+                lin::query::pred::eq("document_id", "a"),
+                crate::db::lin_engine::RecBuilder::new()
+                    .str("payload", "broken JSON")
+                    .build(),
             )
             .unwrap();
         let broken = store.code_index_status(&q, &config).unwrap();
@@ -636,11 +707,14 @@ mod tests {
             vec![1.0, 0.0],
         );
         store
-            .lock()
+            .write()
             .unwrap()
-            .execute(
-                "UPDATE chunks SET embedding_json=repeat(' ', ?)",
-                [VECTOR_BYTES as i64 + 1],
+            .update_where(
+                "chunks",
+                crate::db::lin_engine::pred_all(),
+                crate::db::lin_engine::RecBuilder::new()
+                    .str("embedding_json", " ".repeat(VECTOR_BYTES + 1))
+                    .build(),
             )
             .unwrap();
         let status = store

@@ -1,4 +1,5 @@
 use super::*;
+use crate::db::lin_engine::LinWriter;
 use crate::models::Chunk;
 use crate::models::Document;
 use chrono::Utc;
@@ -530,7 +531,7 @@ fn search_vec_respects_wing_room_source_and_archived() {
         assert_eq!(documents.only_ids().unwrap().len(), expected.len());
     }
     assert!(
-        !vector_snapshots().lock().unwrap().contains_key(&path),
+        !vector_snapshots().lock().unwrap().contains_key(&store.backend_key()),
         "scoped searches must not populate the global snapshot cache"
     );
 
@@ -549,17 +550,34 @@ fn search_vec_respects_wing_room_source_and_archived() {
     assert!(ids.contains(&"active"));
     assert!(ids.contains(&"other"));
     assert!(!ids.contains(&"arch"));
-    assert_eq!(
-        vector_snapshots()
-            .lock()
+    if store.read().unwrap().disk_v2().is_some() {
+        assert!(
+            !vector_snapshots().lock().unwrap().contains_key(&store.backend_key()),
+            "DiskEngineV2 searches out-of-core + L1 HotTierCache without materializing a full-corpus RAM vector snapshot"
+        );
+        let stats = store
+            .read()
             .unwrap()
-            .get(&path)
+            .disk_v2()
             .unwrap()
-            .chunks
-            .len(),
-        3,
-        "the implicit active-status filter alone must retain the global cache path"
-    );
+            .hot_cache_stats();
+        assert!(
+            stats.vec_query_misses >= 1 || stats.vec_query_hits >= 1,
+            "L1 hot vector query cache should track vector queries"
+        );
+    } else {
+        assert_eq!(
+            vector_snapshots()
+                .lock()
+                .unwrap()
+                .get(&store.backend_key())
+                .unwrap()
+                .chunks
+                .len(),
+            3,
+            "the implicit active-status filter alone must retain the global cache path on in-memory stores"
+        );
+    }
     // Unscoped reads list only the hidden documents, not the active corpus.
     let (_, unscoped) = vector_search_inputs(&store, &LexFilters::default()).unwrap();
     match &unscoped {
@@ -606,7 +624,7 @@ fn search_vec_respects_wing_room_source_and_archived() {
         vector_snapshots()
             .lock()
             .unwrap()
-            .get(&path)
+            .get(&store.backend_key())
             .unwrap()
             .chunks
             .len(),
@@ -809,8 +827,8 @@ fn vector_snapshot_refreshes_after_chunk_generation_changes() {
     let first = search_chunks(&store, &[1.0, 0.0], 1, None).unwrap();
     assert_eq!(first[0].chunk_id, "before");
     let first_generation = {
-        let conn = store.lock().unwrap();
-        fts::chunks_generation(&conn).unwrap()
+        let r = store.read().unwrap();
+        fts::chunks_generation(&*r).unwrap()
     };
 
     store
@@ -829,85 +847,117 @@ fn vector_snapshot_refreshes_after_chunk_generation_changes() {
         )
         .unwrap();
     let second_generation = {
-        let conn = store.lock().unwrap();
-        fts::chunks_generation(&conn).unwrap()
+        let r = store.read().unwrap();
+        fts::chunks_generation(&*r).unwrap()
     };
     assert!(second_generation > first_generation);
 
     let second = search_chunks(&store, &[0.0, 1.0], 1, None).unwrap();
     assert_eq!(second[0].chunk_id, "after");
     assert_eq!(second[0].content, "after content");
-    let cached_generation = vector_snapshots()
-        .lock()
-        .unwrap()
-        .get(&path)
-        .unwrap()
-        .generation;
-    assert_eq!(cached_generation, second_generation);
+    if store.read().unwrap().disk_v2().is_some() {
+        assert!(
+            !vector_snapshots().lock().unwrap().contains_key(&store.backend_key()),
+            "DiskEngineV2 must not materialize a full-corpus RAM vector snapshot"
+        );
+    } else {
+        let cached_generation = vector_snapshots()
+            .lock()
+            .unwrap()
+            .get(&store.backend_key())
+            .unwrap()
+            .generation;
+        assert_eq!(cached_generation, second_generation);
+    }
 }
 
 #[test]
 fn vector_snapshot_refreshes_after_embedding_only_update() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("vector-embedding-only-generation.duckdb");
-    let store = Store::open(&path).expect("open");
-    for (document_id, chunk_id, embedding) in [
-        ("a-target", "chunk-target", vec![1.0, 0.0]),
-        ("z-rival", "chunk-rival", vec![0.0, 1.0]),
-    ] {
+    for in_memory in [false, true] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("vector-embedding-only-generation.duckdb");
+        let store = if in_memory {
+            Store::open_in_memory().expect("open_in_memory")
+        } else {
+            Store::open(&path).expect("open")
+        };
+        for (document_id, chunk_id, embedding) in [
+            ("a-target", "chunk-target", vec![1.0, 0.0]),
+            ("z-rival", "chunk-rival", vec![0.0, 1.0]),
+        ] {
+            store
+                .upsert_document(&Document {
+                    id: document_id.into(),
+                    uri: format!("uri://{document_id}"),
+                    title: document_id.into(),
+                    content: "unchanged searchable text".into(),
+                    ..Default::default()
+                })
+                .unwrap();
+            store
+                .insert_chunks(&[Chunk {
+                    id: chunk_id.into(),
+                    document_id: document_id.into(),
+                    chunk_index: 0,
+                    content: "unchanged searchable text".into(),
+                    embedding,
+                    char_start: 0,
+                    char_end: 25,
+                    metadata_json: "{}".into(),
+                }])
+                .unwrap();
+        }
+
+        let before = search_chunks(&store, &[0.0, 1.0], 2, None).unwrap();
+        assert_eq!(before[0].document_id, "z-rival");
+        let gen_before = {
+            let r = store.read().unwrap();
+            fts::chunks_generation(&*r).unwrap()
+        };
+        if !in_memory {
+            assert!(
+                !vector_snapshots().lock().unwrap().contains_key(&store.backend_key()),
+                "DiskEngineV2 must not materialize a full-corpus RAM vector snapshot"
+            );
+        } else {
+            let cached_before = vector_snapshots()
+                .lock()
+                .unwrap()
+                .get(&store.backend_key())
+                .unwrap()
+                .generation;
+            assert_eq!(cached_before, gen_before);
+        }
+
+        let document = store.get_document("a-target").unwrap().unwrap();
+        let chunks = store.list_chunks_for_document(&document.id).unwrap();
         store
-            .upsert_document(&Document {
-                id: document_id.into(),
-                uri: format!("uri://{document_id}"),
-                title: document_id.into(),
-                content: "unchanged searchable text".into(),
-                ..Default::default()
-            })
+            .update_chunk_embeddings_atomic(
+                &document.id,
+                document.revision,
+                &chunks,
+                &[vec![0.0, 1.0]],
+                None,
+            )
             .unwrap();
-        store
-            .insert_chunks(&[Chunk {
-                id: chunk_id.into(),
-                document_id: document_id.into(),
-                chunk_index: 0,
-                content: "unchanged searchable text".into(),
-                embedding,
-                char_start: 0,
-                char_end: 25,
-                metadata_json: "{}".into(),
-            }])
-            .unwrap();
+
+        let after = search_chunks(&store, &[0.0, 1.0], 2, None).unwrap();
+        assert_eq!(after[0].document_id, "a-target");
+        let gen_after = {
+            let r = store.read().unwrap();
+            fts::chunks_generation(&*r).unwrap()
+        };
+        assert!(gen_after > gen_before);
+        if in_memory {
+            let cached_after = vector_snapshots()
+                .lock()
+                .unwrap()
+                .get(&store.backend_key())
+                .unwrap()
+                .generation;
+            assert_eq!(cached_after, gen_after);
+        }
     }
-
-    let before = search_chunks(&store, &[0.0, 1.0], 2, None).unwrap();
-    assert_eq!(before[0].document_id, "z-rival");
-    let cached_before = vector_snapshots()
-        .lock()
-        .unwrap()
-        .get(&path)
-        .unwrap()
-        .generation;
-
-    let document = store.get_document("a-target").unwrap().unwrap();
-    let chunks = store.list_chunks_for_document(&document.id).unwrap();
-    store
-        .update_chunk_embeddings_atomic(
-            &document.id,
-            document.revision,
-            &chunks,
-            &[vec![0.0, 1.0]],
-            None,
-        )
-        .unwrap();
-
-    let after = search_chunks(&store, &[0.0, 1.0], 2, None).unwrap();
-    assert_eq!(after[0].document_id, "a-target");
-    let cached_after = vector_snapshots()
-        .lock()
-        .unwrap()
-        .get(&path)
-        .unwrap()
-        .generation;
-    assert!(cached_after > cached_before);
 }
 
 #[tokio::test]
@@ -951,8 +1001,8 @@ async fn active_corpus_mutation_rejects_all_search_modes_and_releases_cleanly() 
         .unwrap();
 
     let lifecycle_before = {
-        let conn = store.lock().unwrap();
-        fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        fts::fts_generation_state(&*r).unwrap()
     };
     assert!(lifecycle_before.dirty);
 
@@ -991,18 +1041,18 @@ async fn active_corpus_mutation_rejects_all_search_modes_and_releases_cleanly() 
         assert!(!message.contains(&path.display().to_string()));
     }
     let lifecycle_while_busy = {
-        let conn = store.lock().unwrap();
-        fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        fts::fts_generation_state(&*r).unwrap()
     };
     assert_eq!(lifecycle_while_busy, lifecycle_before);
-    assert!(!vector_snapshots().lock().unwrap().contains_key(&path));
+    assert!(!vector_snapshots().lock().unwrap().contains_key(&store.backend_key()));
 
     drop(sync_guard);
     let hits = search(&store, &hybrid_query).unwrap();
     assert!(hits.iter().any(|hit| hit.chunk_id == "project-chunk-new"));
     let lifecycle_after = {
-        let conn = store.lock().unwrap();
-        fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        fts::fts_generation_state(&*r).unwrap()
     };
     assert!(!lifecycle_after.dirty);
     assert_eq!(
@@ -1399,31 +1449,37 @@ fn refreshed_vector_snapshot_matches_a_full_rebuild() {
         );
     }
     let previous = {
-        let conn = store.lock().unwrap();
-        let generation = fts::chunks_generation(&conn).unwrap();
-        build_vector_snapshot(&conn, generation).unwrap()
+        let r = store.read().unwrap();
+        let generation = fts::chunks_generation(&*r).unwrap();
+        build_vector_snapshot(&*r, generation).unwrap()
     };
 
     // New document, replaced chunks, and an in-place embedding change.
     add("doc-new", &[[0.5, 0.5]]);
     add("doc2", &[[3.0, 4.0]]);
     {
-        let conn = store.lock().unwrap();
+        let mut w = store.write().unwrap();
         // An unscoped write: logged as "unknown", so the refresh lists all.
-        fts::mark_fts_dirty(&conn).unwrap();
+        fts::mark_fts_dirty(&mut *w).unwrap();
         // Chunk writers maintain the digest alongside the JSON.
-        conn.execute(
-            "UPDATE chunks SET embedding_json = '[0.0,2.0]', embedding_digest = ? \
-             WHERE id = 'doc4-1'",
-            [crate::db::store::embedding_digest("[0.0,2.0]")],
+        w.update_where(
+            "chunks",
+            lin::query::pred::eq("id", "doc4-1"),
+            crate::db::lin_engine::RecBuilder::new()
+                .str("embedding_json", "[0.0,2.0]")
+                .i64(
+                    "embedding_digest",
+                    crate::db::store::embedding_digest("[0.0,2.0]"),
+                )
+                .build(),
         )
         .unwrap();
     }
 
-    let conn = store.lock().unwrap();
-    let generation = fts::chunks_generation(&conn).unwrap();
-    let refreshed = refresh_vector_snapshot(&conn, &previous, generation, None).unwrap();
-    let rebuilt = build_vector_snapshot(&conn, generation).unwrap();
+    let r = store.read().unwrap();
+    let generation = fts::chunks_generation(&*r).unwrap();
+    let refreshed = refresh_vector_snapshot(&*r, &previous, generation, None).unwrap();
+    let rebuilt = build_vector_snapshot(&*r, generation).unwrap();
     let view = |snapshot: &VectorSnapshot| {
         snapshot
             .chunks
@@ -1490,17 +1546,17 @@ fn scoped_vector_snapshot_refresh_matches_a_scoped_rebuild() {
         ..Default::default()
     };
     let (scoped_previous, global_previous) = {
-        let conn = store.lock().unwrap();
+        let r = store.read().unwrap();
         (
-            build_vector_snapshot_with_filters(&conn, 1, Some(&filters)).unwrap(),
-            build_vector_snapshot(&conn, 1).unwrap(),
+            build_vector_snapshot_with_filters(&*r, 1, Some(&filters)).unwrap(),
+            build_vector_snapshot(&*r, 1).unwrap(),
         )
     };
     add("doc-new", "alpha", &[[0.5, 0.5]]);
     add("doc2", "alpha", &[[3.0, 4.0]]);
 
-    let conn = store.lock().unwrap();
-    let rebuilt = build_vector_snapshot_with_filters(&conn, 2, Some(&filters)).unwrap();
+    let r = store.read().unwrap();
+    let rebuilt = build_vector_snapshot_with_filters(&*r, 2, Some(&filters)).unwrap();
     let view = |snapshot: &VectorSnapshot| {
         snapshot
             .chunks
@@ -1509,7 +1565,7 @@ fn scoped_vector_snapshot_refresh_matches_a_scoped_rebuild() {
             .collect::<Vec<_>>()
     };
     for previous in [&scoped_previous, &global_previous] {
-        let refreshed = refresh_vector_snapshot(&conn, previous, 2, Some(&filters)).unwrap();
+        let refreshed = refresh_vector_snapshot(&*r, previous, 2, Some(&filters)).unwrap();
         assert_eq!(view(&refreshed), view(&rebuilt));
     }
 }
@@ -1575,9 +1631,8 @@ fn unscoped_vector_search_skips_orphan_chunks_without_losing_hits() {
     let warm = search_vec(&store, &[1.0, 0.0], 1, &LexFilters::default()).unwrap();
     assert_eq!(ids(&warm), vec!["late"]);
     {
-        let conn = store.lock().unwrap();
-        conn.execute("DELETE FROM documents WHERE id = 'late'", [])
-            .unwrap();
+        let mut w = store.write().unwrap();
+        w.delete_by_id("documents", "late").unwrap();
     }
     let hits = search_vec(&store, &[1.0, 0.0], 3, &LexFilters::default()).unwrap();
     assert_eq!(ids(&hits)[..2], ["near".to_string(), "far".to_string()]);
@@ -1614,9 +1669,15 @@ fn layer_only_vector_scope_lists_the_smaller_side() {
     vector_test_document(&store, "wiki0", "wiki", vec![1.0, 0.0]);
     vector_test_document(&store, "nolayer", "raw", vec![1.0, 0.0]);
     {
-        let conn = store.lock().unwrap();
-        conn.execute("UPDATE documents SET layer = NULL WHERE id = 'nolayer'", [])
-            .unwrap();
+        let mut w = store.write().unwrap();
+        w.update_where(
+            "documents",
+            lin::query::pred::eq("id", "nolayer"),
+            crate::db::lin_engine::RecBuilder::new()
+                .opt_str("layer", None)
+                .build(),
+        )
+        .unwrap();
     }
     let layer = |value: &str| LexFilters {
         layer: Some(value.into()),
@@ -1686,9 +1747,9 @@ fn change_log_refresh_matches_a_full_rebuild_and_falls_back_when_unscoped() {
             .unwrap();
     }
     let snapshot = |store: &Store| {
-        let conn = store.lock().unwrap();
-        let generation = fts::chunks_generation(&conn).unwrap();
-        build_vector_snapshot(&conn, generation).unwrap()
+        let r = store.read().unwrap();
+        let generation = fts::chunks_generation(&*r).unwrap();
+        build_vector_snapshot(&*r, generation).unwrap()
     };
     let view = |snapshot: &VectorSnapshot| {
         snapshot
@@ -1735,34 +1796,34 @@ fn change_log_refresh_matches_a_full_rebuild_and_falls_back_when_unscoped() {
         .unwrap();
 
     {
-        let conn = store.lock().unwrap();
-        let generation = fts::chunks_generation(&conn).unwrap();
-        let documents = fts::changed_documents_since(&conn, previous.generation, generation)
+        let r = store.read().unwrap();
+        let generation = fts::chunks_generation(&*r).unwrap();
+        let documents = fts::changed_documents_since(&*r, previous.generation, generation)
             .unwrap()
             .expect("every generation logged with its documents");
         let mut documents: Vec<_> = documents.into_iter().collect();
         documents.sort();
         assert_eq!(documents, vec!["a", "b", "c", "e"]);
-        let refreshed = refresh_vector_snapshot(&conn, &previous, generation, None).unwrap();
-        let rebuilt = build_vector_snapshot(&conn, generation).unwrap();
+        let refreshed = refresh_vector_snapshot(&*r, &previous, generation, None).unwrap();
+        let rebuilt = build_vector_snapshot(&*r, generation).unwrap();
         assert_eq!(view(&refreshed), view(&rebuilt));
     }
 
-    // An unscoped write (raw SQL plus plain mark_fts_dirty) forces a full listing.
+    // An unscoped write (raw mutation plus plain mark_fts_dirty) forces a full listing.
     let previous = snapshot(&store);
     {
-        let conn = store.lock().unwrap();
-        fts::mark_fts_dirty(&conn).unwrap();
-        conn.execute("DELETE FROM chunks WHERE document_id = 'd'", [])
+        let mut w = store.write().unwrap();
+        fts::mark_fts_dirty(&mut *w).unwrap();
+        w.delete_where("chunks", lin::query::pred::eq("document_id", "d"))
             .unwrap();
-        let generation = fts::chunks_generation(&conn).unwrap();
+        let generation = fts::chunks_generation(&*w).unwrap();
         assert!(
-            fts::changed_documents_since(&conn, previous.generation, generation)
+            fts::changed_documents_since(&*w, previous.generation, generation)
                 .unwrap()
                 .is_none()
         );
-        let refreshed = refresh_vector_snapshot(&conn, &previous, generation, None).unwrap();
-        let rebuilt = build_vector_snapshot(&conn, generation).unwrap();
+        let refreshed = refresh_vector_snapshot(&*w, &previous, generation, None).unwrap();
+        let rebuilt = build_vector_snapshot(&*w, generation).unwrap();
         assert_eq!(view(&refreshed), view(&rebuilt));
         assert!(refreshed.chunks.iter().all(|c| c.document_id != "d"));
     }
@@ -1815,22 +1876,16 @@ fn context_expansion_parse_accepts_parent() {
 #[test]
 fn insert_chunks_mirrors_parent_column_from_metadata() {
     let (_root, store) = parent_fixture_store();
-    let conn = store.lock().unwrap();
-    let linked: Option<String> = conn
-        .query_row(
-            "SELECT parent_chunk_id FROM chunks WHERE id = 'c1'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
+    let r = store.read().unwrap();
+    let linked = r
+        .get_by_id("chunks", "c1")
+        .unwrap()
+        .and_then(|row| crate::db::lin_engine::cell_opt_string(&row, "parent_chunk_id"));
     assert_eq!(linked.as_deref(), Some("c0"));
-    let plain: Option<String> = conn
-        .query_row(
-            "SELECT parent_chunk_id FROM chunks WHERE id = 'c0'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
+    let plain = r
+        .get_by_id("chunks", "c0")
+        .unwrap()
+        .and_then(|row| crate::db::lin_engine::cell_opt_string(&row, "parent_chunk_id"));
     assert_eq!(plain, None);
 }
 

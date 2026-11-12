@@ -1,0 +1,309 @@
+{
+  "itoa": {
+    "recovered_sites": 0,
+    "lost_correct_sites": 0,
+    "recovered": [],
+    "lost": []
+  },
+  "ryu": {
+    "recovered_sites": 0,
+    "lost_correct_sites": 0,
+    "recovered": [],
+    "lost": []
+  },
+  "memchr": {
+    "recovered_sites": 6,
+    "lost_correct_sites": 0,
+    "recovered": [
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          185,
+          23,
+          185,
+          50
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/vector/CmpEq#movemask_will_have_non_zero().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/vector.rs",
+            "range": [
+              76,
+              14,
+              76,
+              41
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "d1797d5a-dc98-42c6-a405-28844c564403:3092:movemask_will_have_non_zero@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/vector.rs",
+            76,
+            14
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "or3.movemask_will_have_non_zero",
+            "is_call": true,
+            "basis": "rust_trait_declaration",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          294,
+          23,
+          294,
+          50
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/vector/CmpEq#movemask_will_have_non_zero().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/vector.rs",
+            "range": [
+              76,
+              14,
+              76,
+              41
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "d1797d5a-dc98-42c6-a405-28844c564403:3092:movemask_will_have_non_zero@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/vector.rs",
+            76,
+            14
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "or3.movemask_will_have_non_zero",
+            "is_call": true,
+            "basis": "rust_trait_declaration",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          533,
+          23,
+          533,
+          50
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/vector/CmpEq#movemask_will_have_non_zero().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/vector.rs",
+            "range": [
+              76,
+              14,
+              76,
+              41
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "d1797d5a-dc98-42c6-a405-28844c564403:3092:movemask_will_have_non_zero@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/vector.rs",
+            76,
+            14
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "or3.movemask_will_have_non_zero",
+            "is_call": true,
+            "basis": "rust_trait_declaration",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          630,
+          23,
+          630,
+          50
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/vector/CmpEq#movemask_will_have_non_zero().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/vector.rs",
+            "range": [
+              76,
+              14,
+              76,
+              41
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "d1797d5a-dc98-42c6-a405-28844c564403:3092:movemask_will_have_non_zero@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/vector.rs",
+            76,
+            14
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "or3.movemask_will_have_non_zero",
+            "is_call": true,
+            "basis": "rust_trait_declaration",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          809,
+          23,
+          809,
+          50
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/vector/CmpEq#movemask_will_have_non_zero().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/vector.rs",
+            "range": [
+              76,
+              14,
+              76,
+              41
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "d1797d5a-dc98-42c6-a405-28844c564403:3092:movemask_will_have_non_zero@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/vector.rs",
+            76,
+            14
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "or5.movemask_will_have_non_zero",
+            "is_call": true,
+            "basis": "rust_trait_declaration",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          916,
+          23,
+          916,
+          50
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/vector/CmpEq#movemask_will_have_non_zero().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/vector.rs",
+            "range": [
+              76,
+              14,
+              76,
+              41
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "d1797d5a-dc98-42c6-a405-28844c564403:3092:movemask_will_have_non_zero@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/vector.rs",
+            76,
+            14
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "or5.movemask_will_have_non_zero",
+            "is_call": true,
+            "basis": "rust_trait_declaration",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      }
+    ],
+    "lost": []
+  }
+}

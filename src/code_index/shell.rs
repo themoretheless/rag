@@ -538,6 +538,7 @@ pub(super) fn resolve(
     let mut reason = "shell_not_registered_in_captured_context";
     let Some(current) = docs.get(&r.document_id) else {
         return CallEdge {
+            context_evidence: None,
             reference: r.clone(),
             candidates: vec![],
             resolution: "unresolved".into(),
@@ -673,6 +674,7 @@ pub(super) fn resolve(
     found.sort();
     found.dedup();
     CallEdge {
+        context_evidence: None,
         reference: r.clone(),
         resolution: match found.len() {
             0 => "unresolved",

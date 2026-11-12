@@ -1,0 +1,117 @@
+{
+  "itoa": {
+    "recovered_sites": 0,
+    "lost_correct_sites": 0,
+    "recovered": [],
+    "lost": []
+  },
+  "ryu": {
+    "recovered_sites": 0,
+    "lost_correct_sites": 0,
+    "recovered": [],
+    "lost": []
+  },
+  "memchr": {
+    "recovered_sites": 2,
+    "lost_correct_sites": 0,
+    "recovered": [
+      {
+        "path": "src/ext.rs",
+        "range": [
+          32,
+          27,
+          32,
+          35
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/ext/impl#[`*const T`][Pointer]distance().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/ext.rs",
+            "range": [
+              20,
+              14,
+              20,
+              22
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "78e8d9d9-d0a3-46e5-b16f-2a8e29877f36:784:distance@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/ext.rs",
+            20,
+            14
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "(self as *const T).distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      },
+      {
+        "path": "src/ext.rs",
+        "range": [
+          36,
+          27,
+          36,
+          35
+        ],
+        "symbol": "rust-analyzer cargo memchr 2.8.3 lib/ext/impl#[`*const T`][Pointer]as_usize().",
+        "kinds": [
+          26
+        ],
+        "syntax_class": "direct_call",
+        "expected": [
+          {
+            "path": "src/ext.rs",
+            "range": [
+              25,
+              7,
+              25,
+              15
+            ]
+          }
+        ],
+        "observed_candidates": [
+          "78e8d9d9-d0a3-46e5-b16f-2a8e29877f36:980:as_usize@94c3654294e89541ab8445d373d4d8fa7a7cbb44cb5d926fc45a86eaddb8cdb0"
+        ],
+        "observed_definitions": [
+          [
+            "src/ext.rs",
+            25,
+            7
+          ]
+        ],
+        "observations": [
+          {
+            "expression": "(self as *const T).as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ],
+        "expected_definition_extracted": true,
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0,
+        "exact": true
+      }
+    ],
+    "lost": []
+  }
+}

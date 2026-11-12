@@ -1,11 +1,18 @@
-//! Document and chunk persistence over DuckDB.
+//! Document and chunk persistence over `lin`.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, RwLock};
+
+static NEXT_STORE_ID: AtomicUsize = AtomicUsize::new(1);
 
 use chrono::{DateTime, Utc};
-use duckdb::{params, AccessMode, Config as DuckDbConfig, Connection};
+use lin::SyncMode;
 
+use super::lin_engine::{
+    cell_i64, cell_opt_string, cell_str, composite_id_2, read_lock, write_lock, LinBackend,
+    LinReadGuard, LinReader, LinTx, LinWriteGuard, LinWriter, RecBuilder,
+};
 use super::rows;
 use super::schema;
 use super::EmbeddingIdentity;
@@ -17,7 +24,7 @@ use crate::models::{
     TaxonomyWing, VacuumStoreReport, WikiIndexEntry, WingCount,
 };
 use crate::util::{
-    content_hash, format_db_timestamp as format_ts, parse_db_timestamp, slugify as shared_slugify,
+    content_hash, format_db_timestamp as format_ts, slugify as shared_slugify,
     wiki_slug_from_uri, SlugPolicy,
 };
 
@@ -25,17 +32,6 @@ const EMBEDDING_MIGRATION_FINGERPRINT_PREFIX: &str = "migration-incomplete:";
 
 #[cfg(test)]
 pub(crate) const TEST_FAIL_WIKI_WRITE_AFTER_INDEX_OP: &str = "__test_fail_wiki_write_after_index__";
-
-/// Shared SELECT list for document rows (order matches [`rows::document`]).
-pub(super) const DOCUMENT_SELECT: &str = r#"
-    id, uri, title, content, metadata_json,
-    content_hash, wing, room, source_file, layer, kind,
-    CAST(created_at AS VARCHAR), CAST(updated_at AS VARCHAR),
-    COALESCE(status, 'active'),
-    COALESCE(pinned, false),
-    COALESCE(boost, 1.0),
-    COALESCE(revision, 1)
-"#;
 
 /// Optional filters for wiki catalog listing (`GET /v1/wiki`, [`Store::list_wiki_page_metas_filtered`]).
 #[derive(Debug, Clone, Default)]
@@ -54,12 +50,14 @@ pub struct WikiPageMetaFilter {
     pub room: Option<String>,
 }
 
-/// Thread-safe DuckDB-backed document/chunk store.
+/// Thread-safe `lin`-backed document/chunk store.
 ///
-/// DuckDB connections are not `Sync`; access is serialized via [`Mutex`].
+/// Readers share concurrent `RwLockReadGuard` access with zero cloning;
+/// writers take `RwLockWriteGuard` and commit atomically via [`LinTx`].
 #[derive(Clone)]
 pub struct Store {
-    conn: Arc<Mutex<Connection>>,
+    backend: Arc<RwLock<LinBackend>>,
+    store_id: usize,
     path: PathBuf,
     corpus_mutation_lane: Arc<tokio::sync::RwLock<()>>,
     // Present only on an explicitly scoped clone used by a bulk workflow.
@@ -121,7 +119,7 @@ pub(crate) struct LayerHealthCounts {
     pub uncompiled_raw_count: u64,
 }
 
-/// Lean uncompiled-raw sample row for lint / bounded compile guidance.
+/// Lean uncompiled-raw sample row for lint guidance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UncompiledRawSample {
     pub document_id: String,
@@ -145,39 +143,56 @@ pub(crate) struct UncompiledShelfQueue {
     pub total_shelves: u64,
 }
 
-/// The compile link of a raw document: an inbound edge from a resolved `wiki://` node to
-/// the graph node of that document.
+/// Compute the set of document IDs that have a compile link: an inbound edge
+/// from a resolved `wiki://` graph node (`source.id != edge.target_id`) to a
+/// graph node whose `document_id` owns that document.
 ///
-/// This is the one definition of "compiled" in the data plane. The health metric, the
-/// lint sample and the catalog `compiled` filter all interpolate it, so a compile batch
-/// cannot be paged by a rule that the `uncompiled_raw_count` metric disagrees with.
-///
-/// Written as one correlated equality (`target.document_id = alias.id`) so DuckDB
-/// decorrelates it into a hash semi-join. The previous form nested a `LIMIT 1`
-/// scalar subquery inside the `EXISTS`, which ran per raw document: >190 s (then
-/// spilled until the disk filled) vs 150 ms on 15k raw documents / 60k edges.
-/// A document with several graph nodes counts as compiled when any of them has
-/// the link, where the old form looked at one arbitrary node.
-pub(crate) fn compiled_link_exists(alias: &str) -> String {
-    format!(
-        r#"EXISTS (
-          SELECT 1
-          FROM graph_nodes target
-          JOIN graph_edges edge ON edge.target_id = target.id
-          JOIN graph_nodes source ON source.id = edge.source_id
-          WHERE target.document_id = {alias}.id
-            AND source.id <> edge.target_id
-            AND source.resolved
-            AND starts_with(source.uri, 'wiki://')
-        )"#
-    )
+/// Shared across `layer_health_counts`, `list_uncompiled_raw_sample`,
+/// `uncompiled_raw_shelves`, and `catalog::list_document_catalog`.
+pub(crate) fn compiled_document_ids(r: &impl LinReader) -> Result<std::collections::HashSet<String>> {
+    let mut resolved_wiki_nodes = std::collections::HashSet::new();
+    let mut node_to_doc: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+
+    r.scan_each("graph_nodes", |row| {
+        let Some(id) = cell_str(row, "id") else {
+            return Ok(true);
+        };
+        if let Some(doc_id) = cell_str(row, "document_id").filter(|s| !s.is_empty()) {
+            node_to_doc.insert(id.to_string(), doc_id.to_string());
+        }
+        let resolved = super::lin_engine::cell_bool(row, "resolved", false);
+        if resolved
+            && cell_str(row, "uri").is_some_and(|u| u.starts_with("wiki://"))
+        {
+            resolved_wiki_nodes.insert(id.to_string());
+        }
+        Ok(true)
+    })?;
+
+    let mut compiled_docs = std::collections::HashSet::new();
+    if resolved_wiki_nodes.is_empty() || node_to_doc.is_empty() {
+        return Ok(compiled_docs);
+    }
+
+    r.scan_each("graph_edges", |row| {
+        let (Some(src), Some(tgt)) = (cell_str(row, "source_id"), cell_str(row, "target_id"))
+        else {
+            return Ok(true);
+        };
+        if src != tgt
+            && resolved_wiki_nodes.contains(src)
+            && let Some(doc_id) = node_to_doc.get(tgt)
+        {
+            compiled_docs.insert(doc_id.clone());
+        }
+        Ok(true)
+    })?;
+
+    Ok(compiled_docs)
 }
 
 /// Lean first-chunk vector sample for bounded maintenance comparisons.
-///
-/// Keeping this shape in the data plane prevents maintenance code from loading
-/// complete document bodies and every persisted chunk merely to compare a
-/// deterministic, capped set of representative vectors.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DocumentEmbeddingSample {
     pub document_id: String,
@@ -200,81 +215,100 @@ pub(crate) struct WikiDocumentWrite<'a> {
 }
 
 impl Store {
-    /// Open (or create) a DuckDB database at `path` and run schema migrations.
+    /// Open (or create) a `lin` database at `path` and run schema migrations.
     pub fn open(path: &Path) -> Result<Self> {
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() && !parent.exists() {
-                std::fs::create_dir_all(parent)?;
+        let is_mem = path.as_os_str().is_empty() || path.as_os_str() == ":memory:";
+        let backend = if is_mem {
+            LinBackend::open_memory()
+        } else {
+            if let Some(parent) = path.parent() {
+                if !parent.as_os_str().is_empty() && !parent.exists() {
+                    std::fs::create_dir_all(parent)?;
+                }
             }
+            LinBackend::open_durable(path, SyncMode::Full)?
+        };
+
+        let backend = Arc::new(RwLock::new(backend));
+        {
+            let mut w = write_lock(&backend)?;
+            schema::migrate(&mut w)?;
+            // Ensure durable `lin` stores flush catalog extras + head/snapshot so concurrent
+            // `Store::open_read_only` (`Db::open_read`) sees all collections immediately.
+            let _ = w.checkpoint();
         }
 
-        let conn = Connection::open(path)?;
-        apply_performance_pragmas(&conn)?;
-        schema::migrate(&conn)?;
-
         Ok(Self {
-            conn: Arc::new(Mutex::new(conn)),
+            backend,
+            store_id: NEXT_STORE_ID.fetch_add(1, Ordering::Relaxed),
             path: path.to_path_buf(),
             corpus_mutation_lane: Arc::new(tokio::sync::RwLock::new(())),
             corpus_mutation_guard: None,
         })
     }
 
-    /// Open an existing, current-schema rag-mcp database without any writes.
-    ///
-    /// Unlike [`Self::open`], this never creates parent directories or a new
-    /// database and never runs schema migrations. It is intended for direct
-    /// inspectors; all durable mutations must still go through the one-writer
-    /// gateway.
+    /// Open an in-memory `lin` store with migrated schema (fast unit-test convenience).
+    pub fn open_in_memory() -> Result<Self> {
+        Self::open(Path::new(":memory:"))
+    }
+
+    /// Open an existing, current-schema `rag-mcp` `lin` database without any writes.
     pub fn open_read_only(path: &Path) -> Result<Self> {
         let metadata = std::fs::metadata(path).map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
                 AppError::not_found(format!(
-                    "read-only DuckDB file '{}' does not exist",
+                    "read-only lin database '{}' does not exist",
                     path.display()
                 ))
             } else {
                 AppError::Io(error)
             }
         })?;
-        if !metadata.is_file() {
+        if !metadata.is_dir() && !super::lin_engine::is_lin_portable_backup_file(path) {
             return Err(AppError::config(format!(
-                "read-only DuckDB path '{}' is not a file",
+                "read-only lin path '{}' is neither a lin directory nor a LIN\\x04 backup file",
                 path.display()
             )));
         }
 
-        let config = DuckDbConfig::default()
-            .access_mode(AccessMode::ReadOnly)
-            .map_err(|error| {
-                AppError::db(format!("cannot configure DuckDB read-only mode: {error}"))
-            })?;
-        let conn = Connection::open_with_flags(path, config).map_err(|error| {
+        let backend = LinBackend::open_read_only(path).map_err(|error| {
             AppError::db(format!(
-                "cannot open DuckDB '{}' read-only: {error}",
+                "cannot open lin database '{}' read-only: {error}",
                 path.display()
             ))
         })?;
-        apply_performance_pragmas(&conn)?;
-        let version = schema::current_schema_version(&conn).map_err(|error| {
-            AppError::config(format!(
-                "DuckDB '{}' is not a compatible rag-mcp database: {error}",
-                path.display()
-            ))
-        })?;
-        if version != Some(schema::SCHEMA_VERSION) {
-            return Err(AppError::config(format!(
-                "DuckDB '{}' has incompatible schema version {}; expected {}. Upgrade a writable copy through the gateway before inspecting it",
-                path.display(),
-                version
-                    .map(|version| version.to_string())
-                    .unwrap_or_else(|| "missing".into()),
-                schema::SCHEMA_VERSION
-            )));
+        let backend = Arc::new(RwLock::new(backend));
+        {
+            let r = read_lock(&backend)?;
+            for required in ["documents", "chunks", "graph_nodes", "graph_edges"] {
+                if !r.has_collection(required) {
+                    return Err(AppError::config(format!(
+                        "lin database '{}' is not a compatible rag-mcp database: missing collection '{required}'",
+                        path.display()
+                    )));
+                }
+            }
+            let version = schema::current_schema_version(&r).map_err(|error| {
+                AppError::config(format!(
+                    "lin database '{}' is not a compatible rag-mcp database: {error}",
+                    path.display()
+                ))
+            })?;
+            if version != Some(schema::SCHEMA_VERSION) {
+                return Err(AppError::config(format!(
+                    "lin database '{}' has incompatible schema version {}; expected {}. Upgrade a writable copy through the gateway before inspecting it",
+                    path.display(),
+                    version
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "missing".into()),
+                    schema::SCHEMA_VERSION
+                )));
+            }
         }
 
         Ok(Self {
-            conn: Arc::new(Mutex::new(conn)),
+            backend,
+            store_id: NEXT_STORE_ID.fetch_add(1, Ordering::Relaxed),
             path: path.to_path_buf(),
             corpus_mutation_lane: Arc::new(tokio::sync::RwLock::new(())),
             corpus_mutation_guard: None,
@@ -286,69 +320,108 @@ impl Store {
         &self.path
     }
 
-    /// The raw DuckDB connection, for persistence code only.
-    ///
-    /// Production code outside `db` goes through Store methods and the `db::*`
-    /// repositories; the wider visibility exists only so tests can seed and
-    /// inspect fixtures directly.
-    #[cfg(not(test))]
-    pub(crate) fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
-        self.lock_connection()
+    /// Shared read lock over the `lin` backend (concurrent zero-copy readers).
+    pub fn read(&self) -> Result<LinReadGuard<'_>> {
+        read_lock(&self.backend)
     }
 
+    /// Exclusive write lock over the `lin` backend.
+    pub fn write(&self) -> Result<LinWriteGuard<'_>> {
+        write_lock(&self.backend)
+    }
+
+    /// Export a self-contained portable `LIN\x04` snapshot file without sidecars.
+    pub fn export_portable_backup(&self, destination: &Path) -> Result<()> {
+        let mut w = self.write()?;
+        w.export_backup(destination)
+    }
+
+    /// Toggle full hardware barrier (`F_FULLFSYNC` / `fsync`) vs OS WAL buffer flush (`SyncMode::Normal`).
+    /// Production defaults to `true` (`SyncMode::Full`); benchmarks or bulk pipelines can test `false` (`SyncMode::Normal`).
+    pub fn set_sync_full(&self, sync_full: bool) -> Result<()> {
+        let mut w = self.write()?;
+        if let Some(eng) = w.disk_v2_mut() {
+            eng.set_sync_full(sync_full);
+        }
+        Ok(())
+    }
+
+    /// Explicitly `fsync` the active WAL file to physical media.
+    pub fn flush_wal(&self) -> Result<()> {
+        let mut w = self.write()?;
+        if let Some(eng) = w.disk_v2_mut() {
+            eng.flush_wal()?;
+        }
+        Ok(())
+    }
+
+    /// Monotonic process-unique identity for snapshot caches (immune to ABA pointer reuse).
+    pub(in crate::db) fn backend_key(&self) -> usize {
+        self.store_id
+    }
+
+    /// Run `work` in one ACID `lin::Transaction` under the Store write lock.
+    /// Commits on `Ok`; an `Err` (or panic) rolls back automatically.
+    pub(crate) fn with_tx<T>(&self, work: impl FnOnce(&mut LinTx<'_>) -> Result<T>) -> Result<T> {
+        let mut w = self.write()?;
+        w.with_tx(work)
+    }
+
+    /// Fault-injection helper for tests simulating a missing internal table/collection.
     #[cfg(test)]
-    pub(crate) fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
-        self.lock_connection()
-    }
-
-    /// Run `work` in one transaction under the Store lock. Commits on `Ok`;
-    /// an `Err` (or panic) drops the transaction, which rolls it back.
-    pub(in crate::db) fn with_tx<T>(
-        &self,
-        work: impl FnOnce(&duckdb::Transaction<'_>) -> Result<T>,
-    ) -> Result<T> {
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let value = work(&tx)?;
+    pub(crate) fn drop_collection_for_test(&self, name: &str) -> Result<()> {
+        use super::lin_engine::LinWriter;
+        let mut w = self.write()?;
+        if let Some(eng) = w.disk_v2_mut() {
+            eng.drop_table(name)?;
+            eng.drop_table("meta")?;
+            w.ensure_col("meta", false, &[("id", "id"), ("key", "var"), ("value", "var")])?;
+            let _ = w.checkpoint();
+            return Ok(());
+        }
+        let db = w.db_mut();
+        db.catalog.collections.remove(name);
+        db.catalog.indexes.retain(|_, idx| idx.collection != name);
+        db.store.extra_collections.remove(name);
+        db.store.extra_indexes.retain(|_, idx| idx.collection != name);
+        db.store.collections.remove(name);
+        db.store.indexes.retain(|_, idx| idx.def.collection != name);
+        db.catalog.collections.remove("meta");
+        db.store.extra_collections.remove("meta");
+        db.catalog.refresh_hash();
+        let mut tx = db.transaction()?;
+        tx.execute("col meta { id: id, key: var, value: var }")?;
         tx.commit()?;
-        Ok(value)
+        let _ = db.checkpoint();
+        Ok(())
     }
 
-    fn lock_connection(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
-        self.conn
-            .lock()
-            .map_err(|e| AppError::db(format!("database lock poisoned: {e}")))
+    /// Cross-thread Store-scoped fault injection for derived duplicate graph edges.
+    #[cfg(test)]
+    pub(crate) fn set_fail_derived_edge_duplicate_for_test(&self, fail: bool) {
+        use super::lin_engine::LinWriter;
+        if let Ok(w) = self.write() {
+            let key = std::sync::Arc::as_ptr(w.bridge_embedder()) as usize;
+            crate::db::graph::set_fail_derived_edge_duplicate_key(key, fail);
+        }
     }
 
     /// Insert or replace a document row by primary key `id` (last-write-wins).
-    ///
-    /// Bumps `revision` based on the previous row for this `id` (or starts at 1).
-    /// When `doc.content_hash` is empty/`None`, computes [`content_hash`] of
-    /// `doc.content` and stores that fingerprint.
     pub fn upsert_document(&self, doc: &Document) -> Result<()> {
         self.upsert_document_cas(doc, None).map(|_| ())
     }
 
     /// CAS upsert: if `if_match_revision` is `Some`, the existing row (by `id`)
     /// must have that revision or [`AppError::Conflict`] is returned.
-    ///
-    /// Returns the **new** revision written (1 for insert).
     pub fn upsert_document_cas(
         &self,
         doc: &Document,
         if_match_revision: Option<i64>,
     ) -> Result<i64> {
-        self.with_tx(|tx| {
-            let new_rev = upsert_document_cas_locked(tx, doc, if_match_revision)?;
-            Ok(new_rev)
-        })
+        self.with_tx(|tx| upsert_document_cas_locked(tx, doc, if_match_revision))
     }
 
-    /// Persist a document and its derived state under one DuckDB transaction.
-    ///
-    /// Callers must finish chunking and embedding before entering this method.
-    /// Embedding JSON is also prepared before the database lock/transaction so
-    /// serialization failures cannot leave a partially-updated document.
+    /// Persist a document and its derived state under one transaction.
     pub(crate) fn write_document_atomic(
         &self,
         doc: &Document,
@@ -360,9 +433,6 @@ impl Store {
 
     /// Persist an unchunked document (e.g. `schema://agents`), rebuild its
     /// outgoing graph slice and append its audit row in one transaction.
-    ///
-    /// Either all three land or none do: a graph or ops-log failure leaves the
-    /// previous document, graph and log untouched.
     pub(crate) fn write_unchunked_document_with_audit(
         &self,
         doc: &Document,
@@ -448,8 +518,8 @@ impl Store {
         })
     }
 
-    /// Persist a wiki document and its chunks, graph, catalog row, and audit
-    /// event, replication journal and applied cursor under one transaction.
+    /// Persist a wiki document and its chunks, graph, catalog row, audit event,
+    /// replication journal and applied cursor under one transaction.
     pub(crate) fn write_wiki_document_atomic(
         &self,
         write: WikiDocumentWrite<'_>,
@@ -511,53 +581,49 @@ impl Store {
                 "sync event does not belong to prepared wiki document",
             ));
         }
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        if create_only {
-            let existing: i64 = tx.query_row(
-                "SELECT COUNT(*) FROM documents WHERE uri = ? OR id = ?",
-                params![&doc.uri, &doc.id],
-                |row| row.get(0),
-            )?;
-            if existing != 0 {
-                return Err(AppError::conflict("wiki page already exists"));
+
+        self.with_tx(|tx| {
+            if create_only {
+                let uri_exists = !tx.find_by_eq("documents", "uri", doc.uri.as_str())?.is_empty();
+                let id_exists = tx.get_by_id("documents", &doc.id)?.is_some();
+                if uri_exists || id_exists {
+                    return Err(AppError::conflict("wiki page already exists"));
+                }
             }
-        }
-        if let Some(sequence) = super::sync::sync_duplicate_locked(&tx, sync)? {
-            return Ok((None, sequence));
-        }
-        if super::sync::defer_pulled_document_locked(&tx, sync, &doc.uri)? {
-            let sequence = super::sync::commit_sync_write_locked(&tx, sync, &local_event)?;
-            tx.commit()?;
-            return Ok((None, sequence));
-        }
-        super::review::accept_locked(&tx, doc, audit_entry)?;
-        let result = write_document_locked(
-            &tx,
-            doc,
-            if_match_revision,
-            DocumentDerivedWrite::ReplaceChunksAndGraph(chunks),
-            Some(&prepared_embeddings),
-            None,
-        )?;
-        upsert_wiki_index_entry_locked(&tx, index_entry)?;
-        #[cfg(test)]
-        if audit_entry.op == TEST_FAIL_WIKI_WRITE_AFTER_INDEX_OP {
-            return Err(AppError::db(
-                "injected wiki write failure after catalog update",
-            ));
-        }
-        append_ops_log_locked(&tx, audit_entry)?;
-        let sequence = super::sync::commit_sync_write_locked(&tx, sync, &local_event)?;
-        #[cfg(test)]
-        if audit_entry.op == "__test_fail_wiki_after_sync_journal__" {
-            return Err(AppError::db("injected wiki failure after sync journal"));
-        }
-        tx.commit()?;
-        Ok((Some(result), sequence))
+            if let Some(sequence) = super::sync::sync_duplicate_locked(tx, sync)? {
+                return Ok((None, sequence));
+            }
+            if super::sync::defer_pulled_document_locked(tx, sync, &doc.uri)? {
+                let sequence = super::sync::commit_sync_write_locked(tx, sync, &local_event)?;
+                return Ok((None, sequence));
+            }
+            super::review::accept_locked(tx, doc, audit_entry)?;
+            let result = write_document_locked(
+                tx,
+                doc,
+                if_match_revision,
+                DocumentDerivedWrite::ReplaceChunksAndGraph(chunks),
+                Some(&prepared_embeddings),
+                None,
+            )?;
+            upsert_wiki_index_entry_locked(tx, index_entry)?;
+            #[cfg(test)]
+            if audit_entry.op == TEST_FAIL_WIKI_WRITE_AFTER_INDEX_OP {
+                return Err(AppError::db(
+                    "injected wiki write failure after catalog update",
+                ));
+            }
+            append_ops_log_locked(tx, audit_entry)?;
+            let sequence = super::sync::commit_sync_write_locked(tx, sync, &local_event)?;
+            #[cfg(test)]
+            if audit_entry.op == "__test_fail_wiki_after_sync_journal__" {
+                return Err(AppError::db("injected wiki failure after sync journal"));
+            }
+            Ok((Some(result), sequence))
+        })
     }
 
-    /// Insert chunk rows. Embeddings are stored as JSON float arrays in `embedding_json`.
+    /// Insert chunk rows with binary `Cell::Vec` embeddings via `BridgeEmbedder`.
     pub fn insert_chunks(&self, chunks: &[Chunk]) -> Result<()> {
         if chunks.is_empty() {
             return Ok(());
@@ -569,26 +635,18 @@ impl Store {
             .map(|chunk| chunk.document_id.as_str())
             .collect();
         let documents: Vec<&str> = documents.into_iter().collect();
-        let conn = self.lock()?;
-        super::fts::mark_chunks_changed_for(&conn, &documents)?;
-        insert_chunks_locked(&conn, chunks, &embedding_json)
-    }
-
-    /// Delete a document, its chunks, and its graph node + incident edges.
-    ///
-    /// Returns `true` if a document row was removed.
-    pub fn delete_document(&self, id: &str) -> Result<bool> {
         self.with_tx(|tx| {
-            let deleted = delete_document_locked(tx, id)?;
-            Ok(deleted)
+            super::fts::mark_chunks_changed_for(tx, &documents)?;
+            insert_chunks_locked(tx, chunks, &embedding_json)
         })
     }
 
+    /// Delete a document, its chunks, and demote its graph node.
+    pub fn delete_document(&self, id: &str) -> Result<bool> {
+        self.with_tx(|tx| delete_document_locked(tx, id))
+    }
+
     /// Apply a maintenance batch of hard deletes and tombstones atomically.
-    ///
-    /// Every target must exist and an id may occur only once across the two
-    /// lists. Any validation or storage failure rolls back the entire group, so
-    /// a compression caller never loses a partial prefix without a report.
     pub(crate) fn apply_document_dispositions_atomic(
         &self,
         delete_ids: &[String],
@@ -628,29 +686,20 @@ impl Store {
             }
 
             for id in delete_ids {
-                let chunk_count: i64 = tx.query_row(
-                    "SELECT COUNT(*)::BIGINT FROM chunks WHERE document_id = ?",
-                    params![id],
-                    |row| row.get(0),
-                )?;
+                let chunk_count = tx.find_by_eq("chunks", "document_id", id.as_str())?.len() as u64;
                 if !delete_document_locked(tx, id)? {
                     return Err(AppError::not_found(format!(
                         "document not found for delete: {id}"
                     )));
                 }
                 deleted += 1;
-                chunks_deleted = chunks_deleted.saturating_add(chunk_count.max(0) as u64);
+                chunks_deleted = chunks_deleted.saturating_add(chunk_count);
             }
             Ok((deleted, tombstoned, chunks_deleted))
         })
     }
 
     /// Validate and apply one exact-content duplicate group atomically.
-    ///
-    /// Actual document bodies are hashed inside the transaction; persisted
-    /// `content_hash` values and caller-provided ids are never trusted as proof
-    /// of equality. All sources are validated before the first mutation and any
-    /// later storage failure rolls the whole group back.
     pub(crate) fn merge_exact_duplicates_atomic(
         &self,
         keep_id: &str,
@@ -763,43 +812,32 @@ impl Store {
 
     /// Count chunks without loading their text or vectors.
     pub(crate) fn count_chunks_for_document(&self, document_id: &str) -> Result<u64> {
-        let conn = self.lock()?;
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*)::BIGINT FROM chunks WHERE document_id = ?",
-            params![document_id],
-            |row| row.get(0),
-        )?;
-        Ok(count.max(0) as u64)
+        let r = self.read()?;
+        Ok(r.find_by_eq("chunks", "document_id", document_id)?.len() as u64)
     }
 
     /// Delete only chunks for a document (used on uri re-ingest to keep graph node stable).
     pub fn delete_chunks_for_document(&self, document_id: &str) -> Result<()> {
-        let conn = self.lock()?;
-        super::fts::mark_chunks_changed_for(&conn, &[document_id])?;
-        conn.execute(
-            "DELETE FROM chunks WHERE document_id = ?",
-            params![document_id],
-        )?;
-        Ok(())
+        self.with_tx(|tx| {
+            super::fts::mark_chunks_changed_for(tx, &[document_id])?;
+            tx.delete_where("chunks", lin::query::pred::eq("document_id", document_id))?;
+            Ok(())
+        })
     }
 
     /// Delete all documents whose `source_file` equals `source`, plus their chunks.
-    ///
-    /// Returns the number of document rows removed.
     pub fn delete_by_source(&self, source: &str) -> Result<u64> {
         self.delete_by_source_ids(source)
             .map(|document_ids| document_ids.len() as u64)
     }
 
-    /// Delete by exact source and return the ids selected inside the same
-    /// transaction that performs the deletion.
+    /// Delete by exact source and return the ids selected inside the same transaction.
     pub fn delete_by_source_ids(&self, source: &str) -> Result<Vec<String>> {
         self.delete_source_state_ids_with(source, |_| Ok(()))
             .map(|(document_ids, _)| document_ids)
     }
 
-    /// Atomically remove every document/derived row and manifest ownership for
-    /// one filesystem source. Returns `(documents_deleted, manifest_deleted)`.
+    /// Atomically remove every document/derived row and manifest ownership for one filesystem source.
     pub(crate) fn delete_source_state(&self, source: &str) -> Result<(u64, bool)> {
         self.delete_source_state_with(source, |_| Ok(()))
     }
@@ -819,26 +857,23 @@ impl Store {
         mut after_document: impl FnMut(usize) -> Result<()>,
     ) -> Result<(Vec<String>, bool)> {
         self.with_tx(|tx| {
-            let manifest_present: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM source_manifest WHERE canonical_path = ?)",
-                params![source],
-                |row| row.get(0),
-            )?;
-            let mut ids = Vec::new();
-            {
-                let mut stmt = tx.prepare("SELECT id FROM documents WHERE source_file = ?")?;
-                crate::db::rows::for_each_row(&mut stmt, params![source], |row| {
-                    ids.push(row.get::<_, String>(0)?);
-                    Ok(())
-                })?;
-            }
+            let manifest_present = tx.get_by_id("source_manifest", source)?.is_some()
+                || !tx
+                    .find_by_eq("source_manifest", "canonical_path", source)?
+                    .is_empty();
+            let doc_rows = tx.find_by_eq("documents", "source_file", source)?;
+            let ids: Vec<String> = doc_rows
+                .iter()
+                .filter_map(|r| cell_opt_string(r, "id"))
+                .collect();
             for (index, id) in ids.iter().enumerate() {
                 delete_document_locked(tx, id)?;
                 after_document(index + 1)?;
             }
-            tx.execute(
-                "DELETE FROM source_manifest WHERE canonical_path = ?",
-                params![source],
+            let _ = tx.delete_by_id("source_manifest", source)?;
+            tx.delete_where(
+                "source_manifest",
+                lin::query::pred::eq("canonical_path", source),
             )?;
             Ok((ids, manifest_present))
         })
@@ -851,12 +886,8 @@ fn canonical_wiki_slug(uri: &str) -> Option<&str> {
         .then_some(slug)
 }
 
-/// Generic writes must publish the same wiki snapshot as the dedicated writer.
-/// Lifecycle and other local-only columns deliberately do not trigger an event.
-/// The dedicated wiki writer calls `write_document_locked` directly and appends
-/// its own typed local/incoming event, so it never passes through this helper.
 fn journal_generic_wiki_change_locked(
-    conn: &Connection,
+    w: &mut impl LinWriter,
     previous: Option<&Document>,
     doc: &Document,
     identity: Option<&super::sync::SyncIdentity>,
@@ -879,15 +910,11 @@ fn journal_generic_wiki_change_locked(
         return Ok(());
     }
 
-    let existing_index = {
-        let mut statement = conn.prepare(
-            "SELECT id, COALESCE(slug, label, id), COALESCE(title, label, id), \
-             COALESCE(kind, 'wiki'), category, summary, COALESCE(page_id, document_id), \
-             CAST(updated_at AS VARCHAR) FROM wiki_index WHERE slug = ? LIMIT 1",
-        )?;
-        let mut rows = statement.query(params![slug])?;
-        rows.next()?.map(row_to_wiki_index).transpose()?
-    };
+    let existing_index = w
+        .find_by_eq("wiki_index", "slug", slug)?
+        .first()
+        .map(rows::wiki_index_entry)
+        .transpose()?;
     let (summary, category) = meta_summary_category(&doc.metadata_json);
     let (old_summary, old_category) = previous
         .map(|old| meta_summary_category(&old.metadata_json))
@@ -940,7 +967,7 @@ fn journal_generic_wiki_change_locked(
         }
     };
     upsert_wiki_index_entry_locked(
-        conn,
+        w,
         &WikiIndexEntry {
             id: existing_index
                 .map(|entry| entry.id)
@@ -954,36 +981,39 @@ fn journal_generic_wiki_change_locked(
             updated_at: doc.updated_at,
         },
     )?;
-    super::sync::local_change_locked(conn, identity, &event)?;
+    super::sync::local_change_locked(w, identity, &event)?;
     Ok(())
 }
 
 fn write_document_locked(
-    conn: &Connection,
+    w: &mut impl LinWriter,
     doc: &Document,
     if_match_revision: Option<i64>,
     derived: DocumentDerivedWrite<'_>,
     prepared_embeddings: Option<&[String]>,
     manifest: Option<crate::db::SourceManifestWrite<'_>>,
 ) -> Result<AtomicDocumentWriteResult> {
-    let revision = upsert_document_cas_locked(conn, doc, if_match_revision)?;
+    let revision = upsert_document_cas_locked(w, doc, if_match_revision)?;
     let (node_id, edge_count) = match (derived, prepared_embeddings) {
         (DocumentDerivedWrite::Preserve, None) => (None, 0),
         (DocumentDerivedWrite::RefreshGraphLabel, None) => {
-            (refresh_document_graph_label_locked(conn, doc)?, 0)
+            (refresh_document_graph_label_locked(w, doc)?, 0)
         }
         (DocumentDerivedWrite::ReplaceChunksAndGraph(chunks), Some(embedding_json)) => {
-            super::fts::mark_chunks_changed_for(conn, &[doc.id.as_str()])?;
-            conn.execute("DELETE FROM chunks WHERE document_id = ?", params![doc.id])?;
-            insert_chunks_locked(conn, chunks, embedding_json)?;
+            super::fts::mark_chunks_changed_for(w, &[doc.id.as_str()])?;
+            w.delete_where(
+                "chunks",
+                lin::query::pred::eq("document_id", doc.id.as_str()),
+            )?;
+            insert_chunks_locked(w, chunks, embedding_json)?;
             let (node_id, edge_count) =
-                crate::graph::resolve::rebuild_document_graph_locked(conn, doc)?;
+                crate::graph::resolve::rebuild_document_graph_locked(w, doc)?;
             (Some(node_id), edge_count)
         }
         _ => unreachable!("derived write and prepared embedding state must match"),
     };
     if let Some(manifest) = manifest {
-        super::source_manifest::upsert_source_manifest_locked(conn, manifest)?;
+        super::source_manifest::upsert_source_manifest_locked(w, manifest)?;
     }
     Ok(AtomicDocumentWriteResult {
         revision,
@@ -1000,10 +1030,6 @@ fn apply_document_meta_update(
     let mut title_changed = false;
     let persisted_raw = crate::models::Layer::Raw.is(&doc.layer);
 
-    // Layer transition policy is deliberately asymmetric: mutable documents
-    // may be frozen by moving to `raw`, but a persisted raw source cannot leave
-    // that layer through a generic metadata patch. Compiled/mutable content must
-    // be created as a separate document instead of relabelling the source.
     if persisted_raw
         && update
             .layer
@@ -1063,7 +1089,6 @@ fn apply_document_meta_update(
             doc.title = title.to_string();
             title_changed = true;
         } else if !title.is_empty() {
-            // Same title: still count as written but not "changed" for graph label.
             doc.title = title.to_string();
         }
     }
@@ -1091,9 +1116,6 @@ fn apply_document_meta_update(
     }
     if let Some(ref new_content) = update.content {
         if new_content.as_str() != doc.content.as_str() {
-            // Check the persisted layer, not the already-applied patch: a
-            // `{layer: "wiki", content: ...}` request must not bypass raw
-            // immutability in one operation.
             if persisted_raw {
                 return Err(AppError::conflict(format!(
                     "document {} is layer=raw (immutable body); refuse content change via update_document_meta",
@@ -1114,64 +1136,86 @@ fn apply_document_meta_update(
     })
 }
 
-fn get_document_locked(conn: &Connection, id: &str) -> Result<Option<Document>> {
-    let sql = format!("SELECT {DOCUMENT_SELECT} FROM documents WHERE id = ?");
-    let mut statement = conn.prepare(&sql)?;
-    let mut rows = statement.query(params![id])?;
-    match rows.next()? {
-        Some(row) => Ok(Some(rows::document(row)?)),
-        None => Ok(None),
-    }
+pub(crate) fn get_document_locked(r: &impl LinReader, id: &str) -> Result<Option<Document>> {
+    r.with_by_id("documents", id, rows::document)
 }
 
-pub(super) fn delete_document_locked(conn: &duckdb::Connection, id: &str) -> Result<bool> {
-    let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM documents WHERE id = ?)",
-        params![id],
-        |row| row.get(0),
-    )?;
-    if !exists {
+pub(super) fn delete_document_locked(w: &mut impl LinWriter, id: &str) -> Result<bool> {
+    if !w.exists_by_id("documents", id)? {
         return Ok(false);
     }
-    super::fts::mark_chunks_changed_for(conn, &[id])?;
-    // GRAPH_DESIGN.md §6.3: never wipe incident edges here. The node is demoted to
-    // an unresolved stub and edges from other notes survive.
-    super::graph::demote_graph_for_document_locked(conn, id)?;
-    conn.execute("DELETE FROM chunks WHERE document_id = ?", params![id])?;
-    conn.execute(
-        "DELETE FROM wiki_index WHERE document_id = ? OR page_id = ?",
-        params![id, id],
+    super::fts::mark_chunks_changed_for(w, &[id])?;
+    super::graph::demote_graph_for_document_locked(w, id)?;
+    w.delete_where("chunks", lin::query::pred::eq("document_id", id))?;
+
+    // Delete wiki_index entries matching document_id or page_id via secondary indexes
+    let mut wiki_ids = Vec::new();
+    for field in ["document_id", "page_id"] {
+        w.for_each_by_eq_str3(
+            "wiki_index",
+            field,
+            id,
+            "id",
+            field,
+            None,
+            |wid, _, _| {
+                if let Some(wid) = wid.filter(|s| !s.is_empty()) {
+                    if !wiki_ids.iter().any(|existing| existing == wid) {
+                        wiki_ids.push(wid.to_string());
+                    }
+                }
+                Ok(true)
+            },
+        )?;
+    }
+    w.delete_by_ids("wiki_index", &wiki_ids)?;
+
+    // Delete collection_dependencies referencing id via secondary indexes
+    let mut dep_ids = Vec::new();
+    for field in ["document_id", "depends_on_document_id"] {
+        w.for_each_by_eq_str3(
+            "collection_dependencies",
+            field,
+            id,
+            "id",
+            field,
+            None,
+            |did, _, _| {
+                if let Some(did) = did.filter(|s| !s.is_empty()) {
+                    if !dep_ids.iter().any(|existing| existing == did) {
+                        dep_ids.push(did.to_string());
+                    }
+                }
+                Ok(true)
+            },
+        )?;
+    }
+    w.delete_by_ids("collection_dependencies", &dep_ids)?;
+
+    // Nullify parent_document_id on collection_entries
+    w.update_where(
+        "collection_entries",
+        lin::query::pred::eq("parent_document_id", id),
+        RecBuilder::new().opt_str("parent_document_id", None).build(),
     )?;
-    conn.execute(
-        "DELETE FROM collection_dependencies WHERE document_id = ? OR depends_on_document_id = ?",
-        params![id, id],
+    w.delete_where(
+        "collection_entries",
+        lin::query::pred::eq("document_id", id),
     )?;
-    conn.execute(
-        "UPDATE collection_entries SET parent_document_id = NULL WHERE parent_document_id = ?",
-        params![id],
+    w.delete_where("source_manifest", lin::query::pred::eq("document_id", id))?;
+    w.delete_where(
+        "document_revisions",
+        lin::query::pred::eq("document_id", id),
     )?;
-    conn.execute(
-        "DELETE FROM collection_entries WHERE document_id = ?",
-        params![id],
-    )?;
-    conn.execute(
-        "DELETE FROM source_manifest WHERE document_id = ?",
-        params![id],
-    )?;
-    conn.execute(
-        "DELETE FROM document_revisions WHERE document_id = ?",
-        params![id],
-    )?;
-    let deleted = conn.execute("DELETE FROM documents WHERE id = ?", params![id])?;
-    Ok(deleted > 0)
+    w.delete_by_id("documents", id)
 }
 
-fn upsert_document_cas_locked(
-    conn: &Connection,
+pub(crate) fn upsert_document_cas_locked(
+    w: &mut impl LinWriter,
     doc: &Document,
     if_match_revision: Option<i64>,
 ) -> Result<i64> {
-    let normalized = crate::code_index::source::persist(conn, doc)?;
+    let normalized = crate::code_index::source::persist(w, doc)?;
     let doc = normalized.as_ref();
     let hash = match doc.content_hash.as_deref() {
         Some(h) if !h.is_empty() => h.to_string(),
@@ -1194,31 +1238,40 @@ fn upsert_document_cas_locked(
         doc.status.as_str()
     };
 
-    let conflicting_uri_owner = {
-        let mut stmt =
-            conn.prepare("SELECT id FROM documents WHERE uri = ? AND id <> ? LIMIT 1")?;
-        let mut rows = stmt.query(params![doc.uri, doc.id])?;
-        match rows.next()? {
-            Some(row) => Some(row.get::<_, String>(0)?),
-            None => None,
+    let existing_row = w.get_by_id("documents", &doc.id)?;
+    let uri_unchanged = existing_row
+        .as_ref()
+        .is_some_and(|row| cell_str(row, "uri") == Some(doc.uri.as_str()));
+
+    // Enforce URI uniqueness across distinct document IDs (skip index probe when updating same URI)
+    if !uri_unchanged {
+        let mut conflicting_owner: Option<String> = None;
+        w.for_each_by_eq_str3(
+            "documents",
+            "uri",
+            doc.uri.as_str(),
+            "id",
+            "uri",
+            None,
+            |owner_id, _, _| {
+                if let Some(owner) = owner_id.filter(|id| *id != doc.id.as_str()) {
+                    conflicting_owner = Some(owner.to_string());
+                    return Ok(false);
+                }
+                Ok(true)
+            },
+        )?;
+        if let Some(owner) = conflicting_owner {
+            return Err(AppError::conflict(format!(
+                "document uri '{}' is already owned by document {owner}",
+                doc.uri
+            )));
         }
-    };
-    if let Some(owner) = conflicting_uri_owner {
-        return Err(AppError::conflict(format!(
-            "document uri '{}' is already owned by document {owner}",
-            doc.uri
-        )));
     }
 
-    let current_rev: Option<i64> = match conn.query_row(
-        "SELECT COALESCE(revision, 1) FROM documents WHERE id = ?",
-        params![doc.id],
-        |row| row.get(0),
-    ) {
-        Ok(revision) => Some(revision),
-        Err(duckdb::Error::QueryReturnedNoRows) => None,
-        Err(error) => return Err(error.into()),
-    };
+    let current_rev = existing_row
+        .as_ref()
+        .map(|row| cell_i64(row, "revision", 1).max(1));
 
     let new_rev = match current_rev {
         Some(rev) => {
@@ -1252,94 +1305,87 @@ fn upsert_document_cas_locked(
     } else {
         1.0
     };
-    if current_rev.is_some() {
-        conn.execute(
-            r#"
-            INSERT INTO document_revisions
-              (document_id, revision, uri, title, content, metadata_json, content_hash,
-               wing, room, source_file, layer, kind, status, pinned, boost,
-               created_at, updated_at, superseded_at)
-            SELECT id, COALESCE(revision, 1), uri, title, content, metadata_json, content_hash,
-                   wing, room, source_file, layer, kind, status, pinned, boost,
-                   created_at, updated_at, CURRENT_TIMESTAMP
-            FROM documents WHERE id = ?
-            ON CONFLICT (document_id, revision) DO NOTHING
-            "#,
-            params![doc.id],
-        )?;
-        // DuckDB implements INSERT OR REPLACE as delete+insert. Repeated
-        // autosync updates can hit an ART index delete bug and invalidate
-        // the whole connection. UPDATE preserves the indexed row identity.
-        conn.execute(
-            r#"
-            UPDATE documents SET
-              uri = ?, title = ?, content = ?, metadata_json = ?,
-              content_hash = ?, wing = ?, room = ?, source_file = ?,
-              layer = ?, kind = ?, status = ?, pinned = ?, boost = ?,
-              revision = ?, created_at = CAST(? AS TIMESTAMP),
-              updated_at = CAST(? AS TIMESTAMP)
-            WHERE id = ?
-            "#,
-            params![
-                doc.uri,
-                doc.title,
-                doc.content,
-                doc.metadata_json,
-                hash,
-                doc.wing,
-                doc.room,
-                doc.source_file,
-                layer,
-                kind,
-                status,
-                doc.pinned,
-                boost,
-                new_rev,
-                format_ts(doc.created_at),
-                format_ts(doc.updated_at),
-                doc.id,
-            ],
+
+    if let Some(ref prev_row) = existing_row {
+        let prev_doc = rows::document(prev_row)?;
+        let rev_id = composite_id_2(&prev_doc.id, &prev_doc.revision.to_string());
+        if !w.exists_by_id("document_revisions", &rev_id)? {
+            w.insert_one(
+                "document_revisions",
+                RecBuilder::new()
+                    .str("id", rev_id)
+                    .str("document_id", &prev_doc.id)
+                    .i64("revision", prev_doc.revision)
+                    .str("uri", &prev_doc.uri)
+                    .str("title", &prev_doc.title)
+                    .str("content", &prev_doc.content)
+                    .str("metadata_json", &prev_doc.metadata_json)
+                    .opt_string("content_hash", &prev_doc.content_hash)
+                    .opt_string("wing", &prev_doc.wing)
+                    .opt_string("room", &prev_doc.room)
+                    .opt_string("source_file", &prev_doc.source_file)
+                    .str("layer", &prev_doc.layer)
+                    .str("kind", prev_doc.kind.as_str())
+                    .str("status", &prev_doc.status)
+                    .bool("pinned", prev_doc.pinned)
+                    .f64("boost", prev_doc.boost)
+                    .str("created_at", format_ts(prev_doc.created_at))
+                    .str("updated_at", format_ts(prev_doc.updated_at))
+                    .str("superseded_at", format_ts(Utc::now()))
+                    .build(),
+            )?;
+        }
+
+        w.update_where(
+            "documents",
+            lin::query::pred::eq("id", doc.id.as_str()),
+            RecBuilder::new()
+                .str("uri", &doc.uri)
+                .str("title", &doc.title)
+                .str("content", &doc.content)
+                .str("metadata_json", &doc.metadata_json)
+                .str("content_hash", hash)
+                .opt_string("wing", &doc.wing)
+                .opt_string("room", &doc.room)
+                .opt_string("source_file", &doc.source_file)
+                .str("layer", layer)
+                .str("kind", kind)
+                .str("status", status)
+                .bool("pinned", doc.pinned)
+                .f64("boost", boost)
+                .i64("revision", new_rev)
+                .str("created_at", format_ts(doc.created_at))
+                .str("updated_at", format_ts(doc.updated_at))
+                .build(),
         )?;
     } else {
-        conn.execute(
-            r#"
-            INSERT INTO documents
-              (id, uri, title, content, metadata_json,
-               content_hash, wing, room, source_file, layer, kind, status,
-               pinned, boost, revision,
-               created_at, updated_at)
-            VALUES
-              (?, ?, ?, ?, ?,
-               ?, ?, ?, ?, ?, ?, ?,
-               ?, ?, ?,
-               CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP))
-            "#,
-            params![
-                doc.id,
-                doc.uri,
-                doc.title,
-                doc.content,
-                doc.metadata_json,
-                hash,
-                doc.wing,
-                doc.room,
-                doc.source_file,
-                layer,
-                kind,
-                status,
-                doc.pinned,
-                boost,
-                new_rev,
-                format_ts(doc.created_at),
-                format_ts(doc.updated_at),
-            ],
+        w.insert_one(
+            "documents",
+            RecBuilder::new()
+                .str("id", &doc.id)
+                .str("uri", &doc.uri)
+                .str("title", &doc.title)
+                .str("content", &doc.content)
+                .str("metadata_json", &doc.metadata_json)
+                .str("content_hash", hash)
+                .opt_string("wing", &doc.wing)
+                .opt_string("room", &doc.room)
+                .opt_string("source_file", &doc.source_file)
+                .str("layer", layer)
+                .str("kind", kind)
+                .str("status", status)
+                .bool("pinned", doc.pinned)
+                .f64("boost", boost)
+                .i64("revision", new_rev)
+                .str("created_at", format_ts(doc.created_at))
+                .str("updated_at", format_ts(doc.updated_at))
+                .build(),
         )?;
     }
     Ok(new_rev)
 }
 
-/// JSON-encode chunk embeddings for [`insert_chunks_locked`], before any lock
-/// is taken so a serialization failure cannot leave a partial write.
+/// JSON-encode chunk embeddings (kept for digest computation and validation).
 pub(crate) fn embedding_json(chunks: &[Chunk]) -> Result<Vec<String>> {
     chunks
         .iter()
@@ -1358,8 +1404,20 @@ pub(crate) fn owned_embedding_json(document_id: &str, chunks: &[Chunk]) -> Resul
     embedding_json(chunks)
 }
 
+pub(crate) fn extract_parent_chunk_id(metadata_json: &str) -> Option<String> {
+    if !metadata_json.contains("parent_chunk_id") {
+        return None;
+    }
+    serde_json::from_str::<serde_json::Value>(metadata_json)
+        .ok()?
+        .get("parent_chunk_id")?
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
 pub(crate) fn insert_chunks_locked(
-    conn: &Connection,
+    w: &mut impl LinWriter,
     chunks: &[Chunk],
     embedding_json: &[String],
 ) -> Result<()> {
@@ -1373,38 +1431,36 @@ pub(crate) fn insert_chunks_locked(
     }
 
     let now = format_ts(Utc::now());
-    let digests: Vec<i64> = embedding_json
-        .iter()
-        .map(|json| embedding_digest(json))
-        .collect();
-    let rows: Vec<(&Chunk, &String, &i64)> = chunks
-        .iter()
-        .zip(embedding_json)
-        .zip(&digests)
-        .map(|((chunk, json), digest)| (chunk, json, digest))
-        .collect();
-    rows::insert_rows(
-        conn,
-        "INSERT INTO chunks (id, document_id, chunk_index, content, embedding_json, \
-         char_start, char_end, created_at, metadata_json, embedding_digest, parent_chunk_id) VALUES",
-        "(?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), ?, ?, NULLIF(json_extract_string(TRY_CAST(? AS JSON), '$.parent_chunk_id'), ''))",
-        &rows,
-        |(chunk, embedding_json, digest), values| {
-            values.extend([
-                &chunk.id as &dyn duckdb::ToSql,
-                &chunk.document_id,
-                &chunk.chunk_index,
-                &chunk.content,
-                *embedding_json,
-                &chunk.char_start,
-                &chunk.char_end,
-                &now,
-                &chunk.metadata_json,
-                *digest,
-                &chunk.metadata_json,
-            ]);
-        },
-    )
+    let bridge = w.bridge_embedder().clone();
+    let mut records = Vec::with_capacity(chunks.len());
+    for (chunk, json) in chunks.iter().zip(embedding_json) {
+        let digest = embedding_digest(json);
+        let parent_chunk_id = extract_parent_chunk_id(&chunk.metadata_json);
+        let has_vec = !chunk.embedding.is_empty();
+        if has_vec {
+            bridge.stage(chunk.id.clone(), Arc::from(chunk.embedding.as_slice()));
+        }
+        records.push(
+            RecBuilder::new()
+                .str("id", &chunk.id)
+                .str("document_id", &chunk.document_id)
+                .i64("chunk_index", i64::from(chunk.chunk_index))
+                .str("content", &chunk.content)
+                .opt_str("snippet", has_vec.then_some("1"))
+                .i64("char_start", i64::from(chunk.char_start))
+                .i64("char_end", i64::from(chunk.char_end))
+                .str("created_at", &now)
+                .str("metadata_json", &chunk.metadata_json)
+                .i64("embedding_digest", digest)
+                .opt_string("parent_chunk_id", &parent_chunk_id)
+                .build(),
+        );
+    }
+    if let Err(err) = w.insert_records("chunks", records) {
+        bridge.clear_staged();
+        return Err(err);
+    }
+    Ok(())
 }
 
 /// 64-bit digest stored in `chunks.embedding_digest` (first 8 bytes of the
@@ -1416,16 +1472,35 @@ pub(crate) fn embedding_digest(embedding_json: &str) -> i64 {
     i64::from_le_bytes(bytes)
 }
 
-fn list_chunks_for_document_locked(conn: &Connection, document_id: &str) -> Result<Vec<Chunk>> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT id, document_id, chunk_index, content, embedding_json, char_start, char_end, metadata_json
-        FROM chunks
-        WHERE document_id = ?
-        ORDER BY chunk_index ASC, id ASC
-        "#,
-    )?;
-    let chunks = crate::db::rows::query_vec(&mut stmt, params![document_id], rows::chunk)?;
+pub(crate) fn embedding_digest_vec(vec: &[f32]) -> i64 {
+    if let Ok(json) = serde_json::to_string(vec) {
+        embedding_digest(&json)
+    } else {
+        let mut hasher = blake3::Hasher::new();
+        for &v in vec {
+            hasher.update(&v.to_le_bytes());
+        }
+        let hash = hasher.finalize();
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(&hash.as_bytes()[..8]);
+        i64::from_le_bytes(bytes)
+    }
+}
+
+pub(crate) fn list_chunks_for_document_locked(
+    r: &impl LinReader,
+    document_id: &str,
+) -> Result<Vec<Chunk>> {
+    let chunk_rows = r.find_by_eq("chunks", "document_id", document_id)?;
+    let mut chunks: Vec<Chunk> = chunk_rows
+        .iter()
+        .map(rows::chunk)
+        .collect::<Result<Vec<_>>>()?;
+    chunks.sort_by(|a, b| {
+        a.chunk_index
+            .cmp(&b.chunk_index)
+            .then_with(|| a.id.cmp(&b.id))
+    });
     Ok(chunks)
 }
 
@@ -1451,47 +1526,41 @@ fn same_chunk_snapshot(current: &[Chunk], expected: &[Chunk]) -> bool {
 }
 
 pub(crate) fn set_embedding_manifest_locked(
-    conn: &Connection,
+    w: &mut impl LinWriter,
     manifest: &EmbeddingManifest,
 ) -> Result<()> {
-    conn.execute(
-        r#"
-        INSERT OR REPLACE INTO embedding_manifest
-          (id, provider, model, dims, base_url, content_fingerprint, updated_at)
-        VALUES
-          (?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP))
-        "#,
-        params![
-            manifest.id,
-            manifest.provider,
-            manifest.model,
-            manifest.dims,
-            manifest.base_url,
-            manifest.content_fingerprint,
-            format_ts(manifest.updated_at),
-        ],
-    )?;
-    Ok(())
+    w.upsert_by_id(
+        "embedding_manifest",
+        &manifest.id,
+        RecBuilder::new()
+            .str("id", &manifest.id)
+            .str("provider", &manifest.provider)
+            .str("model", &manifest.model)
+            .i64("dims", i64::from(manifest.dims))
+            .opt_string("base_url", &manifest.base_url)
+            .opt_string("content_fingerprint", &manifest.content_fingerprint)
+            .str("updated_at", format_ts(manifest.updated_at))
+            .build(),
+    )
 }
 
 fn refresh_document_graph_label_locked(
-    conn: &Connection,
+    w: &mut impl LinWriter,
     doc: &Document,
 ) -> Result<Option<String>> {
-    let node_id = {
-        let mut stmt = conn.prepare("SELECT id FROM graph_nodes WHERE document_id = ? LIMIT 1")?;
-        let mut rows = stmt.query(params![doc.id])?;
-        rows.next()?.map(|row| row.get(0)).transpose()?
-    };
-    if let Some(ref node_id) = node_id {
-        conn.execute(
-            "UPDATE graph_nodes SET label = ?, label_key = ?, updated_at = CAST(? AS TIMESTAMP) WHERE id = ?",
-            params![
-                doc.title,
-                crate::graph::normalize::label_key(&doc.title),
-                format_ts(Utc::now()),
-                node_id
-            ],
+    let matches = w.find_by_eq("graph_nodes", "document_id", doc.id.as_str())?;
+    let node_id = matches
+        .first()
+        .and_then(|row| cell_opt_string(row, "id"));
+    if let Some(ref nid) = node_id {
+        w.update_where(
+            "graph_nodes",
+            lin::query::pred::eq("id", nid.as_str()),
+            RecBuilder::new()
+                .str("label", &doc.title)
+                .str("label_key", crate::graph::normalize::label_key(&doc.title))
+                .str("updated_at", format_ts(Utc::now()))
+                .build(),
         )?;
     }
     Ok(node_id)
@@ -1505,21 +1574,9 @@ thread_local! {
 /// Upper bound on one ops-log page for every reader (MCP, HTTP, services).
 pub const MAX_OPS_LOG_PAGE: usize = 500;
 
-/// True when `information_schema.tables` lists `name` (DuckDB).
-fn table_exists_locked(conn: &Connection, name: &str) -> bool {
-    let n: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?",
-            params![name],
-            |row| row.get(0),
-        )
-        .unwrap_or(0);
-    n > 0
-}
-
-fn parse_ts(s: &str) -> Result<DateTime<Utc>> {
-    parse_db_timestamp(s)
-        .ok_or_else(|| AppError::db(format!("invalid timestamp value: {}", s.trim())))
+/// True when the collection exists in the `lin` catalog.
+fn table_exists_locked(r: &impl LinReader, name: &str) -> bool {
+    r.has_collection(name)
 }
 
 mod chunks;
@@ -1527,7 +1584,7 @@ mod corpus_lane;
 mod documents;
 mod health;
 mod manifest;
-mod ops_log;
+pub(crate) mod ops_log;
 mod revisions;
 mod schema_diary;
 mod wiki_index;
@@ -1541,33 +1598,10 @@ pub(crate) use self::manifest::{
 pub use self::manifest::{embedding_manifest_from_config, embedding_manifest_matches_config};
 use self::{ops_log::*, wiki_index::*, wiki_meta::*};
 
-fn apply_performance_pragmas(conn: &Connection) -> Result<()> {
-    if let Some(threads) = std::env::var("RAG_DB_THREADS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-    {
-        conn.execute_batch(&format!("PRAGMA threads={threads}"))?;
-    }
-    if let Ok(limit) = std::env::var("RAG_DB_MEMORY_LIMIT") {
-        let limit = limit.trim();
-        // Only accept a tight shape; this string goes into a PRAGMA verbatim.
-        if !limit.is_empty()
-            && limit.len() <= 16
-            && limit
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == ' ')
-        {
-            conn.execute_batch(&format!("PRAGMA memory_limit='{limit}'"))?;
-        }
-    }
-    Ok(())
-}
-
 impl Store {
     pub fn fts_generation_state(&self) -> Result<super::fts::FtsGenerationState> {
-        let conn = self.lock()?;
-        super::fts::fts_generation_state(&conn)
+        let r = self.read()?;
+        super::fts::fts_generation_state(&r)
     }
 }
 
@@ -1578,52 +1612,56 @@ impl Store {
         after: Option<&str>,
         limit: usize,
     ) -> Result<Vec<String>> {
-        let conn = self.lock()?;
-        let mut stmt = conn.prepare(
-            "SELECT d.id FROM documents d \
-             WHERE (? IS NULL OR d.id > ?) AND NOT EXISTS ( \
-               SELECT 1 FROM reembed_progress p \
-               WHERE p.target_fingerprint = ? AND p.document_id = d.id \
-             ) \
-             ORDER BY d.id LIMIT ?",
-        )?;
-        let rows = stmt.query_map(
-            params![after, after, target_fingerprint, limit as i64],
-            |row| row.get(0),
-        )?;
-        let mut ids = Vec::new();
-        for row in rows {
-            ids.push(row?);
+        if limit == 0 {
+            return Ok(Vec::new());
         }
+        let r = self.read()?;
+        let done_rows = r.find_by_eq("reembed_progress", "target_fingerprint", target_fingerprint)?;
+        let done_ids: std::collections::HashSet<String> = done_rows
+            .iter()
+            .filter_map(|row| cell_opt_string(row, "document_id"))
+            .collect();
+        let mut ids: Vec<String> = Vec::new();
+        r.scan_each("documents", |row| {
+            if let Some(id) = cell_str(row, "id") {
+                if after.is_none_or(|a| id > a) && !done_ids.contains(id) {
+                    ids.push(id.to_string());
+                }
+            }
+            Ok(true)
+        })?;
+        ids.sort();
+        ids.truncate(limit);
         Ok(ids)
     }
 }
 
 impl Store {
     pub(crate) fn count_reembed_pending(&self, target_fingerprint: &str) -> Result<usize> {
-        let conn = self.lock()?;
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*)::BIGINT FROM documents d \
-             WHERE NOT EXISTS ( \
-               SELECT 1 FROM reembed_progress p \
-               WHERE p.target_fingerprint = ? AND p.document_id = d.id \
-             )",
-            params![target_fingerprint],
-            |row| row.get(0),
-        )?;
-        usize::try_from(count).map_err(|_| AppError::db(format!("invalid pending count: {count}")))
+        let r = self.read()?;
+        let done_rows = r.find_by_eq("reembed_progress", "target_fingerprint", target_fingerprint)?;
+        let done_ids: std::collections::HashSet<String> = done_rows
+            .iter()
+            .filter_map(|row| cell_opt_string(row, "document_id"))
+            .collect();
+        let mut pending = 0usize;
+        r.scan_each("documents", |row| {
+            if let Some(id) = cell_str(row, "id")
+                && !done_ids.contains(id)
+            {
+                pending += 1;
+            }
+            Ok(true)
+        })?;
+        Ok(pending)
     }
 }
 
 impl Store {
     pub(crate) fn count_reembed_done(&self, target_fingerprint: &str) -> Result<usize> {
-        let conn = self.lock()?;
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*)::BIGINT FROM reembed_progress WHERE target_fingerprint = ?",
-            params![target_fingerprint],
-            |row| row.get(0),
-        )?;
-        usize::try_from(count).map_err(|_| AppError::db(format!("invalid done count: {count}")))
+        let r = self.read()?;
+        Ok(r.find_by_eq("reembed_progress", "target_fingerprint", target_fingerprint)?
+            .len())
     }
 }
 
@@ -1634,25 +1672,29 @@ impl Store {
         document_id: &str,
         chunks_reembedded: usize,
     ) -> Result<()> {
-        let conn = self.lock()?;
-        conn.execute(
-            "INSERT OR REPLACE INTO reembed_progress \
-             (target_fingerprint, document_id, chunks_reembedded, completed_at) \
-             VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
-            params![target_fingerprint, document_id, chunks_reembedded as i64],
-        )?;
-        Ok(())
+        let mut w = self.write()?;
+        let id = composite_id_2(target_fingerprint, document_id);
+        w.upsert_by_id(
+            "reembed_progress",
+            &id,
+            RecBuilder::new()
+                .str("id", &id)
+                .str("target_fingerprint", target_fingerprint)
+                .str("document_id", document_id)
+                .i64("chunks_reembedded", chunks_reembedded as i64)
+                .str("completed_at", format_ts(Utc::now()))
+                .build(),
+        )
     }
 }
 
 impl Store {
     pub(crate) fn clear_reembed_progress(&self, target_fingerprint: &str) -> Result<usize> {
-        let conn = self.lock()?;
-        let removed = conn.execute(
-            "DELETE FROM reembed_progress WHERE target_fingerprint = ?",
-            params![target_fingerprint],
-        )?;
-        Ok(removed)
+        let mut w = self.write()?;
+        w.delete_where(
+            "reembed_progress",
+            lin::query::pred::eq("target_fingerprint", target_fingerprint),
+        )
     }
 }
 

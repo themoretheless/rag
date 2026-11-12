@@ -195,12 +195,10 @@ pub(super) fn anonymous_body(node: Node) -> bool {
 }
 fn modifiers(node: Node, source: &str) -> String {
     let mut c = node.walk();
-    let result = node
-        .named_children(&mut c)
+    node.named_children(&mut c)
         .find(|n| n.kind() == "modifiers")
         .map(|n| text(n, source).into())
-        .unwrap_or_default();
-    result
+        .unwrap_or_default()
 }
 fn modifier(node: Node, name: &str) -> bool {
     let mut cursor = node.walk();
@@ -211,8 +209,7 @@ fn modifier(node: Node, name: &str) -> bool {
         return false;
     };
     let mut cursor = modifiers.walk();
-    let found = modifiers.children(&mut cursor).any(|n| n.kind() == name);
-    found
+    modifiers.children(&mut cursor).any(|n| n.kind() == name)
 }
 fn args(node: Node) -> Option<usize> {
     let a = node.child_by_field_name("arguments")?;
@@ -1147,6 +1144,7 @@ pub(super) fn resolve(
     found.sort_by_key(|s| &s.id);
     found.dedup_by_key(|s| &s.id);
     CallEdge {
+        context_evidence: None,
         reference: r.clone(),
         candidates: found.iter().map(|s| s.id.clone()).collect(),
         resolution: match found.len() {

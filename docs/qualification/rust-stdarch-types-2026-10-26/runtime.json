@@ -1,0 +1,267 @@
+{
+  "status": "passed",
+  "binary_sha256": "2ac909626475e59c3e533698c3d9bce25b82b7b353842fef2eee4ed7bd7e88a8",
+  "index_format": 81,
+  "selected": [
+    {
+      "caller": "Bytes::value",
+      "expected_path": "src/generic.rs",
+      "expected_line": 4,
+      "edge": {
+        "candidates": [
+          "54a53790-dedf-427d-a05a-4089059af597:105:get@13ecd8de5739f914ff668dcb82139fc3d1efb5cf147aa71745d9f60c8c457f5e"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "build_context": "13ecd8de5739f914ff668dcb82139fc3d1efb5cf147aa71745d9f60c8c457f5e",
+          "caller": "7c1a4fd0-b1a9-4616-b961-dac304aaf3a9:204:value@13ecd8de5739f914ff668dcb82139fc3d1efb5cf147aa71745d9f60c8c457f5e",
+          "column": 49,
+          "content_hash": "0a122b3357b6b1f64286ade6d9001c2886a42dbb030416e8f36efd1a36be6f17",
+          "document_id": "7c1a4fd0-b1a9-4616-b961-dac304aaf3a9",
+          "expression": "self.0.get",
+          "is_call": true,
+          "line": 6,
+          "name": "get",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-stdarch-types-o5mkuoxq/source/src/lib.rs",
+          "revision": 1,
+          "start_byte": 232
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "build_context": "13ecd8de5739f914ff668dcb82139fc3d1efb5cf147aa71745d9f60c8c457f5e",
+        "content_hash": "6f0cac88e665869609d7c253e229080fc4860c62d1490ab07cc105634659c8e6",
+        "document_id": "54a53790-dedf-427d-a05a-4089059af597",
+        "documentation_examined": true,
+        "end_byte": 147,
+        "end_line": 4,
+        "id": "54a53790-dedf-427d-a05a-4089059af597:105:get@13ecd8de5739f914ff668dcb82139fc3d1efb5cf147aa71745d9f60c8c457f5e",
+        "kind": "function_item",
+        "name": "get",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-stdarch-types-o5mkuoxq/source/src/generic.rs",
+        "qualified_name": "Generic<V>::get",
+        "revision": 1,
+        "signature": "pub fn get(&self) -> u8",
+        "start_byte": 105,
+        "start_line": 4
+      }
+    },
+    {
+      "caller": "Words::value",
+      "expected_path": "src/generic.rs",
+      "expected_line": 4,
+      "edge": {
+        "candidates": [
+          "54a53790-dedf-427d-a05a-4089059af597:105:get@13ecd8de5739f914ff668dcb82139fc3d1efb5cf147aa71745d9f60c8c457f5e"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "build_context": "13ecd8de5739f914ff668dcb82139fc3d1efb5cf147aa71745d9f60c8c457f5e",
+          "caller": "7c1a4fd0-b1a9-4616-b961-dac304aaf3a9:314:value@13ecd8de5739f914ff668dcb82139fc3d1efb5cf147aa71745d9f60c8c457f5e",
+          "column": 49,
+          "content_hash": "0a122b3357b6b1f64286ade6d9001c2886a42dbb030416e8f36efd1a36be6f17",
+          "document_id": "7c1a4fd0-b1a9-4616-b961-dac304aaf3a9",
+          "expression": "self.0.get",
+          "is_call": true,
+          "line": 8,
+          "name": "get",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-stdarch-types-o5mkuoxq/source/src/lib.rs",
+          "revision": 1,
+          "start_byte": 342
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "build_context": "13ecd8de5739f914ff668dcb82139fc3d1efb5cf147aa71745d9f60c8c457f5e",
+        "content_hash": "6f0cac88e665869609d7c253e229080fc4860c62d1490ab07cc105634659c8e6",
+        "document_id": "54a53790-dedf-427d-a05a-4089059af597",
+        "documentation_examined": true,
+        "end_byte": 147,
+        "end_line": 4,
+        "id": "54a53790-dedf-427d-a05a-4089059af597:105:get@13ecd8de5739f914ff668dcb82139fc3d1efb5cf147aa71745d9f60c8c457f5e",
+        "kind": "function_item",
+        "name": "get",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-stdarch-types-o5mkuoxq/source/src/generic.rs",
+        "qualified_name": "Generic<V>::get",
+        "revision": 1,
+        "signature": "pub fn get(&self) -> u8",
+        "start_byte": 105,
+        "start_line": 4
+      }
+    },
+    {
+      "caller": "selected",
+      "expected_path": "src/implementations.rs",
+      "expected_line": 4,
+      "edge": {
+        "candidates": [
+          "1cf99c86-b031-45b9-94f4-b470ca49611a:116:value@13ecd8de5739f914ff668dcb82139fc3d1efb5cf147aa71745d9f60c8c457f5e"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "build_context": "13ecd8de5739f914ff668dcb82139fc3d1efb5cf147aa71745d9f60c8c457f5e",
+          "caller": "7c1a4fd0-b1a9-4616-b961-dac304aaf3a9:359:selected@13ecd8de5739f914ff668dcb82139fc3d1efb5cf147aa71745d9f60c8c457f5e",
+          "column": 76,
+          "content_hash": "0a122b3357b6b1f64286ade6d9001c2886a42dbb030416e8f36efd1a36be6f17",
+          "document_id": "7c1a4fd0-b1a9-4616-b961-dac304aaf3a9",
+          "expression": "<ByteVector as generic::Value>::value",
+          "is_call": true,
+          "line": 9,
+          "name": "value",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-stdarch-types-o5mkuoxq/source/src/lib.rs",
+          "revision": 1,
+          "start_byte": 402
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "build_context": "13ecd8de5739f914ff668dcb82139fc3d1efb5cf147aa71745d9f60c8c457f5e",
+        "content_hash": "81786d83f64a3c57be826f89bfe8be459cd217ac3f3ebc2178413b3c054fdc31",
+        "document_id": "1cf99c86-b031-45b9-94f4-b470ca49611a",
+        "documentation_examined": true,
+        "end_byte": 143,
+        "end_line": 4,
+        "id": "1cf99c86-b031-45b9-94f4-b470ca49611a:116:value@13ecd8de5739f914ff668dcb82139fc3d1efb5cf147aa71745d9f60c8c457f5e",
+        "kind": "function_item",
+        "name": "value",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-stdarch-types-o5mkuoxq/source/src/implementations.rs",
+        "qualified_name": "uint8x16_t::value",
+        "revision": 1,
+        "signature": "fn value(&self) -> u8",
+        "start_byte": 116,
+        "start_line": 4
+      }
+    }
+  ],
+  "indexed": {
+    "indexed": 4,
+    "unchanged": 0,
+    "unsupported": 0,
+    "parse_errors": [],
+    "index_revision": 1,
+    "revision_created": true,
+    "stage_timings": {
+      "contract_version": 1,
+      "run_id": "4d854850-1b56-4c86-a7b9-f29f9838a111",
+      "lock_wait_ms": 0.000458,
+      "source_load_decode_ms": 2.127041,
+      "cache_parse_serialize_ms": 8.715541,
+      "cache_replace_ms": 10.977583000000001,
+      "revision_publish_ms": 29.532125,
+      "transaction_body_ms": 51.575167,
+      "before_metrics_write_ms": 51.576917,
+      "documents_loaded": 4,
+      "cache_hits": 0,
+      "cache_misses": 4,
+      "unsupported_documents": 0,
+      "parse_error_documents": 0,
+      "commit_included": false,
+      "metrics_write_included": false,
+      "embedding_fts_included": false
+    },
+    "resolution": {
+      "contract_version": 1,
+      "documents_total": 4,
+      "documents_resolved": 4,
+      "documents_reused": 0,
+      "reference_sites_resolved": 43,
+      "reference_sites_reused": 0,
+      "rust_package_scopes": 3,
+      "project_fallback_scopes": 0,
+      "empty_reference_documents": 1,
+      "dependency_inputs_hashed": 12,
+      "invalid_cache_entries": 0,
+      "forced_full": false,
+      "cache_available": false,
+      "no_resolution_required": false,
+      "resolution_ms": 7.2690410000000005,
+      "equivalent_to_existing": null
+    },
+    "completion": {
+      "contract_version": 1,
+      "native_total_ms": 56.329542000000004,
+      "commit_ms": 2.305625,
+      "metrics_write_ms": 2.446375,
+      "commit_included": true,
+      "process_lifetime_peak_rss_bytes": 150028288
+    }
+  },
+  "warm": {
+    "indexed": 0,
+    "unchanged": 4,
+    "unsupported": 0,
+    "parse_errors": [],
+    "index_revision": 1,
+    "revision_created": false,
+    "stage_timings": {
+      "contract_version": 1,
+      "run_id": "4d594253-6821-4e39-8aba-07e9d126c9f3",
+      "lock_wait_ms": 0.000875,
+      "source_load_decode_ms": 1.8976250000000001,
+      "cache_parse_serialize_ms": 1.1674579999999999,
+      "cache_replace_ms": 0.0015409999999999998,
+      "revision_publish_ms": 1.625292,
+      "transaction_body_ms": 4.95075,
+      "before_metrics_write_ms": 4.951667,
+      "documents_loaded": 4,
+      "cache_hits": 4,
+      "cache_misses": 0,
+      "unsupported_documents": 0,
+      "parse_error_documents": 0,
+      "commit_included": false,
+      "metrics_write_included": false,
+      "embedding_fts_included": false
+    },
+    "resolution": {
+      "contract_version": 1,
+      "documents_total": 0,
+      "documents_resolved": 0,
+      "documents_reused": 0,
+      "reference_sites_resolved": 0,
+      "reference_sites_reused": 0,
+      "rust_package_scopes": 0,
+      "project_fallback_scopes": 0,
+      "empty_reference_documents": 0,
+      "dependency_inputs_hashed": 0,
+      "invalid_cache_entries": 0,
+      "forced_full": false,
+      "cache_available": false,
+      "no_resolution_required": true,
+      "resolution_ms": 0.0,
+      "equivalent_to_existing": null
+    },
+    "completion": {
+      "contract_version": 1,
+      "native_total_ms": 8.252083,
+      "commit_ms": 0.935459,
+      "metrics_write_ms": 2.3643750000000003,
+      "commit_included": true,
+      "process_lifetime_peak_rss_bytes": 153141248
+    }
+  },
+  "fixture_sha256": {
+    "Cargo.toml": "f3da71585aab6c865b7928e965efa435f683c94cc9d7134d00a36d8d1988bee1",
+    "src/generic.rs": "2c5edc7e7689527ce2cf4f24dadb4f9ae2d6efa05871027bee7345a4e3f3f65e",
+    "src/lib.rs": "f550a20f21e5dfaf9a9c4c3c124a15968780afe85235f6ba0d0e23b7dfd8e247",
+    "src/implementations.rs": "fa17999a7aabb7be8f02f175df22da6a8071cfaed6f037fd3fc2b5f4966f135a"
+  },
+  "compiler": {
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--manifest-path",
+      "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-stdarch-types-o5mkuoxq/source/Cargo.toml"
+    ],
+    "exit_code": 0,
+    "stdout": "\nrunning 1 test\ntest values ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+    "stderr": "   Compiling stdarch-types-fixture v0.1.0 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-stdarch-types-o5mkuoxq/source)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.18s\n     Running unittests src/lib.rs (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-stdarch-types-o5mkuoxq/cargo-target/debug/build/stdarch-types-fixture/86ce8e715014b898/out/stdarch_types_fixture-86ce8e715014b898)\n   Doc-tests stdarch_types_fixture\n"
+  },
+  "limitations": [
+    "catalog identity and captured local impls; no intrinsic bodies or full compiler/ISA verification",
+    "compiler/runtime execution only on this aarch64 fixture, not every catalog type/target"
+  ]
+}

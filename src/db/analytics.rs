@@ -1,13 +1,17 @@
-//! Corpus analytics read model used by `maintain::analyze` and `compress`.
+//! Corpus analytics read model used by `maintain::analyze` and `compress` over `lin`.
 //!
 //! Counts, size statistics, exact duplicates, orphans, stubs and archive
-//! candidates are plain SQL over `documents`, `chunks` and the graph tables;
+//! candidates are computed over `documents`, `chunks` and the graph collections;
 //! the maintenance layer turns them into issues and plans.
 
+use std::collections::{HashMap, HashSet};
+
 use chrono::{DateTime, Duration, Utc};
-use duckdb::params;
 use serde::{Deserialize, Serialize};
 
+use super::lin_engine::{
+    cell_bool, cell_f64, cell_opt_string, cell_str, cell_string, cell_ts_or_now, LinReader,
+};
 use crate::db::Store;
 use crate::error::Result;
 use crate::util::parse_db_timestamp;
@@ -84,6 +88,15 @@ pub struct ArchiveCandidate {
     pub reason: String,
 }
 
+fn sorted_buckets(map: HashMap<String, u64>) -> Vec<CountBucket> {
+    let mut out: Vec<CountBucket> = map
+        .into_iter()
+        .map(|(key, count)| CountBucket { key, count })
+        .collect();
+    out.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.key.cmp(&b.key)));
+    out
+}
+
 pub(crate) fn collect_counts(
     store: &Store,
     documents: u64,
@@ -91,56 +104,68 @@ pub(crate) fn collect_counts(
     nodes: u64,
     edges: u64,
 ) -> Result<CorpusCounts> {
-    let conn = store.lock()?;
+    let r = store.read()?;
+    let mut by_layer: HashMap<String, u64> = HashMap::new();
+    let mut by_kind: HashMap<String, u64> = HashMap::new();
+    let mut by_status: HashMap<String, u64> = HashMap::new();
+    let mut by_wing: HashMap<String, u64> = HashMap::new();
+
+    r.scan_each_projected(
+        "documents",
+        &["layer", "kind", "status", "wing"],
+        |row| {
+            let layer = cell_str(row, "layer").unwrap_or("raw");
+            *by_layer.entry(layer.to_string()).or_insert(0) += 1;
+
+            let kind = cell_str(row, "kind").unwrap_or("document");
+            *by_kind.entry(kind.to_string()).or_insert(0) += 1;
+
+            let status = cell_str(row, "status").unwrap_or("active");
+            *by_status.entry(status.to_string()).or_insert(0) += 1;
+
+            let wing = match cell_str(row, "wing") {
+                Some(w) if !w.trim().is_empty() => w.to_string(),
+                _ => "(unscoped)".to_string(),
+            };
+            *by_wing.entry(wing).or_insert(0) += 1;
+            Ok(true)
+        },
+    )?;
+
     Ok(CorpusCounts {
         documents,
         chunks,
         nodes,
         edges,
-        by_layer: group_count_locked(&conn, "SELECT COALESCE(layer, 'raw'), COUNT(*)::BIGINT FROM documents GROUP BY 1 ORDER BY 2 DESC")?,
-        by_kind: group_count_locked(&conn, "SELECT COALESCE(kind, 'document'), COUNT(*)::BIGINT FROM documents GROUP BY 1 ORDER BY 2 DESC")?,
-        by_status: group_count_locked(&conn, "SELECT COALESCE(status, 'active'), COUNT(*)::BIGINT FROM documents GROUP BY 1 ORDER BY 2 DESC")?,
-        by_wing: group_count_locked(
-            &conn,
-            r#"
-            SELECT CASE
-                     WHEN wing IS NULL OR TRIM(wing) = '' THEN '(unscoped)'
-                     ELSE wing
-                   END,
-                   COUNT(*)::BIGINT
-            FROM documents
-            GROUP BY 1
-            ORDER BY 2 DESC
-            "#,
-        )?,
+        by_layer: sorted_buckets(by_layer),
+        by_kind: sorted_buckets(by_kind),
+        by_status: sorted_buckets(by_status),
+        by_wing: sorted_buckets(by_wing),
     })
 }
 
-pub(crate) fn group_count_locked(conn: &duckdb::Connection, sql: &str) -> Result<Vec<CountBucket>> {
-    let mut stmt = conn.prepare(sql)?;
-    let out = crate::db::rows::query_vec(&mut stmt, [], |row| {
-        let key: String = row.get(0)?;
-        let count: i64 = row.get(1)?;
-        Ok(CountBucket {
-            key,
-            count: count as u64,
-        })
-    })?;
-    Ok(out)
-}
-
 pub(crate) fn collect_size_stats(store: &Store, db_size_bytes: Option<u64>) -> Result<SizeStats> {
-    let conn = store.lock()?;
-    let (chunk_n, chunk_chars): (i64, i64) = conn.query_row(
-        "SELECT COUNT(*)::BIGINT, COALESCE(SUM(LENGTH(content)), 0)::BIGINT FROM chunks",
-        [],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )?;
-    let (doc_n, doc_chars): (i64, i64) = conn.query_row(
-        "SELECT COUNT(*)::BIGINT, COALESCE(SUM(LENGTH(content)), 0)::BIGINT FROM documents",
-        [],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )?;
+    let r = store.read()?;
+    let mut chunk_n = 0u64;
+    let mut chunk_chars = 0u64;
+    r.scan_each_projected("chunks", &["content"], |row| {
+        chunk_n += 1;
+        if let Some(c) = cell_str(row, "content") {
+            chunk_chars += c.chars().count() as u64;
+        }
+        Ok(true)
+    })?;
+
+    let mut doc_n = 0u64;
+    let mut doc_chars = 0u64;
+    r.scan_each_projected("documents", &["content"], |row| {
+        doc_n += 1;
+        if let Some(c) = cell_str(row, "content") {
+            doc_chars += c.chars().count() as u64;
+        }
+        Ok(true)
+    })?;
+
     let avg_chunk = if chunk_n > 0 {
         chunk_chars as f64 / chunk_n as f64
     } else {
@@ -155,8 +180,8 @@ pub(crate) fn collect_size_stats(store: &Store, db_size_bytes: Option<u64>) -> R
         db_size_bytes,
         avg_chunk_chars: avg_chunk,
         avg_document_chars: avg_doc,
-        total_chunk_chars: chunk_chars as u64,
-        total_document_chars: doc_chars as u64,
+        total_chunk_chars: chunk_chars,
+        total_document_chars: doc_chars,
     })
 }
 
@@ -168,130 +193,149 @@ pub(crate) fn find_exact_duplicates(
     store: &Store,
     active_only: bool,
 ) -> Result<Vec<DuplicateGroup>> {
-    let status_filter = if active_only {
-        "AND COALESCE(status, 'active') NOT IN ('archived', 'tombstone')"
-    } else {
-        ""
-    };
-    let conn = store.lock()?;
-    // Top groups and their members in one query (was one members query per group).
-    let mut stmt = conn.prepare(&format!(
-        r#"
-        WITH top_groups AS (
-          SELECT content_hash,
-                 row_number() OVER (ORDER BY COUNT(*) DESC, content_hash ASC) AS group_rank
-          FROM documents
-          WHERE content_hash IS NOT NULL AND TRIM(content_hash) <> ''
-            {status_filter}
-          GROUP BY content_hash
-          HAVING COUNT(*) > 1
-          ORDER BY group_rank
-          LIMIT 50
-        )
-        SELECT top_groups.content_hash, documents.id, documents.title
-        FROM top_groups
-        JOIN documents ON documents.content_hash = top_groups.content_hash
-        WHERE TRUE {status_filter}
-        ORDER BY top_groups.group_rank ASC, documents.created_at ASC
-        "#
-    ))?;
-    let mut rows = stmt.query([])?;
-    let mut groups: Vec<DuplicateGroup> = Vec::new();
-    crate::db::rows::visit_rows(&mut rows, |row| {
-        let hash: String = row.get(0)?;
-        let id: String = row.get(1)?;
-        let title: String = row.get(2)?;
-        match groups.last_mut() {
-            Some(group) if group.content_hash == hash => {
-                group.document_ids.push(id);
-                group.titles.push(title);
-                group.count += 1;
+    let r = store.read()?;
+    let mut by_hash: HashMap<String, Vec<(DateTime<Utc>, String, String)>> = HashMap::new();
+
+    r.scan_each_projected(
+        "documents",
+        &["id", "title", "status", "content_hash", "created_at"],
+        |row| {
+            if active_only {
+                let st = cell_str(row, "status").unwrap_or("active");
+                if matches!(st, "archived" | "tombstone") {
+                    return Ok(true);
+                }
             }
-            _ => groups.push(DuplicateGroup {
-                content_hash: hash,
-                document_ids: vec![id],
-                titles: vec![title],
-                count: 1,
-            }),
-        }
-        Ok(())
-    })?;
-    groups.retain(|group| group.count > 1);
-    groups.truncate(REPORT_LIST_CAP);
+            let Some(hash) = cell_str(row, "content_hash").filter(|s| !s.trim().is_empty()) else {
+                return Ok(true);
+            };
+            let id = cell_string(row, "id");
+            let title = cell_string(row, "title");
+            let created_at = cell_ts_or_now(row, "created_at");
+            by_hash
+                .entry(hash.to_string())
+                .or_default()
+                .push((created_at, id, title));
+            Ok(true)
+        },
+    )?;
+
+    let mut groups: Vec<DuplicateGroup> = by_hash
+        .into_iter()
+        .filter(|(_, members)| members.len() > 1)
+        .map(|(content_hash, mut members)| {
+            members.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+            let count = members.len();
+            let mut document_ids = Vec::with_capacity(count);
+            let mut titles = Vec::with_capacity(count);
+            for (_, id, title) in members {
+                document_ids.push(id);
+                titles.push(title);
+            }
+            DuplicateGroup {
+                content_hash,
+                document_ids,
+                titles,
+                count,
+            }
+        })
+        .collect();
+
+    groups.sort_by(|a, b| {
+        b.count
+            .cmp(&a.count)
+            .then_with(|| a.content_hash.cmp(&b.content_hash))
+    });
+    groups.truncate(50.min(REPORT_LIST_CAP));
     Ok(groups)
 }
 
 pub(crate) fn find_orphans(store: &Store) -> Result<(Vec<OrphanNode>, Vec<OrphanNode>)> {
-    let conn = store.lock()?;
-
-    // Nodes with no incident edges.
-    let mut stmt = conn.prepare(&format!(
-        r#"
-        SELECT n.id, n.document_id, n.kind, n.label
-        FROM graph_nodes n
-        WHERE NOT EXISTS (
-            SELECT 1 FROM ({incident}) AS incident WHERE incident.id = n.id
-        )
-        ORDER BY n.kind ASC, n.label ASC
-        LIMIT 200
-        "#,
-        incident = crate::db::graph::INCIDENT_NODE_IDS,
-    ))?;
-    let mut rows = stmt.query([])?;
-    let mut orphan_nodes = Vec::new();
-    crate::db::rows::try_visit_rows(&mut rows, |row| {
-        orphan_nodes.push(OrphanNode {
-            id: row.get(0)?,
-            document_id: row.get(1)?,
-            kind: row.get(2)?,
-            label: row.get(3)?,
-            layer: None,
-        });
-        if orphan_nodes.len() >= REPORT_LIST_CAP {
-            return Ok(std::ops::ControlFlow::Break(()));
+    let r = store.read()?;
+    let mut incident: HashSet<String> = HashSet::new();
+    r.scan_each_projected("graph_edges", &["source_id", "target_id"], |row| {
+        if let Some(sid) = cell_str(row, "source_id") {
+            incident.insert(sid.to_string());
         }
-        Ok(std::ops::ControlFlow::Continue(()))
-    })?;
-    drop(rows);
-    drop(stmt);
-
-    // Wiki documents whose graph node (if any) has degree 0, or no node at all.
-    let mut stmt = conn.prepare(&format!(
-        r#"
-        SELECT d.id, d.title, d.layer, n.id
-        FROM documents d
-        LEFT JOIN graph_nodes n ON n.document_id = d.id
-        WHERE d.layer = 'wiki'
-          AND (
-            n.id IS NULL
-            OR NOT EXISTS (
-              SELECT 1 FROM ({incident}) AS incident WHERE incident.id = n.id
-            )
-          )
-        ORDER BY d.title ASC
-        LIMIT 200
-        "#,
-        incident = crate::db::graph::INCIDENT_NODE_IDS,
-    ))?;
-    let mut rows = stmt.query([])?;
-    let mut orphan_wiki = Vec::new();
-    crate::db::rows::try_visit_rows(&mut rows, |row| {
-        let doc_id: String = row.get(0)?;
-        let title: String = row.get(1)?;
-        let layer: String = row.get(2)?;
-        let node_id: Option<String> = row.get(3)?;
-        orphan_wiki.push(OrphanNode {
-            id: node_id.unwrap_or_else(|| doc_id.clone()),
-            document_id: Some(doc_id),
-            kind: "wiki".into(),
-            label: title,
-            layer: Some(layer),
-        });
-        if orphan_wiki.len() >= REPORT_LIST_CAP {
-            return Ok(std::ops::ControlFlow::Break(()));
+        if let Some(tid) = cell_str(row, "target_id") {
+            incident.insert(tid.to_string());
         }
-        Ok(std::ops::ControlFlow::Continue(()))
+        Ok(true)
     })?;
+
+    let mut orphan_nodes: Vec<OrphanNode> = Vec::new();
+    let mut nodes_by_doc: HashMap<String, Vec<String>> = HashMap::new();
+    r.scan_each_projected(
+        "graph_nodes",
+        &["id", "document_id", "kind", "label"],
+        |row| {
+            let id = cell_string(row, "id");
+            let doc_id = cell_opt_string(row, "document_id");
+            if let Some(ref d) = doc_id {
+                if !d.is_empty() {
+                    nodes_by_doc.entry(d.clone()).or_default().push(id.clone());
+                }
+            }
+            if !incident.contains(&id) {
+                orphan_nodes.push(OrphanNode {
+                    id,
+                    document_id: doc_id,
+                    kind: cell_string(row, "kind"),
+                    label: cell_string(row, "label"),
+                    layer: None,
+                });
+            }
+            Ok(true)
+        },
+    )?;
+    orphan_nodes.sort_by(|a, b| {
+        a.kind
+            .cmp(&b.kind)
+            .then_with(|| a.label.cmp(&b.label))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    orphan_nodes.truncate(REPORT_LIST_CAP);
+
+    let mut orphan_wiki: Vec<OrphanNode> = Vec::new();
+    r.for_each_by_eq_projected(
+        "documents",
+        "layer",
+        "wiki",
+        Some(&["id", "title", "layer"]),
+        |doc_row| {
+            let doc_id = cell_string(doc_row, "id");
+            let title = cell_string(doc_row, "title");
+            let layer = cell_string(doc_row, "layer");
+            match nodes_by_doc.get(&doc_id) {
+                None => {
+                    orphan_wiki.push(OrphanNode {
+                        id: doc_id.clone(),
+                        document_id: Some(doc_id),
+                        kind: "wiki".into(),
+                        label: title,
+                        layer: Some(layer),
+                    });
+                }
+                Some(nids) => {
+                    for nid in nids {
+                        if !incident.contains(nid) {
+                            orphan_wiki.push(OrphanNode {
+                                id: nid.clone(),
+                                document_id: Some(doc_id.clone()),
+                                kind: "wiki".into(),
+                                label: title.clone(),
+                                layer: Some(layer.clone()),
+                            });
+                        }
+                    }
+                }
+            }
+            Ok(true)
+        },
+    )?;
+    orphan_wiki.sort_by(|a, b| a.label.cmp(&b.label).then_with(|| a.id.cmp(&b.id)));
+    orphan_wiki.truncate(REPORT_LIST_CAP);
+
     Ok((orphan_nodes, orphan_wiki))
 }
 
@@ -300,26 +344,27 @@ pub(crate) fn find_stubs(
     stub_age_days: u32,
     now: DateTime<Utc>,
 ) -> Result<(Vec<StubInfo>, Vec<StubInfo>)> {
-    let conn = store.lock()?;
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT id, label, CAST(created_at AS VARCHAR)
-        FROM graph_nodes
-        WHERE kind = 'stub' AND resolved = false
-        ORDER BY created_at ASC
-        LIMIT 200
-        "#,
-    )?;
-    let mut rows = stmt.query([])?;
+    let r = store.read()?;
+    let stub_rows = r.find_by_eq("graph_nodes", "kind", "stub")?;
+    let mut candidates: Vec<(Option<DateTime<Utc>>, String, String)> = Vec::new();
+
+    for row in &stub_rows {
+        if cell_bool(row, "resolved", false) {
+            continue;
+        }
+        let created_at = cell_str(row, "created_at").and_then(parse_ts);
+        candidates.push((
+            created_at,
+            cell_string(row, "id"),
+            cell_string(row, "label"),
+        ));
+    }
+    candidates.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+
+    let age_cutoff = now - Duration::days(i64::from(stub_age_days));
     let mut unresolved = Vec::new();
     let mut aging = Vec::new();
-    let age_cutoff = now - Duration::days(i64::from(stub_age_days));
-
-    crate::db::rows::try_visit_rows(&mut rows, |row| {
-        let node_id: String = row.get(0)?;
-        let label: String = row.get(1)?;
-        let created_raw: Option<String> = row.get(2)?;
-        let created_at = created_raw.as_deref().and_then(parse_ts);
+    for (created_at, node_id, label) in candidates.into_iter().take(200) {
         let age_days = created_at.map(|t| (now - t).num_days());
         let info = StubInfo {
             node_id,
@@ -327,15 +372,14 @@ pub(crate) fn find_stubs(
             created_at,
             age_days,
         };
-        if created_at.map(|t| t <= age_cutoff).unwrap_or(false) {
+        if created_at.is_some_and(|t| t <= age_cutoff) {
             aging.push(info.clone());
         }
         unresolved.push(info);
         if unresolved.len() >= REPORT_LIST_CAP {
-            return Ok(std::ops::ControlFlow::Break(()));
+            break;
         }
-        Ok(std::ops::ControlFlow::Continue(()))
-    })?;
+    }
     Ok((unresolved, aging))
 }
 
@@ -345,33 +389,60 @@ pub(crate) fn find_archive_candidates(
     now: DateTime<Utc>,
 ) -> Result<Vec<ArchiveCandidate>> {
     let cutoff = now - Duration::days(i64::from(min_age_days));
-    let conn = store.lock()?;
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT id, title, COALESCE(layer, 'raw'), COALESCE(boost, 1.0), CAST(updated_at AS VARCHAR)
-        FROM documents
-        WHERE COALESCE(status, 'active') = 'active'
-          AND COALESCE(pinned, false) = false
-          AND COALESCE(boost, 1.0) < 1.0
-          AND layer NOT IN ('schema', 'index', 'log')
-        ORDER BY boost ASC, updated_at ASC
-        LIMIT 200
-        "#,
+    let r = store.read()?;
+    let mut pool: Vec<(f64, DateTime<Utc>, String, String, String)> = Vec::new();
+
+    r.scan_each_projected(
+        "documents",
+        &[
+            "id",
+            "title",
+            "status",
+            "pinned",
+            "boost",
+            "layer",
+            "updated_at",
+        ],
+        |row| {
+            let status = cell_str(row, "status").unwrap_or("active");
+            if status != "active" {
+                return Ok(true);
+            }
+            if cell_bool(row, "pinned", false) {
+                return Ok(true);
+            }
+            let boost = cell_f64(row, "boost", 1.0);
+            if boost >= 1.0 {
+                return Ok(true);
+            }
+            let layer = cell_str(row, "layer").unwrap_or("raw");
+            if matches!(layer, "schema" | "index" | "log") {
+                return Ok(true);
+            }
+            let Some(updated_at) = cell_str(row, "updated_at").and_then(parse_ts) else {
+                return Ok(true);
+            };
+            pool.push((
+                boost,
+                updated_at,
+                cell_string(row, "id"),
+                cell_string(row, "title"),
+                layer.to_string(),
+            ));
+            Ok(true)
+        },
     )?;
-    let mut rows = stmt.query([])?;
+
+    pool.sort_by(|a, b| {
+        a.0.total_cmp(&b.0)
+            .then_with(|| a.1.cmp(&b.1))
+            .then_with(|| a.2.cmp(&b.2))
+    });
+
     let mut out = Vec::new();
-    crate::db::rows::try_visit_rows(&mut rows, |row| {
-        let id: String = row.get(0)?;
-        let title: String = row.get(1)?;
-        let layer: String = row.get(2)?;
-        let boost: f64 = row.get(3)?;
-        let ts: String = row.get(4)?;
-        let Some(updated_at) = parse_ts(&ts) else {
-            return Ok(std::ops::ControlFlow::Continue(()));
-        };
+    for (boost, updated_at, id, title, layer) in pool.into_iter().take(200) {
         if updated_at > cutoff && boost >= 0.5 {
-            // Only flag recent docs when boost is clearly suppressed.
-            return Ok(std::ops::ControlFlow::Continue(()));
+            continue;
         }
         let reason = if updated_at <= cutoff && boost < 1.0 {
             format!(
@@ -381,7 +452,7 @@ pub(crate) fn find_archive_candidates(
         } else if boost < 0.5 {
             format!("low boost={boost:.2}")
         } else {
-            return Ok(std::ops::ControlFlow::Continue(()));
+            continue;
         };
         out.push(ArchiveCandidate {
             document_id: id,
@@ -392,10 +463,9 @@ pub(crate) fn find_archive_candidates(
             reason,
         });
         if out.len() >= REPORT_LIST_CAP {
-            return Ok(std::ops::ControlFlow::Break(()));
+            break;
         }
-        Ok(std::ops::ControlFlow::Continue(()))
-    })?;
+    }
     Ok(out)
 }
 
@@ -415,34 +485,56 @@ pub(crate) fn parse_ts(raw: &str) -> Option<DateTime<Utc>> {
 
 /// `(all chunks, chunks whose document still exists)` from one snapshot.
 pub(crate) fn chunk_attachment_counts(store: &Store) -> Result<(i64, i64)> {
-    let conn = store.lock()?;
-    Ok(conn.query_row(
-        r#"
-        SELECT
-          COUNT(*)::BIGINT,
-          COUNT(d.id)::BIGINT
-        FROM chunks c
-        LEFT JOIN documents d ON d.id = c.document_id
-        "#,
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?)
+    let r = store.read()?;
+    let mut doc_exists_cache: HashMap<String, bool> = HashMap::new();
+    let mut all_chunks = 0i64;
+    let mut attached_chunks = 0i64;
+
+    r.scan_each_projected("chunks", &["document_id"], |row| {
+        all_chunks += 1;
+        if let Some(doc_id) = cell_str(row, "document_id") {
+            let exists = if let Some(&cached) = doc_exists_cache.get(doc_id) {
+                cached
+            } else {
+                let found = if let Some(eng) = r.disk_v2() {
+                    eng.exists_by_id("documents", doc_id)
+                } else {
+                    r.get_by_id("documents", doc_id)?.is_some()
+                };
+                doc_exists_cache.insert(doc_id.to_string(), found);
+                found
+            };
+            if exists {
+                attached_chunks += 1;
+            }
+        }
+        Ok(true)
+    })?;
+    Ok((all_chunks, attached_chunks))
 }
 
 /// Oldest tombstoned documents first: `(id, layer)`, at most `limit`.
 pub(crate) fn tombstone_candidates(store: &Store, limit: usize) -> Result<Vec<(String, String)>> {
-    let conn = store.lock()?;
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT id, COALESCE(layer, 'raw') FROM documents
-        WHERE COALESCE(status, 'active') = 'tombstone'
-        ORDER BY updated_at ASC
-        LIMIT ?
-        "#,
+    let r = store.read()?;
+    let mut candidates: Vec<(DateTime<Utc>, String, String)> = Vec::new();
+    r.for_each_by_eq_projected(
+        "documents",
+        "status",
+        "tombstone",
+        Some(&["id", "layer", "updated_at"]),
+        |row| {
+            candidates.push((
+                cell_ts_or_now(row, "updated_at"),
+                cell_string(row, "id"),
+                cell_str(row, "layer").unwrap_or("raw").to_string(),
+            ));
+            Ok(true)
+        },
     )?;
-    let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-    let rows = stmt
-        .query_map(params![limit], |row| Ok((row.get(0)?, row.get(1)?)))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    Ok(rows)
+    candidates.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    Ok(candidates
+        .into_iter()
+        .take(limit)
+        .map(|(_, id, layer)| (id, layer))
+        .collect())
 }

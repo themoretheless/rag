@@ -1,0 +1,12 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.31s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 5 tests
+test code_index::rust_semantics::tests::rust_stdarch_unknown_arch_and_unknown_type_names_do_not_create_identity ... ok
+test code_index::rust_semantics::tests::rust_stdarch_imports_preserve_generic_wrapper_receiver_identity ... ok
+test code_index::rust_semantics::tests::rust_stdarch_aliases_match_exact_vector_types_without_inherent_guesses ... ok
+test code_index::rust_cfg::tests::conditional_stdarch_globs_do_not_hide_unknown_competing_imports ... ok
+test code_index::rust_semantics::tests::rust_stdarch_requires_target_and_unambiguous_unshadowed_imports ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1344 filtered out; finished in 0.01s
+

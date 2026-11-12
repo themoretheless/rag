@@ -1,0 +1,21 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+error[E0308]: `if` and `else` have incompatible types
+   --> src/code_index/resolution_cache.rs:213:17
+    |
+210 |               let (owners_allowed, methods_allowed) = if context_sites.is_empty() {
+    |  _____________________________________________________-
+211 | |                 (HashSet::new(), HashSet::new())
+    | |                 -------------------------------- expected because of this
+212 | |             } else {
+213 | |                 super::php_names::context_ids(docs, doc)
+    | |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected a tuple with 2 elements, found one with 3 elements
+214 | |             };
+    | |_____________- `if` and `else` have incompatible types
+    |
+    = note: expected tuple `(std::collections::HashSet<_>, std::collections::HashSet<_>)`
+               found tuple `(std::collections::HashSet<&str>, std::collections::HashSet<&str>, std::collections::HashSet<&str>)`
+
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `rag-mcp` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `rag-mcp` (lib test) due to 1 previous error

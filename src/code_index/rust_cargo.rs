@@ -327,13 +327,19 @@ pub(super) fn standard_crate_unshadowed(
     position: usize,
     name: &str,
 ) -> bool {
-    if !matches!(name, "std" | "alloc") {
+    if !matches!(name, "std" | "alloc" | "core") {
         return true;
     }
+    if resolve::unverified_standard_extern(doc, name) { return false; }
+    if resolve::import_target(doc, name, position).is_some_and(|target| {
+        target.strip_prefix("\0extern_crate::").unwrap_or(target) != name
+    }) { return false; }
     if nearest(docs, doc).is_some_and(|m| {
         m.cargo
             .as_ref()
-            .is_none_or(|c| !c.valid || c.dependencies.contains_key(name))
+            .is_none_or(|c| !c.valid || c.dependencies.get(name).is_some_and(|d| {
+                !d.optional || c.selected_target.is_none()
+            }))
     }) {
         return false;
     }
@@ -376,6 +382,9 @@ pub(super) fn build_input(
     doc: &IndexedDocument,
 ) -> Option<&std::result::Result<rust_cfg::Input, String>> {
     doc.cargo.as_ref()?.build.as_ref()
+}
+pub(super) fn captured_target_arch<'a>(docs: &'a HashMap<String, IndexedDocument>, doc: &IndexedDocument) -> Option<&'a str> {
+    nearest(docs, doc)?.cargo.as_ref()?.build.as_ref()?.as_ref().ok()?.unique_value("target_arch")
 }
 pub(super) fn boundary_verified(doc: &IndexedDocument) -> bool {
     doc.cargo

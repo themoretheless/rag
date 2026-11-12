@@ -130,7 +130,7 @@ impl RagServer {
     }
     #[tool(
         name = "diff",
-        description = "Compare immutable index revisions: changed files, definitions/body hashes, static calls/value references/inheritance/entrypoints and frozen derived SQL schema metadata. Historical missing snapshots are explicit. No source bodies in the response. RAG_TOOLS=full."
+        description = "Compare immutable index revisions: changed files, definitions/body hashes, static calls/value references/inheritance/entrypoints frozen derived SQL schema metadata and compatible Python value-graph syntax/candidate changes with completion contexts and coverage guards. Historical missing snapshots are explicit; no runtime or semantic-change proof. No source bodies in the response. RAG_TOOLS=full."
     )]
     pub(super) async fn diff(
         &self,
@@ -430,14 +430,17 @@ impl RagServer {
     }
     #[tool(
         name = "entrypoints",
-        description = "List conventional main, exported/public API, test and HTTP route entrypoint candidates with syntax evidence. RAG_TOOLS=full; reports incomplete coverage."
+        description = "List conventional main, exported/public API, test and HTTP route entrypoint candidates with syntax evidence. PHPUnit candidates use captured TestCase ancestry, effective public instance methods and resolved Test attribute names, preserving inherited/trait host identities, aliases and body provenance. Runner/configuration, runtime and exhaustive discovery remain unverified. RAG_TOOLS=full; reports incomplete coverage."
     )]
     pub(super) async fn entrypoints(
         &self,
-        Parameters(params): Parameters<crate::code_index::CodeQuery>,
+        Parameters(params): Parameters<crate::code_index::EntryPointsQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
-        Self::json_result(&snapshot.query("entrypoints", &params))
+        let snapshot = self
+            .store
+            .code_snapshot_in_project(params.project.as_deref())
+            .map_err(Self::map_err)?;
+        Self::json_result(&snapshot.query("entrypoints", &params.query))
     }
     #[tool(
         name = "routes",
@@ -492,6 +495,16 @@ impl RagServer {
         Self::json_result(&snapshot.query("dead_code", &params))
     }
     #[tool(
+        name = "data_slice",
+        description = "Trace captured Python value dependencies across local definitions/uses, bounded branches, for/while loop-carried values, break/continue/else, explicit try/except/else/finally routes, captured alias cleanup, unproven typed handler candidates and protected expression-error prefixes, and uniquely bound positional argument/return boundaries. Exact source spans, per-call context witnesses and checked edge contexts and explicit unsupported/budget/stale diagnostics; no runtime, whole-program, alias or control-flow proof. Separate from structural slice. RAG_TOOLS=full."
+    )]
+    pub(super) async fn data_slice(
+        &self,
+        Parameters(params): Parameters<crate::code_index::DataSliceQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        Self::json_result(&self.store.code_data_slice(&params).map_err(Self::map_err)?)
+    }
+    #[tool(
         name = "slice",
         description = "Return a bounded structural call subgraph with path/line evidence and no function bodies. direction=back|forward|both; static graph only, not data-flow slicing. RAG_TOOLS=full; reports incomplete coverage."
     )]
@@ -504,7 +517,7 @@ impl RagServer {
     }
     #[tool(
         name = "trace_path",
-        description = "Find bounded simple symbol-to-symbol paths over captured calls, bound references or inheritance candidates. Exact project and endpoint paths disambiguate names; forward/back/both traversal, per-step source evidence and explicit work/depth/result limits. Fresh static graph only; absence and runtime reachability are never proven. RAG_TOOLS=full."
+        description = "Find bounded simple symbol-to-symbol paths over captured calls, bound references or inheritance candidates. Exact project and endpoint paths disambiguate names; forward/back/both traversal, per-step source evidence and explicit work/depth/result limits. Captured PHP trait frames constrain paths in every direction; target ambiguity is checked within the selected consumer. Fresh static graph only; absence and runtime reachability are never proven. RAG_TOOLS=full."
     )]
     pub(super) async fn trace_path(
         &self,
@@ -520,7 +533,7 @@ impl RagServer {
     }
     #[tool(
         name = "detect_changes",
-        description = "Read-only allowlisted Git change impact: working_tree=index to working files (plus untracked supported sources), staged=HEAD to index, all=HEAD to working files, commits=explicit before/after. Pins Git objects, builds two bounded native source graphs and maps added/removed/modified/configuration/binding-changed symbols with two-sided incoming evidence paths. Revalidates index and working source hashes; no checkout, filters, source/index mutation or stored-index freshness assumption. RAG_TOOLS=full; static supported-source scope and incomplete runtime impact are explicit."
+        description = "Read-only allowlisted Git change impact: working_tree=index to working files (plus untracked supported sources), staged=HEAD to index, all=HEAD to working files, commits=explicit before/after. Pins Git objects, builds two bounded native source graphs and maps added/removed/modified/configuration/binding-changed symbols with two-sided incoming evidence paths tied to exact captured trait-consumer walk states. Binding comparisons include normalized consumer contexts. Revalidates index and working source hashes; no checkout, filters, source/index mutation or stored-index freshness assumption. RAG_TOOLS=full; static supported-source scope and incomplete runtime impact are explicit."
     )]
     pub(super) async fn detect_changes(
         &self,
@@ -580,7 +593,7 @@ impl RagServer {
     }
     #[tool(
         name = "affected_tests",
-        description = "Find statically related test entrypoints from unique changed symbol selectors in a fresh project-scoped cfg(test) graph overlay. Retains per-step source witnesses and command argv suggestions for captured Cargo targets/Python candidates. Explicit depth/result/work bounds, ambiguity and stale inputs. Coverage is incomplete: unlisted tests are never safe to skip; full-suite candidates are recommended. Read-only source/index; RAG_TOOLS=full."
+        description = "Find statically related test entrypoints from unique changed symbol selectors in a fresh project-scoped cfg(test) graph overlay. Retains coherent captured PHP trait frames in per-step source witnesses, includes host-qualified declared/inherited/trait PHPUnit candidates and separately labelled class/base/trait availability witnesses (disable with include_host_dependencies=false for only code dependencies), and suggests command argv for captured Cargo targets/Python candidates. PHPUnit runner/configuration, runtime and exhaustive discovery remain unverified; no PHPUnit command is guessed. Explicit depth/result/work bounds, ambiguity and stale inputs. Coverage is incomplete: unlisted tests are never safe to skip; full-suite candidates are recommended. Read-only source/index; RAG_TOOLS=full."
     )]
     pub(super) async fn affected_tests(
         &self,
@@ -594,7 +607,7 @@ impl RagServer {
     }
     #[tool(
         name = "inheritance",
-        description = "List indexed extends/implements relations plus separate Python/JS/TS same-name inherited method candidates; semantic overrides are not proven. Base targets retain unresolved/ambiguous evidence. Class method lookup uses conservative C3 order; dynamic dispatch is not guaranteed. RAG_TOOLS=full."
+        description = "List indexed extends/implements relations plus separate Python/JS/TS/PHP same-name inherited method candidates; semantic overrides are not proven. Base targets retain unresolved/ambiguous evidence. Class method lookup uses conservative C3 order or bounded PHP single-class chains; PHP trait composition is bounded; Captured PHP trait-body consumers retain separate binding contexts; runtime subtype and late static dispatch remain unverified. Dynamic dispatch is not guaranteed. RAG_TOOLS=full."
     )]
     pub(super) async fn inheritance(
         &self,
@@ -631,7 +644,7 @@ impl RagServer {
     }
     #[tool(
         name = "impact",
-        description = "Traverse incoming dependencies of selected symbols up to depth. impact_relations=calls (default), references (also bound value/type uses), or all (also inheritance and override candidates). Optional impact_file or impact_document_id selects a file dependency graph, including ownerless bound occurrences (default references). Optional impact_table/impact_project/impact_table_mode selects direct SQL readers/writers plus their incoming code dependencies. Optional impact_key or impact_route selects literal key/URL occurrences plus separate multi-root code and file dependencies (default references); impact_route_kind filters registration/endpoint/all. Handler candidates never become source owners or seeds. Ambiguous table identities require disambiguation. Each result retains its relation/evidence; runtime impact is not proven. Requires index_code and RAG_TOOLS=full."
+        description = "Traverse incoming dependencies of selected symbols up to depth. impact_relations=calls (default), references (also bound value/type uses), or all (also inheritance and override candidates). Optional impact_file or impact_document_id selects a file dependency graph, including ownerless bound occurrences (default references). Optional impact_table/impact_project/impact_table_mode selects direct SQL readers/writers plus their incoming code dependencies. Optional impact_key or impact_route selects literal key/URL occurrences plus separate multi-root code and file dependencies (default references); impact_route_kind filters registration/endpoint/all. Handler candidates never become source owners or seeds. Ambiguous table identities require disambiguation. PHP trait paths match captured entry/body consumer frames. Each result retains its relation/evidence; runtime impact is not proven. Requires index_code and RAG_TOOLS=full."
     )]
     pub(super) async fn impact(
         &self,

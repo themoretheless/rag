@@ -53,7 +53,7 @@ pub(super) fn candidates(
     let unknown: HashSet<_> = snapshot
         .bound_references
         .iter()
-        .filter(|e| e.candidates.is_empty())
+        .filter(|e| e.has_unknown_targets())
         .map(|e| (project(&e.reference.document_id), e.reference.name.as_str()))
         .collect();
     let mut unresolved_roots = 0;

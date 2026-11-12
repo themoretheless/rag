@@ -1,0 +1,1407 @@
+{
+  "contract_version": 1,
+  "status": "failed_qualification",
+  "qualification_only": true,
+  "binary_sha256": "dab96adb738e01528410810122a0a7002edfa5ae1090761963be0201be3ea3fe",
+  "runner_sha256": "677409a904bde5eba6be3bfdac9cb54ee34fc5e8674ebb09f4cbb888bf7676c7",
+  "client_sha256": "78f44eb3b5812426c7d78f0d3f919258c5e7a732c071de17dc73716a2dff3309",
+  "build_manifest": {
+    "contract_version": 1,
+    "status": "built_verified",
+    "profile": "release",
+    "binary_path": "/private/tmp/rag-index-release-20261026/bin/rag-mcp",
+    "binary_sha256": "dab96adb738e01528410810122a0a7002edfa5ae1090761963be0201be3ea3fe",
+    "source_tree_sha256": "06d514e6540b8df962ca84333f75e5e8f6a2660904e6dc9150d7e5f25c248659",
+    "source_inputs_sha256": "4aa3a01ad66bdcb0ed9cdc1cba3bab374de603b577abc39b51132bc1895ae9cf",
+    "cargo_lock_sha256": "bec738712304fba10e5fc85af59ca588df50024c39b85c70fadcc9665266363b",
+    "compiler_artifact": {
+      "reason": "compiler-artifact",
+      "package_id": "path+file:///private/tmp/rag-index-release-20261026/source-0#rag-mcp@0.1.0",
+      "manifest_path": "/private/tmp/rag-index-release-20261026/source-0/Cargo.toml",
+      "target": {
+        "kind": [
+          "bin"
+        ],
+        "crate_types": [
+          "bin"
+        ],
+        "name": "rag-mcp",
+        "src_path": "/private/tmp/rag-index-release-20261026/source-0/src/main.rs",
+        "edition": "2021",
+        "doc": true,
+        "doctest": false,
+        "test": true
+      },
+      "profile": {
+        "opt_level": "3",
+        "debuginfo": 0,
+        "debug_assertions": false,
+        "overflow_checks": false,
+        "test": false
+      },
+      "features": [
+        "default",
+        "tokenizers"
+      ],
+      "filenames": [
+        "/private/tmp/rag-index-release-20261026/target/release/rag-mcp"
+      ],
+      "executable": "/private/tmp/rag-index-release-20261026/target/release/rag-mcp",
+      "fresh": false
+    },
+    "command": [
+      "/Users/themoretheless/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/cargo",
+      "--config",
+      "build.rustflags=[]",
+      "--config",
+      "build.rustc-wrapper=\"\"",
+      "--config",
+      "build.rustc-workspace-wrapper=\"\"",
+      "--config",
+      "profile.release.opt-level=3",
+      "--config",
+      "profile.release.debug-assertions=false",
+      "--config",
+      "profile.release.lto=\"thin\"",
+      "--config",
+      "profile.release.codegen-units=1",
+      "--config",
+      "profile.release.strip=\"debuginfo\"",
+      "build",
+      "--release",
+      "--locked",
+      "--offline",
+      "--bin",
+      "rag-mcp",
+      "--message-format=json-render-diagnostics",
+      "--jobs",
+      "2",
+      "--target-dir",
+      "/private/tmp/rag-index-release-20261026/target"
+    ],
+    "tools": {
+      "cargo": {
+        "path": "/Users/themoretheless/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/cargo",
+        "sha256": "4a558ead373f1b3f995d542cecd76e8455e9ff334344a2f480c8cb4387976174"
+      },
+      "rustc": {
+        "path": "/Users/themoretheless/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/rustc",
+        "sha256": "39d1222c09ff1b6d63097d7c143c8bcc9cfd2323d894f109bb360347d053b368"
+      },
+      "rustdoc": {
+        "path": "/Users/themoretheless/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/rustdoc",
+        "sha256": "2a6f0907f3f94ce68ce4aac4559f17c70d6c17f913eedf930b1db4de9531cce3"
+      }
+    },
+    "rustc_verbose_version": "rustc 1.101.0-nightly (4ebd25825 2026-10-15)\nbinary: rustc\ncommit-hash: 4ebd258257737d5b7635c116fa7d281627a7e937\ncommit-date: 2026-10-15\nhost: aarch64-apple-darwin\nrelease: 1.101.0-nightly\nLLVM version: 23.1.4",
+    "cargo_version": "cargo 1.101.0-nightly (3960fa69b 2026-10-12)",
+    "cargo_json_sha256": "fb3c8aa8abaeaa0854ba5f27a6cfda5ddf3245c7d83056e0c7a3070a18aee684",
+    "cargo_stderr_sha256": "12f6c7c97e84f8a844b3045bfe767c21694053e34c044d6369d3faa7806db0a0",
+    "source_unchanged_during_build": true,
+    "compiler_executables_unchanged": true,
+    "driver_sha256": "9dc7c4db0077d14b4d9143bd10ca2418de23fcb1835ae8beda04b7bd54581ef9",
+    "runtime_qualified": false,
+    "performance_qualified": false,
+    "production_binary_replaced": false,
+    "limitations": [
+      "source content identity, not a clean-commit or hermetic bit-reproducibility claim",
+      "registry dependencies use locked cached Cargo inputs; external SDK and native toolchain are not fully hashed",
+      "successful release build is not runtime/workload/performance qualification"
+    ]
+  },
+  "release_manifest_identity_matches": true,
+  "recipe_sha256": "e513cd5e4963667034c6198976d458425368faff2dbcaa758ed60882f15630e9",
+  "recipe": {
+    "contract_version": 1,
+    "name": "memchr-bd6068c30e9074a90c285e47912fa0b047d07597",
+    "upstream_commit": "bd6068c30e9074a90c285e47912fa0b047d07597",
+    "input_recipe": "Cargo.toml and src/**/*.rs; captured default-feature library configuration",
+    "expected_inputs": {
+      "Cargo.toml": "acd93639cfd6bef0e806a15f9fc7d6eb0117ed4cac44d5bc9c8601d1fc357435",
+      "src/arch/aarch64/memchr.rs": "5bb70f915084e629d940dbc322f5b9096b2e658cf63fea8a2f6e7550412e73a0",
+      "src/arch/aarch64/mod.rs": "44cd1a614bd66f1e66fc86c541d3c3b8d3a14a644c13e8bf816df3f555eac2d4",
+      "src/arch/aarch64/neon/memchr.rs": "e8c00b8fb2c7e2711832ae3cedefe59f32ebedd7dfa4d0ec6de2a566c979daea",
+      "src/arch/aarch64/neon/mod.rs": "eab6d56c2b2354db4ee395f40282cd49f97e2ab853547be5de6e65fbe1b2f634",
+      "src/arch/aarch64/neon/packedpair.rs": "32d3e4cd0dd9b6c8382e5308cbd896d20242c90b12862c44a5de6a8b4d6126df",
+      "src/arch/all/memchr.rs": "b0b1214aa573ed5d02ae62a77c42c773065566b50274d4096e37817d65ab1594",
+      "src/arch/all/mod.rs": "05f3fc2b069682eb1545fc6366d167bb620a454365dac8b8dd6cde6cd64de18a",
+      "src/arch/all/packedpair/default_rank.rs": "abffd1b5b8b7a3be95c03dd1105b905c246a379854dc56f1e846ea7c4408f2c7",
+      "src/arch/all/packedpair/mod.rs": "3692afca650585fbc625ff43e0e415d298605f56bea8134bcb5a2decac46142b",
+      "src/arch/all/rabinkarp.rs": "06038cce1cbead7b088e541ba41bcc1c095c34bde483b7df6ad9f77a49c1063c",
+      "src/arch/all/shiftor.rs": "0d79117f52a1e4795843603a3bb0b45397df4ad5e4184bbc923658dab9dc3b5f",
+      "src/arch/all/twoway.rs": "0b27eb1cd7402c1375a50466f8f66a68cb2806c3f69a647340b2759793eed4f8",
+      "src/arch/generic/memchr.rs": "31b11f07c5f24f02cb53715a6e508665b45943ddeebc05a243b88e728502dbe0",
+      "src/arch/generic/mod.rs": "1dd75f61e0ea2563b8205a08aaa7b55500130aa331d18b9e9f995724b66c7a39",
+      "src/arch/generic/packedpair.rs": "9c67ffe618eb8ae004a9777759db7a4b4b9c04393c23ee14eabf8747a2b16dc2",
+      "src/arch/mod.rs": "ca3960b7e2ed28d1b3c121710a870430531aad792f64d4dcb4ca4709d6cbda30",
+      "src/arch/wasm32/memchr.rs": "d88ac79f891d8530f505f5035062d3da274a05d66c611480c75430d52709d052",
+      "src/arch/wasm32/mod.rs": "a20377aa8fe07d68594879101dc73061e4f51d9c8d812b593b1f376e3c8add79",
+      "src/arch/wasm32/simd128/memchr.rs": "bac2c4c43fe710c83a6f2b1118fede043be89dd821d4b532907f129f09fdb5cf",
+      "src/arch/wasm32/simd128/mod.rs": "c157b373faedbfd65323be432e25bc411d97aa1b7bc58e76048614c7b2bf3bf6",
+      "src/arch/wasm32/simd128/packedpair.rs": "288ba6e5eee6a7a8e5e45c64cff1aa5d72d996c2a6bc228be372c75789f08e45",
+      "src/arch/x86_64/avx2/memchr.rs": "576ec0c30f49874f7fd9f6caeb490d56132c0fbbaa4d877b1aa532cafce19323",
+      "src/arch/x86_64/avx2/mod.rs": "0033d1b712d0b10f0f273ef9aa8caa53e05e49f4c56a64f39af0b9df97eec584",
+      "src/arch/x86_64/avx2/packedpair.rs": "87b69cb4301815906127db4f6370f572c7c5d5dad35c0946c00ad888dbcaec8c",
+      "src/arch/x86_64/memchr.rs": "4cf0611c926c3016d1b640880ef14e5654a8d1c1b480fe9a5965956be7eeeeef",
+      "src/arch/x86_64/mod.rs": "61b2aa876942fd3e78714c2ae21e356c8634545c06995020f443fa50218df027",
+      "src/arch/x86_64/sse2/memchr.rs": "0de0444e26d885eaf866220578752aac871e03bebee7b4f5de7fe8a35f5fa97f",
+      "src/arch/x86_64/sse2/mod.rs": "38b70ae52a64ec974dbb91d04d6ca8013d9e06d1fe4af852206bbc2faf1c59aa",
+      "src/arch/x86_64/sse2/packedpair.rs": "ad893c5ab9525966693e742673fb666f54ff9102949fc91c5e61642c8ad2f110",
+      "src/cow.rs": "2b053e393d3841f780425b3b0da5bec4f187603fa7c271b045ecb7d885b23395",
+      "src/ext.rs": "210f89d1e32211bc64414cbd56e97b4f56ce8a8832d321d77a9fe519634e27ea",
+      "src/lib.rs": "614f778a41e88a29ea0ceb8e92c839dbb6b5a61c967f8bfd962975e18f932c71",
+      "src/macros.rs": "3e4b39252bfa471fad384160a43f113ebfec7bec46a85d16f006622881dd2081",
+      "src/memchr.rs": "6ae779ec5d00f443075316e0105edf30b489a38e2e96325bec14ccecd014145b",
+      "src/memmem/mod.rs": "d869159f0d0c1915d7acc42a6a4aa3c97c049ddc043e6566afeb78ad290995d1",
+      "src/memmem/searcher.rs": "da0581eabbd3a27127e578f4e178e519399b1dddba7856f5b1968d69f096efd5",
+      "src/tests/memchr/mod.rs": "269f8e4b4f7f5ea458f27a3c174eb1020ffb2484eeba9464170beb51747df69b",
+      "src/tests/memchr/naive.rs": "6a0bee033e5edfb5b1d5769a5fa1c78388f7e9ff7bb91cb67f0ad029289e00e7",
+      "src/tests/memchr/prop.rs": "1854eea2338c405fe4635aac430f51e10d2069cd37a7489ddaff47da95f8720b",
+      "src/tests/mod.rs": "7cec8f809e279310a465c6a7725087970f219a676cc76c83de30c695bb490740",
+      "src/tests/packedpair.rs": "b02ec4fbb61a8653cb5f2268c31bc9168b8043347f2abdcc74081acf83b98e15",
+      "src/tests/substring/mod.rs": "c7660d10749363ac4687e7da2b5fda60768230425df8ba416c0c28b8d56a5c74",
+      "src/tests/substring/naive.rs": "df6f55d165382b8a53762ba4c324926cac13ebc62cde1805f4ce08740b326483",
+      "src/tests/substring/prop.rs": "38c15992609b5681a95d838ae6f2933e00a1219f2c971bfba245f96e0729fcdc",
+      "src/vector.rs": "b3d4f4e30456eb2d32e139cee0dcd6fc5866db3f8feb75cfca413df9a25778cc"
+    },
+    "phases": [
+      {
+        "name": "body",
+        "edits": [
+          {
+            "path": "src/arch/all/rabinkarp.rs",
+            "before": "    haystack.len() < 16\n}",
+            "after": "    let length = haystack.len();\n    length < 16\n}"
+          }
+        ]
+      },
+      {
+        "name": "signature",
+        "edits": [
+          {
+            "path": "src/arch/all/rabinkarp.rs",
+            "before": "fn is_fast(haystack: &[u8], _needle: &[u8])",
+            "after": "fn is_fast(haystack: &[u8], _needle: &[u8], _benchmark_tag: ())"
+          },
+          {
+            "path": "src/memmem/searcher.rs",
+            "before": "if rabinkarp::is_fast(haystack, needle) {\n        searcher.rabinkarp.find(haystack, needle)\n    } else {\n        searcher.kind.two_way.find",
+            "after": "if rabinkarp::is_fast(haystack, needle, ()) {\n        searcher.rabinkarp.find(haystack, needle)\n    } else {\n        searcher.kind.two_way.find"
+          },
+          {
+            "path": "src/memmem/searcher.rs",
+            "before": "if rabinkarp::is_fast(haystack, needle) {\n        searcher.rabinkarp.find(haystack, needle)\n    } else {\n        let TwoWayWithPrefilter",
+            "after": "if rabinkarp::is_fast(haystack, needle, ()) {\n        searcher.rabinkarp.find(haystack, needle)\n    } else {\n        let TwoWayWithPrefilter"
+          },
+          {
+            "path": "src/memmem/searcher.rs",
+            "before": "if rabinkarp::is_fast(haystack, needle) {\n                    self.rabinkarp.rfind",
+            "after": "if rabinkarp::is_fast(haystack, needle, ()) {\n                    self.rabinkarp.rfind"
+          }
+        ]
+      },
+      {
+        "name": "manifest_metadata",
+        "edits": [
+          {
+            "path": "Cargo.toml",
+            "append": "\n[package.metadata.index_benchmark]\nnonce=1\n"
+          }
+        ]
+      }
+    ],
+    "compiler_arguments": [
+      "--not-a-cargo-option"
+    ]
+  },
+  "source_inputs": {
+    "Cargo.toml": "acd93639cfd6bef0e806a15f9fc7d6eb0117ed4cac44d5bc9c8601d1fc357435",
+    "src/arch/aarch64/memchr.rs": "5bb70f915084e629d940dbc322f5b9096b2e658cf63fea8a2f6e7550412e73a0",
+    "src/arch/aarch64/mod.rs": "44cd1a614bd66f1e66fc86c541d3c3b8d3a14a644c13e8bf816df3f555eac2d4",
+    "src/arch/aarch64/neon/memchr.rs": "e8c00b8fb2c7e2711832ae3cedefe59f32ebedd7dfa4d0ec6de2a566c979daea",
+    "src/arch/aarch64/neon/mod.rs": "eab6d56c2b2354db4ee395f40282cd49f97e2ab853547be5de6e65fbe1b2f634",
+    "src/arch/aarch64/neon/packedpair.rs": "32d3e4cd0dd9b6c8382e5308cbd896d20242c90b12862c44a5de6a8b4d6126df",
+    "src/arch/all/memchr.rs": "b0b1214aa573ed5d02ae62a77c42c773065566b50274d4096e37817d65ab1594",
+    "src/arch/all/mod.rs": "05f3fc2b069682eb1545fc6366d167bb620a454365dac8b8dd6cde6cd64de18a",
+    "src/arch/all/packedpair/default_rank.rs": "abffd1b5b8b7a3be95c03dd1105b905c246a379854dc56f1e846ea7c4408f2c7",
+    "src/arch/all/packedpair/mod.rs": "3692afca650585fbc625ff43e0e415d298605f56bea8134bcb5a2decac46142b",
+    "src/arch/all/rabinkarp.rs": "06038cce1cbead7b088e541ba41bcc1c095c34bde483b7df6ad9f77a49c1063c",
+    "src/arch/all/shiftor.rs": "0d79117f52a1e4795843603a3bb0b45397df4ad5e4184bbc923658dab9dc3b5f",
+    "src/arch/all/twoway.rs": "0b27eb1cd7402c1375a50466f8f66a68cb2806c3f69a647340b2759793eed4f8",
+    "src/arch/generic/memchr.rs": "31b11f07c5f24f02cb53715a6e508665b45943ddeebc05a243b88e728502dbe0",
+    "src/arch/generic/mod.rs": "1dd75f61e0ea2563b8205a08aaa7b55500130aa331d18b9e9f995724b66c7a39",
+    "src/arch/generic/packedpair.rs": "9c67ffe618eb8ae004a9777759db7a4b4b9c04393c23ee14eabf8747a2b16dc2",
+    "src/arch/mod.rs": "ca3960b7e2ed28d1b3c121710a870430531aad792f64d4dcb4ca4709d6cbda30",
+    "src/arch/wasm32/memchr.rs": "d88ac79f891d8530f505f5035062d3da274a05d66c611480c75430d52709d052",
+    "src/arch/wasm32/mod.rs": "a20377aa8fe07d68594879101dc73061e4f51d9c8d812b593b1f376e3c8add79",
+    "src/arch/wasm32/simd128/memchr.rs": "bac2c4c43fe710c83a6f2b1118fede043be89dd821d4b532907f129f09fdb5cf",
+    "src/arch/wasm32/simd128/mod.rs": "c157b373faedbfd65323be432e25bc411d97aa1b7bc58e76048614c7b2bf3bf6",
+    "src/arch/wasm32/simd128/packedpair.rs": "288ba6e5eee6a7a8e5e45c64cff1aa5d72d996c2a6bc228be372c75789f08e45",
+    "src/arch/x86_64/avx2/memchr.rs": "576ec0c30f49874f7fd9f6caeb490d56132c0fbbaa4d877b1aa532cafce19323",
+    "src/arch/x86_64/avx2/mod.rs": "0033d1b712d0b10f0f273ef9aa8caa53e05e49f4c56a64f39af0b9df97eec584",
+    "src/arch/x86_64/avx2/packedpair.rs": "87b69cb4301815906127db4f6370f572c7c5d5dad35c0946c00ad888dbcaec8c",
+    "src/arch/x86_64/memchr.rs": "4cf0611c926c3016d1b640880ef14e5654a8d1c1b480fe9a5965956be7eeeeef",
+    "src/arch/x86_64/mod.rs": "61b2aa876942fd3e78714c2ae21e356c8634545c06995020f443fa50218df027",
+    "src/arch/x86_64/sse2/memchr.rs": "0de0444e26d885eaf866220578752aac871e03bebee7b4f5de7fe8a35f5fa97f",
+    "src/arch/x86_64/sse2/mod.rs": "38b70ae52a64ec974dbb91d04d6ca8013d9e06d1fe4af852206bbc2faf1c59aa",
+    "src/arch/x86_64/sse2/packedpair.rs": "ad893c5ab9525966693e742673fb666f54ff9102949fc91c5e61642c8ad2f110",
+    "src/cow.rs": "2b053e393d3841f780425b3b0da5bec4f187603fa7c271b045ecb7d885b23395",
+    "src/ext.rs": "210f89d1e32211bc64414cbd56e97b4f56ce8a8832d321d77a9fe519634e27ea",
+    "src/lib.rs": "614f778a41e88a29ea0ceb8e92c839dbb6b5a61c967f8bfd962975e18f932c71",
+    "src/macros.rs": "3e4b39252bfa471fad384160a43f113ebfec7bec46a85d16f006622881dd2081",
+    "src/memchr.rs": "6ae779ec5d00f443075316e0105edf30b489a38e2e96325bec14ccecd014145b",
+    "src/memmem/mod.rs": "d869159f0d0c1915d7acc42a6a4aa3c97c049ddc043e6566afeb78ad290995d1",
+    "src/memmem/searcher.rs": "da0581eabbd3a27127e578f4e178e519399b1dddba7856f5b1968d69f096efd5",
+    "src/tests/memchr/mod.rs": "269f8e4b4f7f5ea458f27a3c174eb1020ffb2484eeba9464170beb51747df69b",
+    "src/tests/memchr/naive.rs": "6a0bee033e5edfb5b1d5769a5fa1c78388f7e9ff7bb91cb67f0ad029289e00e7",
+    "src/tests/memchr/prop.rs": "1854eea2338c405fe4635aac430f51e10d2069cd37a7489ddaff47da95f8720b",
+    "src/tests/mod.rs": "7cec8f809e279310a465c6a7725087970f219a676cc76c83de30c695bb490740",
+    "src/tests/packedpair.rs": "b02ec4fbb61a8653cb5f2268c31bc9168b8043347f2abdcc74081acf83b98e15",
+    "src/tests/substring/mod.rs": "c7660d10749363ac4687e7da2b5fda60768230425df8ba416c0c28b8d56a5c74",
+    "src/tests/substring/naive.rs": "df6f55d165382b8a53762ba4c324926cac13ebc62cde1805f4ce08740b326483",
+    "src/tests/substring/prop.rs": "38c15992609b5681a95d838ae6f2933e00a1219f2c971bfba245f96e0729fcdc",
+    "src/vector.rs": "b3d4f4e30456eb2d32e139cee0dcd6fc5866db3f8feb75cfca413df9a25778cc"
+  },
+  "mode": "incremental",
+  "preflight": {
+    "blocking_processes": [
+      {
+        "pid": 411,
+        "cpu_percent": 41.5,
+        "command": "WindowServer",
+        "compiler": false
+      },
+      {
+        "pid": 486,
+        "cpu_percent": 46.9,
+        "command": "syspolicyd",
+        "compiler": false
+      },
+      {
+        "pid": 6506,
+        "cpu_percent": 0.0,
+        "command": "cargo",
+        "compiler": true
+      },
+      {
+        "pid": 6518,
+        "cpu_percent": 99.4,
+        "command": "rustc",
+        "compiler": true
+      },
+      {
+        "pid": 7078,
+        "cpu_percent": 99.2,
+        "command": "git",
+        "compiler": false
+      },
+      {
+        "pid": 7095,
+        "cpu_percent": 105.5,
+        "command": "rag-mcp",
+        "compiler": false
+      },
+      {
+        "pid": 62493,
+        "cpu_percent": 40.0,
+        "command": "Kimi Helper (Renderer)",
+        "compiler": false
+      },
+      {
+        "pid": 94010,
+        "cpu_percent": 43.0,
+        "command": "language_server",
+        "compiler": false
+      },
+      {
+        "pid": 94044,
+        "cpu_percent": 25.2,
+        "command": "Antigravity Helper (Renderer)",
+        "compiler": false
+      }
+    ],
+    "quiet": false,
+    "sampled_at_unix": 1792985369.414165,
+    "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+  },
+  "controls": [
+    {
+      "case": "cold_ingest_and_index",
+      "before": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 40.5,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 486,
+            "cpu_percent": 36.8,
+            "command": "syspolicyd",
+            "compiler": false
+          },
+          {
+            "pid": 6506,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 6518,
+            "cpu_percent": 99.0,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 7078,
+            "cpu_percent": 86.6,
+            "command": "git",
+            "compiler": false
+          },
+          {
+            "pid": 7095,
+            "cpu_percent": 122.0,
+            "command": "rag-mcp",
+            "compiler": false
+          },
+          {
+            "pid": 7121,
+            "cpu_percent": 31.9,
+            "command": "composition.test.ts -t preserves portable per-clip Concat video cutout",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 39.3,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 32.6,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985369.5905569,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "after": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 47.2,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 6506,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 6518,
+            "cpu_percent": 99.6,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 7095,
+            "cpu_percent": 98.8,
+            "command": "rag-mcp",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 41.7,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 7174,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 7183,
+            "cpu_percent": 27.3,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 1363,
+            "cpu_percent": 39.5,
+            "command": "k9s",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985374.721299,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      }
+    }
+  ],
+  "records": [
+    {
+      "case": "cold_ingest_and_index",
+      "steps": [
+        {
+          "operation": "ingest_file",
+          "path": "Cargo.toml",
+          "ms": 19.350667,
+          "result": {
+            "document_id": "be7a498f-834c-40fa-973c-492e5110d59b",
+            "chunk_count": 6,
+            "node_id": "aba276ed-5fcc-4c5b-a7e6-6c7a4beee58f",
+            "edge_count": 2,
+            "content_hash": "942ecb2eb798430029c4d883649eb72031a75709239c77eb0fdb340a7fc327d3",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/aarch64/memchr.rs",
+          "ms": 10.452125,
+          "result": {
+            "document_id": "2669158a-a9ae-4a52-9eab-f07edd12c9e0",
+            "chunk_count": 18,
+            "node_id": "e6b14491-c737-4c2a-8fc1-38e6e25cb88b",
+            "edge_count": 2,
+            "content_hash": "9ee89f847c5c4c53c51cc7054f661fc251ef18a3d0e3b4cdd13190c2c895a058",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/aarch64/mod.rs",
+          "ms": 7.245083,
+          "result": {
+            "document_id": "4ac13603-ca90-4635-a548-f4487a1ce418",
+            "chunk_count": 5,
+            "node_id": "0252e1f8-d370-41d2-815e-0b8f0b84df54",
+            "edge_count": 2,
+            "content_hash": "27b4b25fa27972906dbe8a210454dc5b5355d4b9c179bd4f31c741d1e7afbcc3",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/aarch64/neon/memchr.rs",
+          "ms": 15.955792,
+          "result": {
+            "document_id": "9aa9a131-fde4-4f8b-8700-abef26927ace",
+            "chunk_count": 72,
+            "node_id": "cc3fe867-a04d-489a-8832-5fda0ab20398",
+            "edge_count": 2,
+            "content_hash": "fa8828198704c6e0c213d4d3ed25b2090b88aad8e1c60837d4f2d8c8712b74ec",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/aarch64/neon/mod.rs",
+          "ms": 8.359333,
+          "result": {
+            "document_id": "ba398b25-9633-4e52-9f10-8faca59c89c4",
+            "chunk_count": 5,
+            "node_id": "e4d196ab-59c1-4191-a451-d04e6e740f37",
+            "edge_count": 2,
+            "content_hash": "3018a87755ecb94979ff952c632d9eb089e09f0883e9b08812fdaf05cfc205e3",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/aarch64/neon/packedpair.rs",
+          "ms": 10.553,
+          "result": {
+            "document_id": "a7a9bd77-b111-47e2-b6a7-6b482ae1e679",
+            "chunk_count": 18,
+            "node_id": "83638ace-9b22-4eb9-b1b6-644b12b365a7",
+            "edge_count": 2,
+            "content_hash": "bb0520eab1d70336d8f5a5ed3bba5150f225bc38a4f2f62f1ee58a70bb2b4d5c",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/all/memchr.rs",
+          "ms": 17.42675,
+          "result": {
+            "document_id": "ea639d0f-c426-4439-b486-50de3b3d2026",
+            "chunk_count": 76,
+            "node_id": "4e8154f0-b357-470d-9f96-7b8e76e0ed82",
+            "edge_count": 2,
+            "content_hash": "82b43cbf166b211e82b4f7c12618be88efcc5c8b6fc032716c5bd58b9eea43e0",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/all/mod.rs",
+          "ms": 10.797292,
+          "result": {
+            "document_id": "f36b204d-a403-4b48-b766-75c017a105f7",
+            "chunk_count": 29,
+            "node_id": "d62c18a0-9118-45f5-bae9-c3dc38933354",
+            "edge_count": 2,
+            "content_hash": "7d36f2e0c41153619afd882c5508d2f3738f6f14e7811552242571e854756d1b",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/all/packedpair/default_rank.rs",
+          "ms": 17.777958,
+          "result": {
+            "document_id": "2cfdb191-d006-4b5e-a517-5fa6bac8da75",
+            "chunk_count": 8,
+            "node_id": "c60e6208-1d78-416e-bfa3-5701f50ca881",
+            "edge_count": 2,
+            "content_hash": "1ebd5cc1c22e116ea7212b935ec5f027341d4d784b02f1cd08d4c2e092d97422",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/all/packedpair/mod.rs",
+          "ms": 11.262458,
+          "result": {
+            "document_id": "e1a317b2-17b2-4468-a182-bdb696547440",
+            "chunk_count": 37,
+            "node_id": "d4a5ba38-9fbb-4716-9131-cc1a9805a214",
+            "edge_count": 2,
+            "content_hash": "6d4d30686992caeb606e90f28280b4cd870a26663afb4a317d132e5a34a4f34e",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/all/rabinkarp.rs",
+          "ms": 10.637875,
+          "result": {
+            "document_id": "b4e74cd0-b396-4407-9487-f3fa0f6658af",
+            "chunk_count": 37,
+            "node_id": "8d63dd8a-6870-4cb9-8b77-e0217921db8d",
+            "edge_count": 2,
+            "content_hash": "176af8e1d35113e72b0491e5647cfbf39d6254940d189caac85d37c8d60c48eb",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/all/shiftor.rs",
+          "ms": 7.864458,
+          "result": {
+            "document_id": "31f94167-b4d4-490d-8d5a-32f84acbe271",
+            "chunk_count": 10,
+            "node_id": "9c70d167-b864-4571-9d51-ad8c573cd2be",
+            "edge_count": 2,
+            "content_hash": "164864cc8432ce8aaded0739d1df54dd2a1cb1de43c6ac3aca696880caa3baa6",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/all/twoway.rs",
+          "ms": 14.773708,
+          "result": {
+            "document_id": "c02d626f-ea6b-4665-85c4-9554d0e0207a",
+            "chunk_count": 72,
+            "node_id": "32fe485a-6338-4bd5-92e0-c1187112eb31",
+            "edge_count": 2,
+            "content_hash": "5bd50cd38c6d1816c3ff76dc9bdc747d00a77354c49776de70ab5399bae20c52",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/generic/memchr.rs",
+          "ms": 17.405292,
+          "result": {
+            "document_id": "cccaaf7b-850b-4c12-acbc-e0eb387d6fd1",
+            "chunk_count": 89,
+            "node_id": "2c805e73-7aa4-47c9-b999-c4c47dcd351b",
+            "edge_count": 2,
+            "content_hash": "c2b86279373bfdfa310b9b00bb390d2fa433c56f9fa97fa7ee9377d8653e05e9",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/generic/mod.rs",
+          "ms": 8.153375,
+          "result": {
+            "document_id": "e8852c7a-27e6-4270-904b-66f3a6343e0b",
+            "chunk_count": 5,
+            "node_id": "00b4f323-34fe-4c44-9040-3be583247ae6",
+            "edge_count": 2,
+            "content_hash": "e9a5614180c4e29c99dd5ca758b36289610d4e460517ba8507fe4bfc686f369c",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/generic/packedpair.rs",
+          "ms": 9.564666,
+          "result": {
+            "document_id": "60207d0b-984b-4126-8b87-e1d37b3f5d6d",
+            "chunk_count": 22,
+            "node_id": "b0f8eddf-659b-4467-a8c9-cb4df299ad55",
+            "edge_count": 2,
+            "content_hash": "12629d8506214970608591a21cec8a00467e4390a1f478d937cea0aec339dfaf",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/mod.rs",
+          "ms": 14.24675,
+          "result": {
+            "document_id": "44fdf3fa-5a53-4c05-839e-d911cccd9445",
+            "chunk_count": 11,
+            "node_id": "bd6b9585-39e8-41f6-af5d-0723db771181",
+            "edge_count": 2,
+            "content_hash": "93d247b301840bbc982d207af3138c33c9cc46a0a0cfa8333b9fc6e93fb75661",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/wasm32/memchr.rs",
+          "ms": 12.377,
+          "result": {
+            "document_id": "917962f6-9bab-4d6b-83a4-d29aec94c163",
+            "chunk_count": 17,
+            "node_id": "56b2796a-b565-49af-8b4b-0b98baf2cfc0",
+            "edge_count": 2,
+            "content_hash": "27713079fda1292aba1dee4d5ce2755e62bd477f695aee9a5ac1c983a30c25ba",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/wasm32/mod.rs",
+          "ms": 8.626209,
+          "result": {
+            "document_id": "679c5327-19ca-452b-8317-5f5dcfa08316",
+            "chunk_count": 5,
+            "node_id": "d5e67062-3c41-41a6-9720-29dab932a2ae",
+            "edge_count": 2,
+            "content_hash": "d9e024e055f68c0fdb9951d963172fa839e9ec92c63ecd487a04a44e15d725a6",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/wasm32/simd128/memchr.rs",
+          "ms": 16.834083,
+          "result": {
+            "document_id": "44bed9d5-4aa8-4aa1-91c8-2343f0919915",
+            "chunk_count": 72,
+            "node_id": "2f360a4b-212e-42f1-ba22-97663d48b006",
+            "edge_count": 2,
+            "content_hash": "4a0bf4d73789ffa2624d694a5c704d5ec9b4e3a7d1111ddc94d3e333e171e07d",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/wasm32/simd128/mod.rs",
+          "ms": 8.844459,
+          "result": {
+            "document_id": "82392bdb-2320-4fdb-8264-d1bd81ac36b4",
+            "chunk_count": 5,
+            "node_id": "cc838cc1-b26e-41a3-888d-74fd66da4e23",
+            "edge_count": 2,
+            "content_hash": "915e943a2121bf1604b3b812a06dc391faf1d8593bb07cc702d6a10c752c8dd1",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/wasm32/simd128/packedpair.rs",
+          "ms": 9.719334,
+          "result": {
+            "document_id": "38335ad4-78c4-4f6d-bd9a-77cc0607ef36",
+            "chunk_count": 18,
+            "node_id": "cf487bd6-6cf9-454a-bf86-d3d84436e411",
+            "edge_count": 2,
+            "content_hash": "bbe928b96edbbc7d89d22e7769b11482e0530759381dde9890f2db84c97c451e",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/x86_64/avx2/memchr.rs",
+          "ms": 17.700334,
+          "result": {
+            "document_id": "042d48c4-8719-418f-b39d-43bf96a17aef",
+            "chunk_count": 92,
+            "node_id": "9b90da17-b6dd-4476-b119-e9026eccbaf5",
+            "edge_count": 2,
+            "content_hash": "165da37b285916f4accbbaf779d493c21e56e1b86c0287b06132690d69b3c6a9",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/x86_64/avx2/mod.rs",
+          "ms": 9.274917,
+          "result": {
+            "document_id": "68a3845f-37b5-4f46-aea9-c3ee2c00c022",
+            "chunk_count": 5,
+            "node_id": "22e3058a-8c78-4611-bb35-044fa3b13958",
+            "edge_count": 2,
+            "content_hash": "642b3273128dcd93749a24383b1963c2393acbcad6909d5843a29201c25fe6f1",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/x86_64/avx2/packedpair.rs",
+          "ms": 9.814334,
+          "result": {
+            "document_id": "1a18f444-74fb-4da4-976b-03bad587f395",
+            "chunk_count": 20,
+            "node_id": "c08c4475-004a-4d4f-810a-6c79de381e25",
+            "edge_count": 2,
+            "content_hash": "ba588c69151ae3a20fab9062972a010a3d4158b04c663ab461a1678cff97fc21",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/x86_64/memchr.rs",
+          "ms": 11.355709,
+          "result": {
+            "document_id": "3bfcbe4d-d720-48d3-8c2b-2c9086ff29b8",
+            "chunk_count": 26,
+            "node_id": "8e565818-439d-4ab3-8358-a84f98830542",
+            "edge_count": 2,
+            "content_hash": "070c95ffeb46d8d4fdcf4291261644bfe444d519c4f2bd57f797a73fa2a655a5",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/x86_64/mod.rs",
+          "ms": 7.491458,
+          "result": {
+            "document_id": "c16dda3e-9d86-445b-8aab-0129ba7016ec",
+            "chunk_count": 7,
+            "node_id": "b05a9b32-33d2-4340-9894-1bcc57eb44fb",
+            "edge_count": 2,
+            "content_hash": "0c30fc0d4d710d0df5e6c846d3c8a67bf4a5f2e9222d8536ad1233e74218f543",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/x86_64/sse2/memchr.rs",
+          "ms": 16.576083,
+          "result": {
+            "document_id": "19f0a766-480d-4deb-8f81-8ad9dfbc6b16",
+            "chunk_count": 78,
+            "node_id": "7a0f952c-6b76-4166-94fe-a1c29cd9258e",
+            "edge_count": 2,
+            "content_hash": "5a7793d5c060afdc9879acb290dc17c834a44c732a004cd5b7bf45e69759d7c3",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/x86_64/sse2/mod.rs",
+          "ms": 7.724042,
+          "result": {
+            "document_id": "a597bca1-3af4-4895-97ef-d0c511c57994",
+            "chunk_count": 5,
+            "node_id": "1ba39473-e52e-4f04-98a8-d682f13c4374",
+            "edge_count": 2,
+            "content_hash": "0bdf2f3da0d75cdaedbc23bc1b82c5bbba03a7a033725a9bfcf62cc2b10a27c1",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/x86_64/sse2/packedpair.rs",
+          "ms": 9.168375,
+          "result": {
+            "document_id": "8687ba00-ace9-4684-86e8-e1cd2c89fbd9",
+            "chunk_count": 19,
+            "node_id": "9bb57ce4-b767-4721-a6cc-bd7fb3a35bcc",
+            "edge_count": 2,
+            "content_hash": "54a163ebc7ec4490e116f945615435f1d0f2c3318e13fa1d6af63aad2efa07e9",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/cow.rs",
+          "ms": 9.638042,
+          "result": {
+            "document_id": "2f49b7b0-8765-4a69-8274-dcee600b6892",
+            "chunk_count": 10,
+            "node_id": "c2a968e5-5ee4-491a-ab23-2dee63ee83f8",
+            "edge_count": 2,
+            "content_hash": "607f6c9e6c8aa6b1edd3c2939062fa641f4258b3ee5e9e8fd521348b48b1b031",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/ext.rs",
+          "ms": 8.101625,
+          "result": {
+            "document_id": "dd1aa9c2-3ebb-42b1-84c6-cb5c429f5315",
+            "chunk_count": 6,
+            "node_id": "82bddfe4-9751-42d9-931c-a3b2168f387d",
+            "edge_count": 2,
+            "content_hash": "e1c40f35a6cd1d784005fd265321f6d64c398898d8b545a6341a40f8018c4f79",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/lib.rs",
+          "ms": 13.951667,
+          "result": {
+            "document_id": "d9923817-4b95-4ab2-bfb2-9c0032240d88",
+            "chunk_count": 29,
+            "node_id": "adcb7553-5c5e-4d1a-94d5-bdc1beaa961a",
+            "edge_count": 2,
+            "content_hash": "8a1d1ea4c1e8c111bdb83ec7ea7bb7f2bb9bf24a75956ae467c112e31aa0a031",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/macros.rs",
+          "ms": 7.22675,
+          "result": {
+            "document_id": "41c81995-d133-4654-90c3-8993d0a4f97b",
+            "chunk_count": 7,
+            "node_id": "8072977c-a10b-44e0-808e-530854fb9c10",
+            "edge_count": 2,
+            "content_hash": "26cd7ab5a5d0775a18c7a6ba227aa1e6508383c945e6515d60729085953e995f",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/memchr.rs",
+          "ms": 14.131041,
+          "result": {
+            "document_id": "ed3f17e6-52a3-4594-b582-d8cab21ac28c",
+            "chunk_count": 75,
+            "node_id": "49c47f86-4ad3-4790-a0f1-4a26b7aa21f2",
+            "edge_count": 2,
+            "content_hash": "27943e026a265b80019ec151fa655c9358ca39c5608337d1a908cf005cccfc4d",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/memmem/mod.rs",
+          "ms": 14.299125,
+          "result": {
+            "document_id": "fd3b234d-a1ef-463f-8d6e-b6ff2caa9a13",
+            "chunk_count": 56,
+            "node_id": "c0875682-5f6e-485c-ada4-02f5dcf6f7e8",
+            "edge_count": 2,
+            "content_hash": "9b0068068ec6c03bad149c994561ed942fde91cbbc67f8393cad939e0b430a02",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/memmem/searcher.rs",
+          "ms": 17.647917,
+          "result": {
+            "document_id": "bec171d8-c77e-4efe-8cb2-d554ee9acf35",
+            "chunk_count": 101,
+            "node_id": "45eda5a7-681c-4355-8fcf-cca8a199821b",
+            "edge_count": 2,
+            "content_hash": "64cb2685befd62b578c02847fbbe4a480c5522bf79f9617b85b88ea479183c20",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/tests/memchr/mod.rs",
+          "ms": 11.422,
+          "result": {
+            "document_id": "4c4ed0e2-7513-4c78-8c9f-f1cf7a085e67",
+            "chunk_count": 31,
+            "node_id": "4695a36b-7eee-4ff6-af21-93e5bfb4bc02",
+            "edge_count": 2,
+            "content_hash": "6cf8a4231529f6b723d21989c310c7e00a6ec7e2c412dfed66c3b5dfc164590a",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/tests/memchr/naive.rs",
+          "ms": 7.893,
+          "result": {
+            "document_id": "61c1005e-c837-4816-872e-f24fe5c6b5c3",
+            "chunk_count": 12,
+            "node_id": "703af206-21c7-4ab0-a311-84e77ded9382",
+            "edge_count": 2,
+            "content_hash": "8657612ebe9f326b950c7cd3dd08fdfe5470f91260741983665a959ead7eaa7a",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/tests/memchr/prop.rs",
+          "ms": 9.813875,
+          "result": {
+            "document_id": "3b642a18-00c3-4d09-931b-38a1da2086f4",
+            "chunk_count": 29,
+            "node_id": "55921969-be2f-43f3-bfc2-261f68b14143",
+            "edge_count": 2,
+            "content_hash": "9c061d272ae21581148aeda93c7ef0efbfd44f16319f01570fb2b7a996928d9a",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/tests/mod.rs",
+          "ms": 9.108375,
+          "result": {
+            "document_id": "ff2bbeac-a5b6-46c4-bc96-766ef0f50200",
+            "chunk_count": 8,
+            "node_id": "88219bad-1aac-4f77-a82a-9b5c75c6c91d",
+            "edge_count": 2,
+            "content_hash": "56bb2cc1acd1dcf1c7cd889fe934839fe433b8e70145bfce5e3abae7ecb307fb",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/tests/packedpair.rs",
+          "ms": 8.810917,
+          "result": {
+            "document_id": "9b2ef812-12eb-4bf7-9d7b-f0369f3e0e72",
+            "chunk_count": 23,
+            "node_id": "ac983947-8d7f-451c-92b2-dd1224ed1c0a",
+            "edge_count": 2,
+            "content_hash": "6a24d7df3d106b0d6e0b691b84d76229f6f2ba470a014fae8cef7a91fed3367d",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/tests/substring/mod.rs",
+          "ms": 10.964083,
+          "result": {
+            "document_id": "6b950bf1-8723-42b1-8e08-2883cf02ce97",
+            "chunk_count": 25,
+            "node_id": "9d8ad002-6541-4da0-93f1-ad08f7dd7606",
+            "edge_count": 2,
+            "content_hash": "01a658750da3adfaecb00d46bf7b2051fa6471bf57c03925e982f2c215c14047",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/tests/substring/naive.rs",
+          "ms": 8.031125,
+          "result": {
+            "document_id": "6f166faf-dd2b-40e0-bd23-7ae99e473266",
+            "chunk_count": 7,
+            "node_id": "a9a9c471-2fae-4a61-896b-1de9e251760e",
+            "edge_count": 2,
+            "content_hash": "5da40d6a199a4f5645d44ac1524d193c6f87e82b2e323b9881d713c4bcea67bb",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/tests/substring/prop.rs",
+          "ms": 8.154083,
+          "result": {
+            "document_id": "4604c291-0c37-41b4-88a0-be76fb6a06bd",
+            "chunk_count": 13,
+            "node_id": "a08b8471-df3c-4f10-8eba-1cebac08678c",
+            "edge_count": 2,
+            "content_hash": "59eed72b5c1093af345c1c88c726a1ee984c5a1ca39c0fc52fb54895d9ae4a8b",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/vector.rs",
+          "ms": 11.084166,
+          "result": {
+            "document_id": "eecbfada-b631-4e5f-9f77-d5ea670199fb",
+            "chunk_count": 41,
+            "node_id": "8322d2ce-23b9-445d-8423-33a1fa08c8ed",
+            "edge_count": 2,
+            "content_hash": "6dd761f60f204d7e78948a6100086d82d8d78f0165ed984b34c7a637801f7cd2",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "index_code",
+          "arguments": {},
+          "ms": 4548.294958,
+          "result": {
+            "indexed": 46,
+            "unchanged": 0,
+            "unsupported": 0,
+            "parse_errors": [],
+            "index_revision": 1,
+            "revision_created": true,
+            "stage_timings": {
+              "contract_version": 1,
+              "run_id": "84341ae5-13e8-4e8c-beaf-909dcbe7f031",
+              "lock_wait_ms": 4.2e-05,
+              "source_load_decode_ms": 0.506292,
+              "cache_parse_serialize_ms": 617.7615410000001,
+              "cache_replace_ms": 32.36425,
+              "revision_publish_ms": 3876.2614160000003,
+              "transaction_body_ms": 4526.932333,
+              "before_metrics_write_ms": 4526.9325,
+              "documents_loaded": 46,
+              "cache_hits": 0,
+              "cache_misses": 46,
+              "unsupported_documents": 0,
+              "parse_error_documents": 0,
+              "commit_included": false,
+              "metrics_write_included": false,
+              "embedding_fts_included": false
+            },
+            "resolution": {
+              "contract_version": 1,
+              "documents_total": 46,
+              "documents_resolved": 46,
+              "documents_reused": 0,
+              "reference_sites_resolved": 5986,
+              "reference_sites_reused": 0,
+              "rust_package_scopes": 20,
+              "project_fallback_scopes": 0,
+              "empty_reference_documents": 26,
+              "dependency_inputs_hashed": 920,
+              "invalid_cache_entries": 0,
+              "forced_full": false,
+              "cache_available": false,
+              "no_resolution_required": false,
+              "resolution_ms": 3786.580625,
+              "equivalent_to_existing": null
+            },
+            "completion": {
+              "contract_version": 1,
+              "native_total_ms": 4547.9987089999995,
+              "commit_ms": 20.357332999999997,
+              "metrics_write_ms": 0.708792,
+              "commit_included": true,
+              "process_lifetime_peak_rss_bytes": 310771712
+            }
+          }
+        }
+      ],
+      "inputs": {
+        "Cargo.toml": "acd93639cfd6bef0e806a15f9fc7d6eb0117ed4cac44d5bc9c8601d1fc357435",
+        "src/arch/aarch64/memchr.rs": "5bb70f915084e629d940dbc322f5b9096b2e658cf63fea8a2f6e7550412e73a0",
+        "src/arch/aarch64/mod.rs": "44cd1a614bd66f1e66fc86c541d3c3b8d3a14a644c13e8bf816df3f555eac2d4",
+        "src/arch/aarch64/neon/memchr.rs": "e8c00b8fb2c7e2711832ae3cedefe59f32ebedd7dfa4d0ec6de2a566c979daea",
+        "src/arch/aarch64/neon/mod.rs": "eab6d56c2b2354db4ee395f40282cd49f97e2ab853547be5de6e65fbe1b2f634",
+        "src/arch/aarch64/neon/packedpair.rs": "32d3e4cd0dd9b6c8382e5308cbd896d20242c90b12862c44a5de6a8b4d6126df",
+        "src/arch/all/memchr.rs": "b0b1214aa573ed5d02ae62a77c42c773065566b50274d4096e37817d65ab1594",
+        "src/arch/all/mod.rs": "05f3fc2b069682eb1545fc6366d167bb620a454365dac8b8dd6cde6cd64de18a",
+        "src/arch/all/packedpair/default_rank.rs": "abffd1b5b8b7a3be95c03dd1105b905c246a379854dc56f1e846ea7c4408f2c7",
+        "src/arch/all/packedpair/mod.rs": "3692afca650585fbc625ff43e0e415d298605f56bea8134bcb5a2decac46142b",
+        "src/arch/all/rabinkarp.rs": "06038cce1cbead7b088e541ba41bcc1c095c34bde483b7df6ad9f77a49c1063c",
+        "src/arch/all/shiftor.rs": "0d79117f52a1e4795843603a3bb0b45397df4ad5e4184bbc923658dab9dc3b5f",
+        "src/arch/all/twoway.rs": "0b27eb1cd7402c1375a50466f8f66a68cb2806c3f69a647340b2759793eed4f8",
+        "src/arch/generic/memchr.rs": "31b11f07c5f24f02cb53715a6e508665b45943ddeebc05a243b88e728502dbe0",
+        "src/arch/generic/mod.rs": "1dd75f61e0ea2563b8205a08aaa7b55500130aa331d18b9e9f995724b66c7a39",
+        "src/arch/generic/packedpair.rs": "9c67ffe618eb8ae004a9777759db7a4b4b9c04393c23ee14eabf8747a2b16dc2",
+        "src/arch/mod.rs": "ca3960b7e2ed28d1b3c121710a870430531aad792f64d4dcb4ca4709d6cbda30",
+        "src/arch/wasm32/memchr.rs": "d88ac79f891d8530f505f5035062d3da274a05d66c611480c75430d52709d052",
+        "src/arch/wasm32/mod.rs": "a20377aa8fe07d68594879101dc73061e4f51d9c8d812b593b1f376e3c8add79",
+        "src/arch/wasm32/simd128/memchr.rs": "bac2c4c43fe710c83a6f2b1118fede043be89dd821d4b532907f129f09fdb5cf",
+        "src/arch/wasm32/simd128/mod.rs": "c157b373faedbfd65323be432e25bc411d97aa1b7bc58e76048614c7b2bf3bf6",
+        "src/arch/wasm32/simd128/packedpair.rs": "288ba6e5eee6a7a8e5e45c64cff1aa5d72d996c2a6bc228be372c75789f08e45",
+        "src/arch/x86_64/avx2/memchr.rs": "576ec0c30f49874f7fd9f6caeb490d56132c0fbbaa4d877b1aa532cafce19323",
+        "src/arch/x86_64/avx2/mod.rs": "0033d1b712d0b10f0f273ef9aa8caa53e05e49f4c56a64f39af0b9df97eec584",
+        "src/arch/x86_64/avx2/packedpair.rs": "87b69cb4301815906127db4f6370f572c7c5d5dad35c0946c00ad888dbcaec8c",
+        "src/arch/x86_64/memchr.rs": "4cf0611c926c3016d1b640880ef14e5654a8d1c1b480fe9a5965956be7eeeeef",
+        "src/arch/x86_64/mod.rs": "61b2aa876942fd3e78714c2ae21e356c8634545c06995020f443fa50218df027",
+        "src/arch/x86_64/sse2/memchr.rs": "0de0444e26d885eaf866220578752aac871e03bebee7b4f5de7fe8a35f5fa97f",
+        "src/arch/x86_64/sse2/mod.rs": "38b70ae52a64ec974dbb91d04d6ca8013d9e06d1fe4af852206bbc2faf1c59aa",
+        "src/arch/x86_64/sse2/packedpair.rs": "ad893c5ab9525966693e742673fb666f54ff9102949fc91c5e61642c8ad2f110",
+        "src/cow.rs": "2b053e393d3841f780425b3b0da5bec4f187603fa7c271b045ecb7d885b23395",
+        "src/ext.rs": "210f89d1e32211bc64414cbd56e97b4f56ce8a8832d321d77a9fe519634e27ea",
+        "src/lib.rs": "614f778a41e88a29ea0ceb8e92c839dbb6b5a61c967f8bfd962975e18f932c71",
+        "src/macros.rs": "3e4b39252bfa471fad384160a43f113ebfec7bec46a85d16f006622881dd2081",
+        "src/memchr.rs": "6ae779ec5d00f443075316e0105edf30b489a38e2e96325bec14ccecd014145b",
+        "src/memmem/mod.rs": "d869159f0d0c1915d7acc42a6a4aa3c97c049ddc043e6566afeb78ad290995d1",
+        "src/memmem/searcher.rs": "da0581eabbd3a27127e578f4e178e519399b1dddba7856f5b1968d69f096efd5",
+        "src/tests/memchr/mod.rs": "269f8e4b4f7f5ea458f27a3c174eb1020ffb2484eeba9464170beb51747df69b",
+        "src/tests/memchr/naive.rs": "6a0bee033e5edfb5b1d5769a5fa1c78388f7e9ff7bb91cb67f0ad029289e00e7",
+        "src/tests/memchr/prop.rs": "1854eea2338c405fe4635aac430f51e10d2069cd37a7489ddaff47da95f8720b",
+        "src/tests/mod.rs": "7cec8f809e279310a465c6a7725087970f219a676cc76c83de30c695bb490740",
+        "src/tests/packedpair.rs": "b02ec4fbb61a8653cb5f2268c31bc9168b8043347f2abdcc74081acf83b98e15",
+        "src/tests/substring/mod.rs": "c7660d10749363ac4687e7da2b5fda60768230425df8ba416c0c28b8d56a5c74",
+        "src/tests/substring/naive.rs": "df6f55d165382b8a53762ba4c324926cac13ebc62cde1805f4ce08740b326483",
+        "src/tests/substring/prop.rs": "38c15992609b5681a95d838ae6f2933e00a1219f2c971bfba245f96e0729fcdc",
+        "src/vector.rs": "b3d4f4e30456eb2d32e139cee0dcd6fc5866db3f8feb75cfca413df9a25778cc"
+      },
+      "ordinary_noop": false,
+      "environment": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 40.5,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 486,
+            "cpu_percent": 36.8,
+            "command": "syspolicyd",
+            "compiler": false
+          },
+          {
+            "pid": 6506,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 6518,
+            "cpu_percent": 99.0,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 7078,
+            "cpu_percent": 86.6,
+            "command": "git",
+            "compiler": false
+          },
+          {
+            "pid": 7095,
+            "cpu_percent": 122.0,
+            "command": "rag-mcp",
+            "compiler": false
+          },
+          {
+            "pid": 7121,
+            "cpu_percent": 31.9,
+            "command": "composition.test.ts -t preserves portable per-clip Concat video cutout",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 39.3,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 32.6,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985369.5905569,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "end_to_end_mcp_ms": 5076.042167,
+      "sampled_worker_peak_rss_bytes": 300335104,
+      "rss_samples": 85,
+      "rss_sample_period_seconds": 0.05,
+      "environment_after": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 47.2,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 6506,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 6518,
+            "cpu_percent": 99.6,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 7095,
+            "cpu_percent": 98.8,
+            "command": "rag-mcp",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 41.7,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 7174,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 7183,
+            "cpu_percent": 27.3,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 1363,
+            "cpu_percent": 39.5,
+            "command": "k9s",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985374.721299,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      }
+    }
+  ],
+  "correctness_audits": [],
+  "compiler_checks": [
+    {
+      "case": "cold_ingest_and_index",
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--not-a-cargo-option",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-8jpr1rkn/sources/Cargo.toml"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "error: unexpected argument '--not-a-cargo-option' found\n\nUsage: cargo check --offline\n\nFor more information, try '--help'.\n"
+    }
+  ],
+  "production_database_used": false,
+  "performance_qualified": false,
+  "limitations": [
+    "small real-library workload; no representative scale claim",
+    "mock embeddings (16 dimensions), local FTS/document writes and code graph; no model cost",
+    "startup, source-copy, compiler and equivalence audits excluded from timing",
+    "sampled worker RSS is a lower bound, not exact physical operation peak",
+    "full binding control is an internal algorithm control, not a competitor",
+    "manifest_metadata changes metadata, not Cargo feature/dependency semantics",
+    "release profile is supplied by an external manifest; this runner checks identity, not compiler provenance"
+  ],
+  "isolated_stderr": "",
+  "error": {
+    "type": "AssertionError",
+    "message": "error: unexpected argument '--not-a-cargo-option' found\n\nUsage: cargo check --offline\n\nFor more information, try '--help'.\n"
+  },
+  "original_source_unchanged": true,
+  "binary_unchanged": true
+}
