@@ -1,0 +1,45 @@
+{
+  "status": "passed",
+  "workspace": {
+    "passed": 1616,
+    "failed": 0,
+    "ignored": 1
+  },
+  "mcp_exit_codes": {
+    "phpunit_host_impact": 0,
+    "phpunit_effective": 0,
+    "affected_php_contexts": 0,
+    "affected_tests": 0,
+    "table_impact": 0,
+    "php_trait_paths": 0,
+    "trace_php_contexts": 0,
+    "git_php_contexts": 0
+  },
+  "binary_sha256_before": "5140c60098bc077582c3fed1f29c3625bffb9b60543c8f6f90bbe5dc53c686b2",
+  "binary_sha256_after": "5140c60098bc077582c3fed1f29c3625bffb9b60543c8f6f90bbe5dc53c686b2",
+  "source_hashes_before": {
+    "src/code_index.rs": "bfc4dd27df044f4180fb624f089a85dfcefb3a2b217b305d000d57f0ea0978a6",
+    "src/code_index/affected_tests.rs": "82f952c251a3c14821d01d0bc34b266ea00ab2b49b567f519b63b7b28f090bdb",
+    "src/code_index/affected_tests/hosts.rs": "33a5dd3772d4b19a149c87a9485a5966065311933da96335fddbaafdc4cda7a0",
+    "src/code_index/git_impact.rs": "6e50602fe5f14bb08e6a7c95d01e8acb17e52ded1783beb146b10bd440b0010e",
+    "src/code_index/analysis.rs": "9c66949888e67ee06f4bdddcb87bdbb24020f9be887cc263ca4ccd890e648a2d",
+    "src/mcp/analysis.rs": "eeb7a316875bbd0c7b78269d03c75ff661704efbef186e9e9746ca4186018417",
+    "scripts/smoke_phpunit_host_impact.py": "0ba3b5a9cafc8e13705c1b59cc7ff60a20557f4ef0684717f8d652092d991cd8",
+    "scripts/smoke_affected_php_contexts.py": "7ff7c57c7401246bdbcc759a06ea0883c48feb0b3f0c8268280e0f59f0faa631"
+  },
+  "source_hashes_after": {
+    "src/code_index.rs": "bfc4dd27df044f4180fb624f089a85dfcefb3a2b217b305d000d57f0ea0978a6",
+    "src/code_index/affected_tests.rs": "82f952c251a3c14821d01d0bc34b266ea00ab2b49b567f519b63b7b28f090bdb",
+    "src/code_index/affected_tests/hosts.rs": "33a5dd3772d4b19a149c87a9485a5966065311933da96335fddbaafdc4cda7a0",
+    "src/code_index/git_impact.rs": "6e50602fe5f14bb08e6a7c95d01e8acb17e52ded1783beb146b10bd440b0010e",
+    "src/code_index/analysis.rs": "9c66949888e67ee06f4bdddcb87bdbb24020f9be887cc263ca4ccd890e648a2d",
+    "src/mcp/analysis.rs": "eeb7a316875bbd0c7b78269d03c75ff661704efbef186e9e9746ca4186018417",
+    "scripts/smoke_phpunit_host_impact.py": "0ba3b5a9cafc8e13705c1b59cc7ff60a20557f4ef0684717f8d652092d991cd8",
+    "scripts/smoke_affected_php_contexts.py": "7ff7c57c7401246bdbcc759a06ea0883c48feb0b3f0c8268280e0f59f0faa631"
+  },
+  "shared_checkout": true,
+  "frozen_source_checkout": false,
+  "PHP_or_SQL_executed": false,
+  "production_database_touched": false,
+  "full_RAGRAF_parity_proven": false
+}

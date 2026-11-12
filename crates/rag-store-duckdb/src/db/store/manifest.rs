@@ -2,112 +2,7 @@
 
 use super::*;
 
-/// Build a default-id [`EmbeddingManifest`] snapshot from runtime config.
-pub fn embedding_manifest_from_config(config: &impl EmbeddingIdentity) -> EmbeddingManifest {
-    let provider = config.embedding_provider_name().to_string();
-    let fingerprint = embedding_config_fingerprint(config);
-    EmbeddingManifest {
-        id: "default".into(),
-        provider,
-        model: config.embedding_model_name().to_string(),
-        dims: config.embedding_dimensions() as i32,
-        base_url: Some(config.embedding_endpoint().to_string()),
-        content_fingerprint: Some(fingerprint),
-        updated_at: Utc::now(),
-    }
-}
-
-/// Build a durable fail-closed marker for an in-progress corpus migration.
-///
-/// Its descriptive fields identify the target vectors (and therefore validate
-/// their dimensions), while its authoritative fingerprint cannot match either
-/// the old or target config. The first successful vector mutation writes this
-/// marker in the same transaction; only a complete migration may replace it.
-pub fn embedding_migration_manifest(config: &impl EmbeddingIdentity) -> EmbeddingManifest {
-    let mut marker = embedding_manifest_from_config(config);
-    let target_fingerprint = marker
-        .content_fingerprint
-        .as_deref()
-        .unwrap_or_default()
-        .to_string();
-    marker.content_fingerprint = Some(format!(
-        "{EMBEDDING_MIGRATION_FINGERPRINT_PREFIX}{}",
-        target_fingerprint
-    ));
-    marker.updated_at = Utc::now();
-    marker
-}
-
-/// Canonical corpus identity predicate.
-///
-/// New manifests carry a fingerprint over provider/model/dims/base endpoint.
-/// All descriptive fields and that fingerprint must agree with live config;
-/// a missing fingerprint is unverifiable and remains fail-closed.
-pub fn embedding_manifest_matches_config(
-    manifest: &EmbeddingManifest,
-    config: &impl EmbeddingIdentity,
-) -> bool {
-    match manifest.content_fingerprint.as_deref() {
-        Some(fingerprint) => {
-            manifest.id == "default"
-                && manifest.provider == config.embedding_provider_name()
-                && manifest.model == config.embedding_model_name()
-                && manifest.dims == config.embedding_dimensions() as i32
-                && manifest.base_url.as_deref() == Some(config.embedding_endpoint())
-                && fingerprint == embedding_config_fingerprint(config)
-        }
-        None => false,
-    }
-}
-
-pub(super) fn embedding_config_fingerprint(config: &impl EmbeddingIdentity) -> String {
-    embedding_identity_fingerprint(
-        config.embedding_provider_name(),
-        config.embedding_model_name(),
-        config.embedding_dimensions() as i32,
-        config.embedding_endpoint(),
-    )
-}
-
-pub(crate) fn embedding_identity_fingerprint(
-    provider: &str,
-    model: &str,
-    dims: i32,
-    base_url: &str,
-) -> String {
-    content_hash(&format!("{}|{}|{}|{}", provider, model, dims, base_url))
-}
-
-/// Read the manifest inside an already-owned consistent database observation.
-pub fn get_embedding_manifest_locked(
-    conn: &Connection,
-    id: &str,
-) -> Result<Option<EmbeddingManifest>> {
-    let mut stmt = conn.prepare(
-        r#"
-            SELECT id, provider, model, dims, base_url, content_fingerprint,
-                   CAST(updated_at AS VARCHAR)
-            FROM embedding_manifest
-            WHERE id = ?
-            "#,
-    )?;
-
-    let mut rows = stmt.query(params![id])?;
-    match rows.next()? {
-        Some(row) => Ok(Some(rows::embedding_manifest(row)?)),
-        None => Ok(None),
-    }
-}
-
-/// The embedding manifest (provider, model, dims, fingerprint).
-///
-/// A repository over the shared Store connection; get one from [`Store::embedding_manifest`].
-#[derive(Clone, Copy)]
-pub struct EmbeddingManifestRepo<'a> {
-    pub(in crate::db) store: &'a Store,
-}
-
-impl EmbeddingManifestRepo<'_> {
+impl Store {
     /// Load the embedding corpus fingerprint (typically id `"default"`).
     pub fn get_embedding_manifest(&self) -> Result<Option<EmbeddingManifest>> {
         self.get_embedding_manifest_by_id("default")
@@ -115,21 +10,17 @@ impl EmbeddingManifestRepo<'_> {
 
     /// Load embedding manifest by primary key.
     pub fn get_embedding_manifest_by_id(&self, id: &str) -> Result<Option<EmbeddingManifest>> {
-        let conn = self.store.lock()?;
-        get_embedding_manifest_locked(&conn, id)
+        let r = self.read()?;
+        get_embedding_manifest_locked(&r, id)
     }
 
     /// Insert or replace the embedding corpus fingerprint.
     pub fn set_embedding_manifest(&self, manifest: &EmbeddingManifest) -> Result<()> {
-        let conn = self.store.lock()?;
-        set_embedding_manifest_locked(&conn, manifest)
+        let mut w = self.write()?;
+        set_embedding_manifest_locked(&mut w, manifest)
     }
 
     /// Record the default embedding manifest from config if none is stored yet.
-    ///
-    /// Does **not** overwrite an existing row (preserves corpus fingerprint so
-    /// embedding identity drift can be detected). Call on server start and before
-    /// first ingest.
     pub fn ensure_embedding_manifest(
         &self,
         config: &impl EmbeddingIdentity,
@@ -138,23 +29,11 @@ impl EmbeddingManifestRepo<'_> {
             return Ok(existing);
         }
 
-        // Never infer the identity of already-persisted vectors. A missing
-        // manifest on a non-empty corpus is an unknown legacy identity and must
-        // be migrated explicitly through a complete reembed_all.
-        let conn = self.store.lock()?;
-        let manifest_exists: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM embedding_manifest WHERE id = 'default')",
-            [],
-            |row| row.get(0),
-        )?;
-        if manifest_exists {
-            drop(conn);
-            return self.get_embedding_manifest()?.ok_or_else(|| {
-                AppError::db("embedding manifest disappeared during initialization")
-            });
+        let mut w = self.write()?;
+        if let Some(existing) = get_embedding_manifest_locked(&w, "default")? {
+            return Ok(existing);
         }
-        let chunk_count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))?;
+        let chunk_count = w.count_rows("chunks", None)?;
         if chunk_count > 0 {
             return Err(AppError::embeddings(format!(
                 "embedding manifest is missing for a non-empty corpus ({chunk_count} chunks); \
@@ -162,7 +41,7 @@ impl EmbeddingManifestRepo<'_> {
             )));
         }
         let manifest = embedding_manifest_from_config(config);
-        set_embedding_manifest_locked(&conn, &manifest)?;
+        set_embedding_manifest_locked(&mut w, &manifest)?;
         tracing::info!(
             provider = %manifest.provider,
             model = %manifest.model,
@@ -183,10 +62,6 @@ impl EmbeddingManifestRepo<'_> {
     }
 
     /// True when the persisted corpus embedding identity matches runtime config.
-    ///
-    /// A missing manifest is not a match. Call [`Self::ensure_embedding_manifest`]
-    /// first only when initializing a corpus whose current identity is already
-    /// known to be the configured one (the normal server/ingest startup path).
     pub fn embedding_manifest_matches_config(
         &self,
         config: &impl EmbeddingIdentity,
@@ -198,10 +73,6 @@ impl EmbeddingManifestRepo<'_> {
     }
 
     /// Refuse vector-producing or vector-consuming work on identity mismatch.
-    ///
-    /// A complete, uncapped `reembed_all` is the only supported migration path.
-    /// Single-document refreshes must never publish a new corpus identity while
-    /// other chunks may still contain vectors from the old model or endpoint.
     pub fn require_embedding_manifest_match(&self, config: &impl EmbeddingIdentity) -> Result<()> {
         let Some(manifest) = self.get_embedding_manifest()? else {
             return Err(AppError::embeddings(
@@ -250,9 +121,6 @@ impl EmbeddingManifestRepo<'_> {
     }
 
     /// Legacy dimensions-only compatibility probe.
-    ///
-    /// Production vector paths use [`Self::require_embedding_manifest_match`]
-    /// so equal-dimensional vectors from another model cannot be mixed.
     pub fn require_embedding_dims_match(&self, config_dims: usize) -> Result<()> {
         let Some(manifest) = self.get_embedding_manifest()? else {
             return Ok(());
@@ -268,4 +136,82 @@ impl EmbeddingManifestRepo<'_> {
             manifest.dims, manifest.provider, manifest.model, expected
         )))
     }
+}
+
+/// Build a default-id [`EmbeddingManifest`] snapshot from runtime config.
+pub fn embedding_manifest_from_config(config: &impl EmbeddingIdentity) -> EmbeddingManifest {
+    let provider = config.embedding_provider_name().to_string();
+    let fingerprint = embedding_config_fingerprint(config);
+    EmbeddingManifest {
+        id: "default".into(),
+        provider,
+        model: config.embedding_model_name().to_string(),
+        dims: config.embedding_dimensions() as i32,
+        base_url: Some(config.embedding_endpoint().to_string()),
+        content_fingerprint: Some(fingerprint),
+        updated_at: Utc::now(),
+    }
+}
+
+/// Build a durable fail-closed marker for an in-progress corpus migration.
+pub fn embedding_migration_manifest(config: &impl EmbeddingIdentity) -> EmbeddingManifest {
+    let mut marker = embedding_manifest_from_config(config);
+    let target_fingerprint = marker
+        .content_fingerprint
+        .as_deref()
+        .unwrap_or_default()
+        .to_string();
+    marker.content_fingerprint = Some(format!(
+        "{EMBEDDING_MIGRATION_FINGERPRINT_PREFIX}{}",
+        target_fingerprint
+    ));
+    marker.updated_at = Utc::now();
+    marker
+}
+
+/// Canonical corpus identity predicate.
+pub fn embedding_manifest_matches_config(
+    manifest: &EmbeddingManifest,
+    config: &impl EmbeddingIdentity,
+) -> bool {
+    match manifest.content_fingerprint.as_deref() {
+        Some(fingerprint) => {
+            manifest.id == "default"
+                && manifest.provider == config.embedding_provider_name()
+                && manifest.model == config.embedding_model_name()
+                && manifest.dims == config.embedding_dimensions() as i32
+                && manifest.base_url.as_deref() == Some(config.embedding_endpoint())
+                && fingerprint == embedding_config_fingerprint(config)
+        }
+        None => false,
+    }
+}
+
+pub(super) fn embedding_config_fingerprint(config: &impl EmbeddingIdentity) -> String {
+    embedding_identity_fingerprint(
+        config.embedding_provider_name(),
+        config.embedding_model_name(),
+        config.embedding_dimensions() as i32,
+        config.embedding_endpoint(),
+    )
+}
+
+pub(crate) fn embedding_identity_fingerprint(
+    provider: &str,
+    model: &str,
+    dims: i32,
+    base_url: &str,
+) -> String {
+    content_hash(&format!("{}|{}|{}|{}", provider, model, dims, base_url))
+}
+
+/// Read the manifest inside an already-owned consistent database observation.
+pub fn get_embedding_manifest_locked(
+    r: &impl LinReader,
+    id: &str,
+) -> Result<Option<EmbeddingManifest>> {
+    r.get_by_id("embedding_manifest", id)?
+        .as_ref()
+        .map(rows::embedding_manifest)
+        .transpose()
 }

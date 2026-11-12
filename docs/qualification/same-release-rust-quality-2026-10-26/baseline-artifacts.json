@@ -1,0 +1,17 @@
+{
+  "itoa": {
+    "docs/qualification/rust-union-fields-2026-10-26/controlled-itoa-after/report.json": "ab2110d81a67af82fb75d1040530a44b719d26cd44e5ef1c8420054d592f0841",
+    "docs/qualification/rust-union-fields-2026-10-26/controlled-itoa-after/scored-cases.json": "6b374054d80ca5c4b2e636ecbf62d1f26452be02eec406a4c1f8066373c16dea",
+    "docs/qualification/rust-union-fields-2026-10-26/controlled-itoa-after/oracle-labels.json": "6b11bb10011692e7616d5700bca2e68acf45f195a07b69e7187f139def297642"
+  },
+  "ryu": {
+    "docs/qualification/rust-union-fields-2026-10-26/controlled-ryu-after/report.json": "e7b0689eb14035b4c57bfbdf76fa5dff7b4db28881807dd2db906765e184d69b",
+    "docs/qualification/rust-union-fields-2026-10-26/controlled-ryu-after/scored-cases.json": "28447e9d04686b792187536151477be3a42109f9f185648b67e5c8d5c4224db7",
+    "docs/qualification/rust-union-fields-2026-10-26/controlled-ryu-after/oracle-labels.json": "d8862ad4cb32901001c41ecd8bae29b9ba7fc907fa98542cb8a88b92396b4c30"
+  },
+  "memchr": {
+    "docs/qualification/rust-union-fields-2026-10-26/controlled-memchr-after/report.json": "1f75ec54e8c5e83b47f1e776b990e98f4c7f6a7ea6c762ae1ff8a3685262832e",
+    "docs/qualification/rust-union-fields-2026-10-26/controlled-memchr-after/scored-cases.json": "5de42273257ccb68527a08fae65327518bd5a6fb6a73e68a5e6d641140d68c7e",
+    "docs/qualification/rust-union-fields-2026-10-26/controlled-memchr-after/oracle-labels.json": "4b15b56ff5f5c44c1fcce9443428650ecf6b8568acbd1241fa9ce62cd502e2a7"
+  }
+}

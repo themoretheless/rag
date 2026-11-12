@@ -1,0 +1,46 @@
+{
+  "fast": [
+    {
+      "caller": "Holder::run",
+      "expression": "self.value.value",
+      "target": "Fast::value"
+    },
+    {
+      "caller": "generic",
+      "expression": "g.item.value",
+      "target": "Fast::value"
+    },
+    {
+      "caller": "nested",
+      "expression": "h.slot.item.value",
+      "target": "Slow::value"
+    },
+    {
+      "caller": "again",
+      "expression": "h.run",
+      "target": "Holder::run"
+    }
+  ],
+  "slow": [
+    {
+      "caller": "Holder::run",
+      "expression": "self.value.value",
+      "target": "Slow::value"
+    },
+    {
+      "caller": "generic",
+      "expression": "g.item.value",
+      "target": "Fast::value"
+    },
+    {
+      "caller": "nested",
+      "expression": "h.slot.item.value",
+      "target": "Slow::value"
+    },
+    {
+      "caller": "again",
+      "expression": "h.run",
+      "target": "Holder::run"
+    }
+  ]
+}

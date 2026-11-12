@@ -36,11 +36,10 @@ pub(super) fn collect_markup(node: Node, source: &str, out: &mut IndexedDocument
         .filter(|n| n.kind() == "attribute")
         .filter(|n| {
             let mut cursor = n.walk();
-            let matched = n.named_children(&mut cursor).any(|child| {
+            n.named_children(&mut cursor).any(|child| {
                 child.kind() == "attribute_name"
                     && text(child, source).eq_ignore_ascii_case(attribute)
-            });
-            matched
+            })
         })
         .collect();
     // Do not pick an arbitrary winner for duplicate attributes.
@@ -260,14 +259,16 @@ mod tests {
         assert!(doc.endpoints.iter().any(|e| e.target == "/save?a=1&b=2"
             && e.reference_kind == "html:form:action"
             && e.line == 2));
-        assert!(doc
-            .endpoints
-            .iter()
-            .any(|e| e.target == "/app.js" && e.reference_kind == "html:script:src"));
-        assert!(doc
-            .endpoints
-            .iter()
-            .any(|e| e.target == "/override" && e.reference_kind == "html:input:formaction"));
+        assert!(
+            doc.endpoints
+                .iter()
+                .any(|e| e.target == "/app.js" && e.reference_kind == "html:script:src")
+        );
+        assert!(
+            doc.endpoints
+                .iter()
+                .any(|e| e.target == "/override" && e.reference_kind == "html:input:formaction")
+        );
         assert!(!doc.endpoints.iter().any(|e| e.target == "/comment"));
     }
     #[test]
@@ -307,9 +308,10 @@ mod tests {
         assert_eq!(&source[js[0].start_byte..js[0].start_byte + 5], "fetch");
         assert_eq!(js[0].request_method.as_deref(), Some("DELETE"));
         assert_eq!(js[1].target, "/module");
-        assert!(doc
-            .endpoints
-            .iter()
-            .any(|e| e.target == "/external.js" && e.reference_kind == "html:script:src"));
+        assert!(
+            doc.endpoints
+                .iter()
+                .any(|e| e.target == "/external.js" && e.reference_kind == "html:script:src")
+        );
     }
 }

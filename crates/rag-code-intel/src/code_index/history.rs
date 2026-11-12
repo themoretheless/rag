@@ -1,6 +1,10 @@
 //! Immutable source/index revisions with content-addressed source storage.
 use super::*;
-use duckdb::Connection;
+use crate::db::lin_engine::{
+    LinReader, LinWriter, RecBuilder, cell_i64, cell_opt_string, cell_str, cell_string,
+    composite_id_2, format_db_timestamp,
+};
+use chrono::Utc;
 use std::collections::{BTreeMap, BTreeSet};
 
 type SourceRow = (String, String, String, i64, Option<String>, bool);
@@ -29,7 +33,7 @@ pub struct DiffQuery {
     pub limit: Option<usize>,
 }
 pub(super) fn publish(
-    conn: &Connection,
+    w: &mut impl LinWriter,
     docs: &[SourceRow],
     analyses: &[(String, String)],
     force_full: bool,
@@ -61,13 +65,12 @@ pub(super) fn publish(
         &files,
         &source_file_ids,
     ))?);
-    let current: Option<(i64, String)> = conn
-        .query_row(
-            "SELECT id,fingerprint FROM code_index_revisions ORDER BY id DESC LIMIT 1",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()?;
+    let current = if let Some(rev_id) = crate::analysis_tasks::latest_code_index_rev(w)? {
+        w.get_by_id("code_index_revisions", &rev_id.to_string())?
+            .map(|row| (rev_id, cell_string(&row, "fingerprint")))
+    } else {
+        None
+    };
     let unchanged = current
         .as_ref()
         .is_some_and(|(_, previous)| previous == &fingerprint);
@@ -97,7 +100,7 @@ pub(super) fn publish(
         }
     }
     let previous = if let Some((id, _)) = &current {
-        Some(frozen_graph(conn, *id)?)
+        Some(frozen_graph(w, *id)?)
     } else {
         None
     };
@@ -140,39 +143,65 @@ pub(super) fn publish(
             )
         })
         .collect();
-    let graph = serde_json::json!({"client_endpoints_format":1,"translation_keys_format":1,"translation_keys":translation_keys::snapshot(&indexed),"powershell_syntax_format":1,"perl_syntax_format":1,"csharp_syntax_format":1,"ruby_syntax_format":1,"inline_style_resources_format":1,"responsive_resources_format":1,"file_resource_targets":targets,"file_resources":file_resources::edges_with_targets(&indexed,&targets),"file_imports":file_imports::edges(&indexed),"references":references,"calls":calls,"inheritance":inheritance::edges(&symbols,&indexed),"overrides":inheritance::overrides(&symbols,&indexed),"entrypoints":analysis::entrypoints(&symbols,&indexed),"sql":sql::snapshot(&indexed),"rust_build_contexts":configured.contexts,"format_version":INDEX_FORMAT_VERSION});
+    let graph = serde_json::json!({"python_names_format":5,"php_names_format":1,"php_inheritance_format":1,"php_traits_format":1,"client_endpoints_format":1,"translation_keys_format":1,"translation_keys":translation_keys::snapshot(&indexed),"powershell_syntax_format":1,"perl_syntax_format":1,"csharp_syntax_format":1,"ruby_syntax_format":1,"inline_style_resources_format":1,"responsive_resources_format":1,"file_resource_targets":targets,"file_resources":file_resources::edges_with_targets(&indexed,&targets),"file_imports":file_imports::edges(&indexed),"references":references,"calls":calls,"inheritance":inheritance::edges(&symbols,&indexed),"overrides":inheritance::overrides(&symbols,&indexed),"entrypoints":analysis::entrypoints(&symbols,&indexed),"sql":sql::snapshot(&indexed),"rust_build_contexts":configured.contexts,"format_version":INDEX_FORMAT_VERSION});
     let mut graph = graph;
+    graph["data_flow_format"] = serde_json::json!(7);
+    graph["data_flow"] = serde_json::to_value(super::data_flow::snapshot(&indexed))?;
+    graph["phpunit_tests_format"] = serde_json::json!(2);
     graph["resolution_cache"] = resolved.cache;
-    conn.execute(
-        "INSERT INTO code_index_revisions(id,fingerprint,graph_json) VALUES (?,?,?)",
-        params![revision, fingerprint, serde_json::to_string(&graph)?],
+    graph["php_trait_contexts_format"] = serde_json::json!(1);
+    graph["php_trait_paths_format"] = serde_json::json!(1);
+    let rev_key = revision.to_string();
+    let now = format_db_timestamp(Utc::now());
+    w.insert_one(
+        "code_index_revisions",
+        RecBuilder::new()
+            .id(&rev_key)
+            .i64("rev_id", revision)
+            .str("fingerprint", &fingerprint)
+            .str("created_at", now)
+            .str("graph_json", serde_json::to_string(&graph)?)
+            .build(),
     )?;
+    if !files.is_empty() && !w.has_collection("code_index_source_blobs") {
+        return Err(AppError::db("code_index_source_blobs collection missing"));
+    }
     for file in &files {
-        conn.execute(
-            "INSERT INTO code_index_source_blobs VALUES (?,?) ON CONFLICT DO NOTHING",
-            params![file.hash, file.source],
-        )?;
-        conn.execute(
-            "INSERT INTO code_index_revision_files VALUES (?,?,?,?,?,?,?)",
-            params![
-                revision,
-                file.id,
-                file.path,
-                file.project,
-                file.revision,
-                file.hash,
-                file.analysis
-            ],
+        if w.get_by_id("code_index_source_blobs", &file.hash)?
+            .is_none()
+        {
+            w.insert_one(
+                "code_index_source_blobs",
+                RecBuilder::new()
+                    .id(&file.hash)
+                    .str("content_hash", &file.hash)
+                    .str("content", &file.source)
+                    .build(),
+            )?;
+        }
+        let rf_id = composite_id_2(&rev_key, &file.id);
+        w.insert_one(
+            "code_index_revision_files",
+            RecBuilder::new()
+                .id(&rf_id)
+                .i64("index_revision", revision)
+                .str("document_id", &file.id)
+                .str("path", &file.path)
+                .opt_str("project", file.project.as_deref())
+                .i64("document_revision", file.revision)
+                .str("content_hash", &file.hash)
+                .opt_str("analysis_json", file.analysis.as_deref())
+                .build(),
         )?;
     }
     if let Some((previous, _)) = current {
-        let old = files_at(conn, previous)?;
+        let old = files_at(w, previous)?;
         let incoming: HashMap<_, _> = files.iter().map(|f| (f.id.as_str(), f)).collect();
         for previous_file in &old {
             match incoming.get(previous_file.id.as_str()) {
                 None => {
                     drift::observe(
-                        conn,
+                        w,
                         previous,
                         previous_file,
                         "removed_from_index",
@@ -182,7 +211,7 @@ pub(super) fn publish(
                 }
                 Some(next) if previous_file.hash != next.hash => {
                     drift::observe(
-                        conn,
+                        w,
                         previous,
                         previous_file,
                         "modified",
@@ -194,7 +223,7 @@ pub(super) fn publish(
                     if previous_file.path != next.path || previous_file.project != next.project =>
                 {
                     drift::observe(
-                        conn,
+                        w,
                         previous,
                         previous_file,
                         "metadata_changed",
@@ -209,7 +238,7 @@ pub(super) fn publish(
         for next in &files {
             if !old_ids.contains(next.id.as_str()) {
                 drift::observe(
-                    conn,
+                    w,
                     previous,
                     next,
                     "added_to_index",
@@ -221,36 +250,45 @@ pub(super) fn publish(
     }
     Ok((revision, true, resolved.stats))
 }
-fn files_at(conn: &Connection, rev: i64) -> Result<Vec<File>> {
-    files(conn, rev, None)
+fn files_at(r: &impl LinReader, rev: i64) -> Result<Vec<File>> {
+    files(r, rev, None)
 }
-pub(super) fn files(conn: &Connection, rev: i64, project: Option<&str>) -> Result<Vec<File>> {
-    let exists: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM code_index_revisions WHERE id=?",
-        [rev],
-        |r| r.get(0),
-    )?;
-    if exists != 1 {
+pub(super) fn files(r: &impl LinReader, rev: i64, project: Option<&str>) -> Result<Vec<File>> {
+    if r.get_by_id("code_index_revisions", &rev.to_string())?
+        .is_none()
+    {
         return Err(AppError::not_found(format!("unknown index revision {rev}")));
     }
-    let mut stmt=conn.prepare("SELECT f.document_id,f.path,f.project,f.document_revision,f.content_hash,b.content,f.analysis_json FROM code_index_revision_files f LEFT JOIN code_index_source_blobs b ON b.content_hash=f.content_hash WHERE f.index_revision=? AND (? IS NULL OR f.project=?) ORDER BY f.document_id")?;
-    let rows = stmt.query_map(params![rev, project, project], |r| {
-        Ok(File {
-            id: r.get(0)?,
-            path: r.get(1)?,
-            project: r.get(2)?,
-            revision: r.get(3)?,
-            hash: r.get(4)?,
-            source: r.get(5)?,
-            analysis: r.get(6)?,
-        })
-    })?;
-    let files = rows.collect::<std::result::Result<Vec<_>, _>>()?;
-    if files.iter().any(|f| content_hash(&f.source) != f.hash) {
-        return Err(AppError::Db(
-            "immutable source blob checksum mismatch".into(),
-        ));
+    let rows = r.find_by_eq("code_index_revision_files", "index_revision", rev)?;
+    let mut files = Vec::new();
+    for row in rows {
+        let row_proj = cell_opt_string(&row, "project");
+        if let Some(proj) = project
+            && row_proj.as_deref() != Some(proj)
+        {
+            continue;
+        }
+        let hash = cell_string(&row, "content_hash");
+        let source = r
+            .get_by_id("code_index_source_blobs", &hash)?
+            .and_then(|b| cell_str(&b, "content").map(str::to_string))
+            .ok_or_else(|| AppError::Db("immutable source blob missing".into()))?;
+        if content_hash(&source) != hash {
+            return Err(AppError::Db(
+                "immutable source blob checksum mismatch".into(),
+            ));
+        }
+        files.push(File {
+            id: cell_string(&row, "document_id"),
+            path: cell_string(&row, "path"),
+            project: row_proj,
+            revision: cell_i64(&row, "document_revision", 1),
+            hash,
+            source,
+            analysis: cell_opt_string(&row, "analysis_json"),
+        });
     }
+    files.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(files)
 }
 fn symbol_key(s: &Symbol) -> String {
@@ -281,13 +319,8 @@ fn symbols(files: &[File]) -> Result<BTreeMap<String, Vec<serde_json::Value>>> {
     }
     Ok(result)
 }
-fn edges(conn: &Connection, rev: i64, files: &[File]) -> Result<BTreeSet<String>> {
-    let graph: String = conn.query_row(
-        "SELECT graph_json FROM code_index_revisions WHERE id=?",
-        [rev],
-        |r| r.get(0),
-    )?;
-    let graph: serde_json::Value = serde_json::from_str(&graph)?;
+fn edges(r: &impl LinReader, rev: i64, files: &[File]) -> Result<BTreeSet<String>> {
+    let graph = frozen_graph(r, rev)?;
     let mut keys = HashMap::new();
     let ids: HashSet<_> = files.iter().map(|f| f.id.as_str()).collect();
     for file in files {
@@ -329,12 +362,11 @@ fn edges(conn: &Connection, rev: i64, files: &[File]) -> Result<BTreeSet<String>
     }
     Ok(out)
 }
-fn frozen_graph(conn: &Connection, rev: i64) -> Result<serde_json::Value> {
-    let raw: String = conn.query_row(
-        "SELECT graph_json FROM code_index_revisions WHERE id=?",
-        [rev],
-        |r| r.get(0),
-    )?;
+fn frozen_graph(r: &impl LinReader, rev: i64) -> Result<serde_json::Value> {
+    let row = r
+        .get_by_id("code_index_revisions", &rev.to_string())?
+        .ok_or_else(|| AppError::not_found(format!("unknown index revision {rev}")))?;
+    let raw = cell_string(&row, "graph_json");
     Ok(serde_json::from_str(&raw)?)
 }
 fn schema_changes(
@@ -423,10 +455,9 @@ fn schema_changes(
                         if let Some(values) = v["constraints"].as_array().cloned() {
                             v["constraints_total"] = values.len().into();
                             v["constraints_truncated"] = (values.len() > limit).into();
-                            v["constraints"] = serde_json::json!(values
-                                .into_iter()
-                                .take(limit)
-                                .collect::<Vec<_>>());
+                            v["constraints"] = serde_json::json!(
+                                values.into_iter().take(limit).collect::<Vec<_>>()
+                            );
                         }
                         v
                     })
@@ -531,6 +562,7 @@ fn translation_comparison(
     (eligible, report)
 }
 struct RelationCoverage {
+    phpunit_tests: bool,
     client_endpoints: bool,
     translation_documents: HashSet<String>,
     overrides: bool,
@@ -544,6 +576,10 @@ struct RelationCoverage {
     csharp: bool,
     perl: bool,
     powershell: bool,
+    php_inheritance: bool,
+    php_traits: bool,
+    php_trait_contexts: bool,
+    php_trait_paths: bool,
 }
 fn relations(
     graph: &serde_json::Value,
@@ -551,11 +587,15 @@ fn relations(
     coverage: &RelationCoverage,
 ) -> Result<BTreeSet<String>> {
     let mut keys = HashMap::new();
+    let mut php_symbols = HashSet::new();
     let ids: HashSet<_> = files.iter().map(|f| f.id.as_str()).collect();
     for file in files {
         if let Some(payload) = &file.analysis {
             let doc: IndexedDocument = serde_json::from_str(payload)?;
             for symbol in doc.symbols {
+                if php_names::supported(&doc.path) {
+                    php_symbols.insert(symbol.id.clone());
+                }
                 keys.insert(symbol.id.clone(), symbol_key(&symbol));
             }
         }
@@ -680,6 +720,16 @@ fn relations(
         }
     }
     for edge in graph["inheritance"].as_array().into_iter().flatten() {
+        if edge["relation"] == "php_trait_use_candidate" && !coverage.php_traits {
+            continue;
+        }
+        if !coverage.php_inheritance
+            && edge["derived"]
+                .as_str()
+                .is_some_and(|id| php_symbols.contains(id))
+        {
+            continue;
+        }
         if edge["relation"] == "powershell_base_type_candidate" && !coverage.powershell {
             continue;
         }
@@ -705,12 +755,64 @@ fn relations(
             out.insert(serde_json::to_string(&serde_json::json!({"kind":"inheritance","source":derived,"target":target,"relation":edge["relation"],"resolution":edge["resolution"],"hierarchy_status":edge["hierarchy_status"]}))?);
         }
     }
+    if coverage.php_trait_contexts {
+        for edge in graph["references"].as_array().into_iter().flatten() {
+            let reference = &edge["reference"];
+            if !reference["document_id"]
+                .as_str()
+                .is_some_and(|id| ids.contains(id))
+            {
+                continue;
+            }
+            let Some(source) = reference["caller"].as_str().and_then(|id| keys.get(id)) else {
+                continue;
+            };
+            let evidence = &edge["context_evidence"];
+            let body = evidence["kind"] == "php_captured_trait_consumers";
+            let entry = evidence["kind"] == "php_captured_trait_entry" && coverage.php_trait_paths;
+            if !(body || entry) {
+                continue;
+            }
+            for context in evidence["contexts"].as_array().into_iter().flatten() {
+                let Some(owner) = context["owner"].as_str().and_then(|id| keys.get(id)) else {
+                    continue;
+                };
+                let mut targets: Vec<_> = context["candidates"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|id| id.as_str())
+                    .filter_map(|id| keys.get(id))
+                    .map(Some)
+                    .collect();
+                if targets.is_empty() {
+                    targets.push(None)
+                }
+                for target in targets {
+                    let mut relation = serde_json::json!({"kind":if body {"php_trait_body_context_candidate"} else {"php_trait_entry_context_candidate"},"source":source,"owner":owner,"target":target,"expression":reference["expression"],"is_call":reference["is_call"],"resolution":context["resolution"],"resolution_basis":context["resolution_basis"],"enumeration_complete":evidence["enumeration_complete"],"truncated":evidence["truncated"],"context_correlation_proven":false});
+                    if coverage.php_trait_paths {
+                        relation["target_owner"] = serde_json::json!(
+                            context["target_owner"].as_str().and_then(|id| keys.get(id))
+                        );
+                    }
+                    out.insert(serde_json::to_string(&relation)?);
+                }
+            }
+        }
+    }
     for edge in graph["overrides"]
         .as_array()
         .into_iter()
         .flatten()
         .filter(|_| coverage.overrides)
     {
+        if !coverage.php_inheritance
+            && edge["derived"]
+                .as_str()
+                .is_some_and(|id| php_symbols.contains(id))
+        {
+            continue;
+        }
         let Some(derived) = edge["derived"].as_str().and_then(|id| keys.get(id)) else {
             continue;
         };
@@ -725,6 +827,9 @@ fn relations(
         }
     }
     for entry in graph["entrypoints"].as_array().into_iter().flatten() {
+        if entry["kind"] == "phpunit_test_candidate" && !coverage.phpunit_tests {
+            continue;
+        }
         if entry["kind"] == "http_route_candidate" && entry["symbol_id"].is_null() {
             if let Some(document) = entry["document_id"].as_str().filter(|id| ids.contains(id)) {
                 out.insert(serde_json::to_string(&serde_json::json!({
@@ -751,161 +856,813 @@ fn relations(
             }
         }
         if let Some(symbol) = entry["symbol_id"].as_str().and_then(|id| keys.get(id)) {
-            out.insert(serde_json::to_string(&serde_json::json!({"kind":"entrypoint","source":symbol,"entrypoint_kind":entry["kind"],"route":entry["route"],"method":entry["method"],"resolution":entry["resolution"]}))?);
+            let mut relation = serde_json::json!({"kind":"entrypoint","source":symbol,"entrypoint_kind":entry["kind"],"route":entry["route"],"method":entry["method"],"resolution":entry["resolution"]});
+            if entry["kind"] == "phpunit_test_candidate" {
+                let context = &entry["test_context"];
+                let Some(host) = context["host_symbol_id"]
+                    .as_str()
+                    .and_then(|id| keys.get(id))
+                else {
+                    continue;
+                };
+                let Some(owner) = context["lexical_owner_symbol_id"]
+                    .as_str()
+                    .and_then(|id| keys.get(id))
+                else {
+                    continue;
+                };
+                relation["test_context"] = serde_json::json!({"host":host,"lexical_owner":owner,"effective_method":context["effective_method"],"origin":context["origin"],"trait_body":context["trait_body"],"framework_execution_verified":false});
+            }
+            out.insert(serde_json::to_string(&relation)?);
         }
     }
     Ok(out)
 }
 impl<'a> CodeIndex<'a> {
     pub fn code_index_history(&self, q: &HistoryQuery) -> Result<serde_json::Value> {
-        self.store.with_conn(|conn| {
-            let limit = q.limit.unwrap_or(20).clamp(1, 100);
-            let mut stmt=conn.prepare("SELECT r.id,CAST(r.created_at AS VARCHAR),r.fingerprint,(SELECT COUNT(*) FROM code_index_revision_files f WHERE f.index_revision=r.id) FROM code_index_revisions r WHERE (? IS NULL OR r.id < ?) ORDER BY r.id DESC LIMIT ?")?;
-            let rows=stmt.query_map(params![q.before_revision,q.before_revision,(limit+1) as i64],|r|Ok(serde_json::json!({"index_rev":r.get::<_,i64>(0)?,"created_at":r.get::<_,String>(1)?,"fingerprint":r.get::<_,String>(2)?,"file_count":r.get::<_,i64>(3)?})))?;
-            let mut items = rows.collect::<std::result::Result<Vec<_>, _>>()?;
-            let more = items.len() > limit;
-            items.truncate(limit);
-            Ok(
-                serde_json::json!({"items":items,"has_more":more,"next_before_revision":if more{items.last().and_then(|v|v["index_rev"].as_i64())}else{None},"immutable":true}),
-            )
-        })
+        let r = self.store.read()?;
+        let limit = q.limit.unwrap_or(20).clamp(1, 100);
+        let mut revs: Vec<(i64, String, String)> = Vec::new();
+        r.scan_each("code_index_revisions", |row| {
+            let rev = cell_i64(row, "rev_id", 0);
+            if q.before_revision.is_none_or(|b| rev < b) {
+                revs.push((
+                    rev,
+                    cell_string(row, "created_at"),
+                    cell_string(row, "fingerprint"),
+                ));
+            }
+            Ok(true)
+        })?;
+        revs.sort_by_key(|a| std::cmp::Reverse(a.0));
+        let more = revs.len() > limit;
+        revs.truncate(limit);
+        let mut items = Vec::with_capacity(revs.len());
+        for (rev, created_at, fingerprint) in revs {
+            let file_count = r
+                .find_by_eq("code_index_revision_files", "index_revision", rev)?
+                .len() as i64;
+            items.push(serde_json::json!({
+                "index_rev": rev,
+                "created_at": created_at,
+                "fingerprint": fingerprint,
+                "file_count": file_count,
+            }));
+        }
+        Ok(
+            serde_json::json!({"items":items,"has_more":more,"next_before_revision":if more{items.last().and_then(|v|v["index_rev"].as_i64())}else{None},"immutable":true}),
+        )
     }
     pub fn code_index_diff(&self, q: &DiffQuery) -> Result<serde_json::Value> {
-        self.store.with_conn(|conn| {
-            let after = match q.after {
-                Some(id) => id,
-                None => conn
-                    .query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| {
-                        r.get::<_, Option<i64>>(0)
-                    })?
-                    .ok_or_else(|| AppError::not_found("index has no revisions"))?,
-            };
-            let before_files = files(conn, q.before, q.project.as_deref())?;
-            let after_files = files(conn, after, q.project.as_deref())?;
-            let before: BTreeMap<_, _> = before_files.iter().map(|f| (f.id.as_str(), f)).collect();
-            let next: BTreeMap<_, _> = after_files.iter().map(|f| (f.id.as_str(), f)).collect();
-            let mut changes = Vec::new();
-            for (id, file) in &before {
-                match next.get(id) {
-                    None => changes.push(serde_json::json!({"kind":"removed","document":file})),
-                    Some(new)
-                        if file.hash != new.hash
-                            || file.path != new.path
-                            || file.project != new.project
-                            || file.revision != new.revision =>
-                    {
-                        changes.push(serde_json::json!({"kind":"changed","before":file,"after":new}))
-                    }
-                    _ => {}
+        let r = self.store.read()?;
+        let after = match q.after {
+            Some(id) => id,
+            None => crate::analysis_tasks::latest_code_index_rev(&*r)?
+                .ok_or_else(|| AppError::not_found("index has no revisions"))?,
+        };
+        let before_files = files(&*r, q.before, q.project.as_deref())?;
+        let after_files = files(&*r, after, q.project.as_deref())?;
+        let before: BTreeMap<_, _> = before_files.iter().map(|f| (f.id.as_str(), f)).collect();
+        let next: BTreeMap<_, _> = after_files.iter().map(|f| (f.id.as_str(), f)).collect();
+        let mut changes = Vec::new();
+        for (id, file) in &before {
+            match next.get(id) {
+                None => changes.push(serde_json::json!({"kind":"removed","document":file})),
+                Some(new)
+                    if file.hash != new.hash
+                        || file.path != new.path
+                        || file.project != new.project
+                        || file.revision != new.revision =>
+                {
+                    changes.push(serde_json::json!({"kind":"changed","before":file,"after":new}))
                 }
+                _ => {}
             }
-            for (id, file) in &next {
-                if !before.contains_key(id) {
-                    changes.push(serde_json::json!({"kind":"added","document":file}));
-                }
+        }
+        for (id, file) in &next {
+            if !before.contains_key(id) {
+                changes.push(serde_json::json!({"kind":"added","document":file}));
             }
-            let before_symbols = symbols(&before_files)?;
-            let after_symbols = symbols(&after_files)?;
-            let symbol_keys: BTreeSet<_> = before_symbols.keys().chain(after_symbols.keys()).collect();
-            let mut symbol_changes = Vec::new();
-            for key in symbol_keys {
-                if before_symbols.get(key) != after_symbols.get(key) {
-                    symbol_changes.push(serde_json::json!({"symbol_key":key,"kind":if !before_symbols.contains_key(key){"added"}else if !after_symbols.contains_key(key){"removed"}else{"changed"}}));
-                }
+        }
+        let before_symbols = symbols(&before_files)?;
+        let after_symbols = symbols(&after_files)?;
+        let symbol_keys: BTreeSet<_> = before_symbols.keys().chain(after_symbols.keys()).collect();
+        let mut symbol_changes = Vec::new();
+        for key in symbol_keys {
+            if before_symbols.get(key) != after_symbols.get(key) {
+                symbol_changes.push(serde_json::json!({"symbol_key":key,"kind":if !before_symbols.contains_key(key){"added"}else if !after_symbols.contains_key(key){"removed"}else{"changed"}}));
             }
-            let old_edges = edges(conn, q.before, &before_files)?;
-            let new_edges = edges(conn, after, &after_files)?;
-            let added: Vec<_> = new_edges.difference(&old_edges).collect();
-            let removed: Vec<_> = old_edges.difference(&new_edges).collect();
-            let old_graph = frozen_graph(conn, q.before)?;
-            let new_graph = frozen_graph(conn, after)?;
-            let relations_available = [&old_graph, &new_graph].iter().all(|g| {
-                ["references", "inheritance", "entrypoints"]
+        }
+        let old_edges = edges(&*r, q.before, &before_files)?;
+        let new_edges = edges(&*r, after, &after_files)?;
+        let added: Vec<_> = new_edges.difference(&old_edges).collect();
+        let removed: Vec<_> = old_edges.difference(&new_edges).collect();
+        let old_graph = frozen_graph(&*r, q.before)?;
+        let new_graph = frozen_graph(&*r, after)?;
+        let relations_available = [&old_graph, &new_graph].iter().all(|g| {
+            ["references", "inheritance", "entrypoints"]
+                .iter()
+                .all(|k| g[*k].is_array())
+        });
+        let method_relations_available =
+            old_graph["overrides"].is_array() && new_graph["overrides"].is_array();
+        let file_import_relations_available =
+            old_graph["file_imports"].is_array() && new_graph["file_imports"].is_array();
+        let file_resource_relations_available =
+            old_graph["file_resources"].is_array() && new_graph["file_resources"].is_array();
+        let resource_target_relations_available = old_graph["file_resource_targets"].is_array()
+            && new_graph["file_resource_targets"].is_array();
+        let responsive_resource_relations_available = old_graph["responsive_resources_format"] == 1
+            && new_graph["responsive_resources_format"] == 1;
+        let css_url_classification_comparable =
+            old_graph["responsive_resources_format"] == new_graph["responsive_resources_format"];
+        let inline_style_relations_available = old_graph["inline_style_resources_format"] == 1
+            && new_graph["inline_style_resources_format"] == 1;
+        let ruby_relations_available =
+            old_graph["ruby_syntax_format"] == 1 && new_graph["ruby_syntax_format"] == 1;
+        let csharp_relations_available =
+            old_graph["csharp_syntax_format"] == 1 && new_graph["csharp_syntax_format"] == 1;
+        let perl_relations_available =
+            old_graph["perl_syntax_format"] == 1 && new_graph["perl_syntax_format"] == 1;
+        let powershell_relations_available = old_graph["powershell_syntax_format"] == 1
+            && new_graph["powershell_syntax_format"] == 1;
+        let limit = q.limit.unwrap_or(100).clamp(1, 500);
+        let (translation_documents, translation_key_comparison) =
+            translation_comparison(&old_graph, &new_graph, &before_files, &after_files, limit);
+        let translation_key_relations_available = translation_key_comparison["available"] == true;
+        let client_endpoint_relations_available =
+            old_graph["client_endpoints_format"] == 1 && new_graph["client_endpoints_format"] == 1;
+        let relation_coverage = RelationCoverage {
+            client_endpoints: client_endpoint_relations_available,
+            translation_documents,
+            overrides: method_relations_available,
+            file_imports: file_import_relations_available,
+            file_resources: file_resource_relations_available,
+            resource_targets: resource_target_relations_available,
+            responsive: responsive_resource_relations_available,
+            css_urls: css_url_classification_comparable,
+            inline_styles: inline_style_relations_available,
+            ruby: ruby_relations_available,
+            csharp: csharp_relations_available,
+            perl: perl_relations_available,
+            powershell: powershell_relations_available,
+            php_inheritance: old_graph["php_inheritance_format"] == 1
+                && new_graph["php_inheritance_format"] == 1,
+            phpunit_tests: old_graph["phpunit_tests_format"] == 2
+                && new_graph["phpunit_tests_format"] == 2,
+            php_traits: old_graph["php_traits_format"] == 1 && new_graph["php_traits_format"] == 1,
+            php_trait_contexts: old_graph["php_trait_contexts_format"] == 1
+                && new_graph["php_trait_contexts_format"] == 1,
+            php_trait_paths: old_graph["php_trait_paths_format"] == 1
+                && new_graph["php_trait_paths_format"] == 1,
+        };
+        let old_relations = if relations_available {
+            relations(&old_graph, &before_files, &relation_coverage)?
+        } else {
+            BTreeSet::new()
+        };
+        let new_relations = if relations_available {
+            relations(&new_graph, &after_files, &relation_coverage)?
+        } else {
+            BTreeSet::new()
+        };
+        let relation_added: Vec<_> = new_relations
+            .difference(&old_relations)
+            .map(|s| serde_json::from_str::<serde_json::Value>(s))
+            .collect::<std::result::Result<_, _>>()?;
+        let relation_removed: Vec<_> = old_relations
+            .difference(&new_relations)
+            .map(|s| serde_json::from_str::<serde_json::Value>(s))
+            .collect::<std::result::Result<_, _>>()?;
+        let schema_diff = schema_changes(&old_graph, &new_graph, q.project.as_deref(), limit);
+        let php_name_binding_comparison = serde_json::json!({"before_available":old_graph["php_names_format"]==1,"after_available":new_graph["php_names_format"]==1,"available":old_graph["php_names_format"]==1&&new_graph["php_names_format"]==1,"relevant":before_files.iter().chain(after_files.iter()).any(|f|php_names::supported(&f.path)),"source_semantic_change_proven":false,"scope":"captured_syntactic_candidates_not_runtime_load_or_dispatch"});
+        let php_inheritance_comparison = serde_json::json!({"before_available":old_graph["php_inheritance_format"]==1,"after_available":new_graph["php_inheritance_format"]==1,"available":old_graph["php_inheritance_format"]==1&&new_graph["php_inheritance_format"]==1,"source_semantic_change_proven":false});
+        let mut report = serde_json::json!({"before_format_version":old_graph["format_version"],"after_format_version":new_graph["format_version"],"analysis_format_changed":old_graph["format_version"]!=new_graph["format_version"],"php_name_binding_comparison":php_name_binding_comparison,"schema_diff":schema_diff,"relations_available":relations_available,"client_endpoint_relations_available":client_endpoint_relations_available,"method_relations_available":method_relations_available,"file_import_relations_available":file_import_relations_available,"file_resource_relations_available":file_resource_relations_available,"resource_target_relations_available":resource_target_relations_available,"responsive_resource_relations_available":responsive_resource_relations_available,"inline_style_relations_available":inline_style_relations_available,"ruby_relations_available":ruby_relations_available,"csharp_relations_available":csharp_relations_available,"perl_relations_available":perl_relations_available,"powershell_relations_available":powershell_relations_available,"css_url_classification_comparable":css_url_classification_comparable,"translation_key_relations_available":translation_key_relations_available,"translation_key_comparison":translation_key_comparison,"relations_scope":"uses_key_candidates_non_call_candidates_file_import_candidates_file_resource_candidates_inheritance_method_override_candidates_entrypoints_unbound_routes_and_endpoint_references","relations_added":relation_added.iter().take(limit).collect::<Vec<_>>(),"relations_added_total":relation_added.len(),"relations_removed":relation_removed.iter().take(limit).collect::<Vec<_>>(),"relations_removed_total":relation_removed.len(),"relations_truncated":relation_added.len()>limit||relation_removed.len()>limit,"before":q.before,"after":after,"project":q.project,"files":changes.iter().take(limit).collect::<Vec<_>>(),"file_changes_total":changes.len(),"symbols":symbol_changes.iter().take(limit).collect::<Vec<_>>(),"symbol_changes_total":symbol_changes.len(),"edges_added":added.iter().take(limit).collect::<Vec<_>>(),"edges_added_total":added.len(),"edges_removed":removed.iter().take(limit).collect::<Vec<_>>(),"edges_removed_total":removed.len(),"truncated":changes.len()>limit||symbol_changes.len()>limit||added.len()>limit||removed.len()>limit||relation_added.len()>limit||relation_removed.len()>limit||schema_diff["truncated"]==true,"edge_semantics":"resolved_static_candidate_links","bodies_included":false,"immutable":true});
+        report["python_name_binding_comparison"] = serde_json::json!({"before_available":old_graph["python_names_format"]==5,"after_available":new_graph["python_names_format"]==5,"available":old_graph["python_names_format"]==5&&new_graph["python_names_format"]==5,"source_semantic_change_proven":false,"scope":"captured_static_candidates_only","legacy_edge_changes_may_be_analysis_enrichment":old_graph["python_names_format"]!=new_graph["python_names_format"]});
+        report["php_inheritance_comparison"] = php_inheritance_comparison;
+        report["data_flow_comparison"] =
+            data_flow::compare(&old_graph, &new_graph, &before_files, &after_files, limit);
+        if report["data_flow_comparison"]["truncated"] == true {
+            report["truncated"] = true.into();
+        }
+        report["phpunit_test_comparison"] = serde_json::json!({"available":relation_coverage.phpunit_tests,"before_available":old_graph["phpunit_tests_format"]==2,"after_available":new_graph["phpunit_tests_format"]==2,"framework_execution_proven":false,"source_semantic_change_proven":false});
+        report["php_traits_comparison"] = serde_json::json!({"before_available":old_graph["php_traits_format"]==1,"after_available":new_graph["php_traits_format"]==1,"available":old_graph["php_traits_format"]==1&&new_graph["php_traits_format"]==1,"source_semantic_change_proven":false});
+        report["php_trait_context_comparison"] = serde_json::json!({"before_available":old_graph["php_trait_contexts_format"]==1,"after_available":new_graph["php_trait_contexts_format"]==1,"available":old_graph["php_trait_contexts_format"]==1&&new_graph["php_trait_contexts_format"]==1,"source_semantic_change_proven":false,"context_correlation_proven":false});
+        report["php_trait_path_comparison"] = serde_json::json!({"before_available":old_graph["php_trait_paths_format"]==1,"after_available":new_graph["php_trait_paths_format"]==1,"available":old_graph["php_trait_paths_format"]==1&&new_graph["php_trait_paths_format"]==1,"source_semantic_change_proven":false,"runtime_context_correlation_proven":false});
+        let contexts = |graph: &serde_json::Value| {
+            graph["rust_build_contexts"].as_array().map(|items| {
+                items
                     .iter()
-                    .all(|k| g[*k].is_array())
-            });
-            let method_relations_available =
-                old_graph["overrides"].is_array() && new_graph["overrides"].is_array();
-            let file_import_relations_available =
-                old_graph["file_imports"].is_array() && new_graph["file_imports"].is_array();
-            let file_resource_relations_available =
-                old_graph["file_resources"].is_array() && new_graph["file_resources"].is_array();
-            let resource_target_relations_available = old_graph["file_resource_targets"].is_array()
-                && new_graph["file_resource_targets"].is_array();
-            let responsive_resource_relations_available = old_graph["responsive_resources_format"] == 1
-                && new_graph["responsive_resources_format"] == 1;
-            let css_url_classification_comparable =
-                old_graph["responsive_resources_format"] == new_graph["responsive_resources_format"];
-            let inline_style_relations_available = old_graph["inline_style_resources_format"] == 1
-                && new_graph["inline_style_resources_format"] == 1;
-            let ruby_relations_available =
-                old_graph["ruby_syntax_format"] == 1 && new_graph["ruby_syntax_format"] == 1;
-            let csharp_relations_available =
-                old_graph["csharp_syntax_format"] == 1 && new_graph["csharp_syntax_format"] == 1;
-            let perl_relations_available =
-                old_graph["perl_syntax_format"] == 1 && new_graph["perl_syntax_format"] == 1;
-            let powershell_relations_available = old_graph["powershell_syntax_format"] == 1
-                && new_graph["powershell_syntax_format"] == 1;
-            let limit = q.limit.unwrap_or(100).clamp(1, 500);
-            let (translation_documents, translation_key_comparison) =
-                translation_comparison(&old_graph, &new_graph, &before_files, &after_files, limit);
-            let translation_key_relations_available = translation_key_comparison["available"] == true;
-            let client_endpoint_relations_available =
-                old_graph["client_endpoints_format"] == 1 && new_graph["client_endpoints_format"] == 1;
-            let relation_coverage = RelationCoverage {
-                client_endpoints: client_endpoint_relations_available,
-                translation_documents,
-                overrides: method_relations_available,
-                file_imports: file_import_relations_available,
-                file_resources: file_resource_relations_available,
-                resource_targets: resource_target_relations_available,
-                responsive: responsive_resource_relations_available,
-                css_urls: css_url_classification_comparable,
-                inline_styles: inline_style_relations_available,
-                ruby: ruby_relations_available,
-                csharp: csharp_relations_available,
-                perl: perl_relations_available,
-                powershell: powershell_relations_available,
-            };
-            let old_relations = if relations_available {
-                relations(&old_graph, &before_files, &relation_coverage)?
-            } else {
-                BTreeSet::new()
-            };
-            let new_relations = if relations_available {
-                relations(&new_graph, &after_files, &relation_coverage)?
-            } else {
-                BTreeSet::new()
-            };
-            let relation_added: Vec<_> = new_relations
-                .difference(&old_relations)
-                .map(|s| serde_json::from_str::<serde_json::Value>(s))
-                .collect::<std::result::Result<_, _>>()?;
-            let relation_removed: Vec<_> = old_relations
-                .difference(&new_relations)
-                .map(|s| serde_json::from_str::<serde_json::Value>(s))
-                .collect::<std::result::Result<_, _>>()?;
-            let schema_diff = schema_changes(&old_graph, &new_graph, q.project.as_deref(), limit);
-            let mut report = serde_json::json!({"before_format_version":old_graph["format_version"],"after_format_version":new_graph["format_version"],"analysis_format_changed":old_graph["format_version"]!=new_graph["format_version"],"schema_diff":schema_diff,"relations_available":relations_available,"client_endpoint_relations_available":client_endpoint_relations_available,"method_relations_available":method_relations_available,"file_import_relations_available":file_import_relations_available,"file_resource_relations_available":file_resource_relations_available,"resource_target_relations_available":resource_target_relations_available,"responsive_resource_relations_available":responsive_resource_relations_available,"inline_style_relations_available":inline_style_relations_available,"ruby_relations_available":ruby_relations_available,"csharp_relations_available":csharp_relations_available,"perl_relations_available":perl_relations_available,"powershell_relations_available":powershell_relations_available,"css_url_classification_comparable":css_url_classification_comparable,"translation_key_relations_available":translation_key_relations_available,"translation_key_comparison":translation_key_comparison,"relations_scope":"uses_key_candidates_non_call_candidates_file_import_candidates_file_resource_candidates_inheritance_method_override_candidates_entrypoints_unbound_routes_and_endpoint_references","relations_added":relation_added.iter().take(limit).collect::<Vec<_>>(),"relations_added_total":relation_added.len(),"relations_removed":relation_removed.iter().take(limit).collect::<Vec<_>>(),"relations_removed_total":relation_removed.len(),"relations_truncated":relation_added.len()>limit||relation_removed.len()>limit,"before":q.before,"after":after,"project":q.project,"files":changes.iter().take(limit).collect::<Vec<_>>(),"file_changes_total":changes.len(),"symbols":symbol_changes.iter().take(limit).collect::<Vec<_>>(),"symbol_changes_total":symbol_changes.len(),"edges_added":added.iter().take(limit).collect::<Vec<_>>(),"edges_added_total":added.len(),"edges_removed":removed.iter().take(limit).collect::<Vec<_>>(),"edges_removed_total":removed.len(),"truncated":changes.len()>limit||symbol_changes.len()>limit||added.len()>limit||removed.len()>limit||relation_added.len()>limit||relation_removed.len()>limit||schema_diff["truncated"]==true,"edge_semantics":"resolved_static_candidate_links","bodies_included":false,"immutable":true});
-            let contexts = |graph: &serde_json::Value| {
-                graph["rust_build_contexts"].as_array().map(|items| {
-                    items
-                        .iter()
-                        .filter(|item| q.project.as_ref().is_none_or(|p| item["project"] == *p))
-                        .cloned()
-                        .collect::<Vec<_>>()
-                })
-            };
-            let old_contexts = contexts(&old_graph);
-            let new_contexts = contexts(&new_graph);
-            report["rust_build_contexts"] = serde_json::json!({"available":old_contexts.is_some()&&new_contexts.is_some(),"before":old_contexts.as_ref().map(|v|v.iter().take(50).collect::<Vec<_>>()),"after":new_contexts.as_ref().map(|v|v.iter().take(50).collect::<Vec<_>>()),"before_total":old_contexts.as_ref().map(Vec::len),"after_total":new_contexts.as_ref().map(Vec::len),"truncated":old_contexts.as_ref().is_some_and(|v|v.len()>50)||new_contexts.as_ref().is_some_and(|v|v.len()>50),"changed":if old_contexts.is_some()&&new_contexts.is_some(){Some(old_contexts!=new_contexts)}else{None}});
-            Ok(report)
-        })
+                    .filter(|item| q.project.as_ref().is_none_or(|p| item["project"] == *p))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+        };
+        let old_contexts = contexts(&old_graph);
+        let new_contexts = contexts(&new_graph);
+        report["rust_build_contexts"] = serde_json::json!({"available":old_contexts.is_some()&&new_contexts.is_some(),"before":old_contexts.as_ref().map(|v|v.iter().take(50).collect::<Vec<_>>()),"after":new_contexts.as_ref().map(|v|v.iter().take(50).collect::<Vec<_>>()),"before_total":old_contexts.as_ref().map(Vec::len),"after_total":new_contexts.as_ref().map(Vec::len),"truncated":old_contexts.as_ref().is_some_and(|v|v.len()>50)||new_contexts.as_ref().is_some_and(|v|v.len()>50),"changed":if old_contexts.is_some()&&new_contexts.is_some(){Some(old_contexts!=new_contexts)}else{None}});
+        Ok(report)
     }
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+    use crate::models::Document;
+    fn doc(id: &str, path: &str, source: &str) -> Document {
+        Document {
+            id: id.into(),
+            uri: format!("file://{path}"),
+            source_file: Some(path.into()),
+            content: source.into(),
+            title: path.into(),
+            ..Default::default()
+        }
+    }
+    #[test]
+    fn frozen_method_relations_diff_and_legacy_missing_coverage_are_explicit() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("overrides.duckdb")).unwrap();
+        let mut d = doc(
+            "a",
+            "/p/models.py",
+            "class Base:\n    def work(self): pass\nclass Child(Base):\n    def work(self): pass\n",
+        );
+        store.upsert_document(&d).unwrap();
+        store.index_code().unwrap();
+        assert_eq!(
+            frozen_graph(&*store.read().unwrap(), 1).unwrap()["overrides"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        d.content = "class Base:\n    def work(self): pass\nclass Child(Base): pass\n".into();
+        store.upsert_document(&d).unwrap();
+        store.index_code().unwrap();
+        let q = DiffQuery {
+            before: 1,
+            after: Some(2),
+            project: None,
+            limit: None,
+        };
+        let result = store.code_index_diff(&q).unwrap();
+        assert_eq!(result["method_relations_available"], true);
+        assert!(
+            result["relations_removed"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["kind"] == "method_override_candidate")
+        );
+        let mut graph = frozen_graph(&*store.read().unwrap(), 1).unwrap();
+        graph.as_object_mut().unwrap().remove("overrides");
+        store
+            .write()
+            .unwrap()
+            .update_where(
+                "code_index_revisions",
+                lin::query::pred::eq("id", "1"),
+                RecBuilder::new()
+                    .str("graph_json", graph.to_string())
+                    .build(),
+            )
+            .unwrap();
+        let legacy = store.code_index_diff(&q).unwrap();
+        assert_eq!(legacy["method_relations_available"], false);
+        assert!(
+            !legacy["relations_removed"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["kind"] == "method_override_candidate")
+        );
+    }
+    #[test]
+    fn translation_key_history_ignores_offsets_but_keeps_counts_and_legacy_gaps() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open(&root.path().join("key-history.duckdb")).unwrap();
+        let mut view = doc("view", "/p/view.html", "%{key} %{key}");
+        view.wing = Some("p".into());
+        let mut code = doc(
+            "code",
+            "/p/render.php",
+            "<?php function render(){Translate('key');}",
+        );
+        code.wing = Some("p".into());
+        for d in [&view, &code] {
+            store.upsert_document(d).unwrap();
+        }
+        store.index_code().unwrap();
+        let before = frozen_graph(&*store.read().unwrap(), 1).unwrap();
+        view.content = format!("\n\n{}", view.content);
+        code.content = format!("\n{}", code.content);
+        for d in [&view, &code] {
+            store.upsert_document(d).unwrap();
+        }
+        store.index_code().unwrap();
+        let diff = store
+            .code_index_diff(&DiffQuery {
+                before: 1,
+                after: Some(2),
+                project: Some("p".into()),
+                limit: None,
+            })
+            .unwrap();
+        assert_eq!(diff["translation_key_relations_available"], true);
+        assert!(
+            !diff["relations_added"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .chain(diff["relations_removed"].as_array().unwrap())
+                .any(|r| r["kind"] == "uses_key"),
+            "{diff}"
+        );
+        view.content = "%{key}".into();
+        store.upsert_document(&view).unwrap();
+        store.index_code().unwrap();
+        let q = DiffQuery {
+            before: 2,
+            after: Some(3),
+            project: Some("p".into()),
+            limit: None,
+        };
+        let changed = store.code_index_diff(&q).unwrap();
+        assert!(
+            changed["relations_added"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["kind"] == "uses_key" && r["occurrences"] == 1)
+        );
+        assert!(
+            changed["relations_removed"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["kind"] == "uses_key" && r["occurrences"] == 2)
+        );
+        let mut legacy = frozen_graph(&*store.read().unwrap(), 2).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("translation_keys_format");
+        store
+            .write()
+            .unwrap()
+            .update_where(
+                "code_index_revisions",
+                lin::query::pred::eq("id", "2"),
+                RecBuilder::new()
+                    .str("graph_json", legacy.to_string())
+                    .build(),
+            )
+            .unwrap();
+        let unknown = store.code_index_diff(&q).unwrap();
+        assert_eq!(unknown["translation_key_relations_available"], false);
+        assert!(
+            !unknown["relations_removed"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["kind"] == "uses_key")
+        );
+        assert_eq!(frozen_graph(&*store.read().unwrap(), 1).unwrap(), before);
+    }
+    #[test]
+    fn limited_translation_captures_are_not_compared_as_complete_negative_facts() {
+        let file = File {
+            id: "a".into(),
+            path: "/p/view.html".into(),
+            project: Some("p".into()),
+            revision: 1,
+            hash: "hash".into(),
+            source: String::new(),
+            analysis: None,
+        };
+        let before = serde_json::json!({"translation_keys_format":1,"translation_keys":{"coverage":[{"document_id":"a","complete":true}]}});
+        let after = serde_json::json!({"translation_keys_format":1,"translation_keys":{"coverage":[{"document_id":"a","complete":false}]}});
+        let (eligible, report) = translation_comparison(
+            &before,
+            &after,
+            std::slice::from_ref(&file),
+            std::slice::from_ref(&file),
+            10,
+        );
+        assert!(eligible.is_empty());
+        assert_eq!(report["excluded_documents_total"], 1);
+        assert_eq!(report["complete_for_supported_documents"], false);
+        let (eligible, _) =
+            translation_comparison(&before, &before, std::slice::from_ref(&file), &[], 10);
+        assert!(eligible.contains("a"));
+    }
+    #[test]
+    fn frozen_schema_and_relations_diff_ignore_line_moves_and_project_diagnostics() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open(&root.path().join("semantic.duckdb")).unwrap();
+        let mut migration = doc(
+            "ddl",
+            "/p/migrations/001.sql",
+            "CREATE TABLE users(name TEXT NOT NULL);",
+        );
+        migration.wing = Some("p".into());
+        let mut code = doc(
+            "code",
+            "/p/models.py",
+            "class Base: pass\nclass Other: pass\nclass Child(Base): pass\ndef work(): pass\nregistered = work\ndef test_old(): pass\n",
+        );
+        code.wing = Some("p".into());
+        let mut foreign = doc(
+            "foreign",
+            "/q/migrations/001.sql",
+            "ALTER TABLE unknown ADD COLUMN x INT;",
+        );
+        foreign.wing = Some("q".into());
+        for d in [&migration, &code, &foreign] {
+            store.upsert_document(d).unwrap();
+        }
+        store.index_code().unwrap();
+        let frozen = frozen_graph(&*store.read().unwrap(), 1).unwrap();
+        assert!(frozen["sql"]["tables"].is_array());
+        migration.content = "CREATE TABLE users(name TEXT NOT NULL, age INT NOT NULL);".into();
+        code.content="class Base: pass\nclass Other: pass\nclass Child(Other): pass\ndef work(): pass\nregistered = None\ndef plain(): pass\n".into();
+        store.upsert_document(&migration).unwrap();
+        store.upsert_document(&code).unwrap();
+        store.index_code().unwrap();
+        let q = DiffQuery {
+            before: 1,
+            after: Some(2),
+            project: Some("p".into()),
+            limit: None,
+        };
+        let result = store.code_index_diff(&q).unwrap();
+        assert_eq!(result["schema_diff"]["total"], 1, "{result}");
+        assert_eq!(
+            result["schema_diff"]["items"][0]["column_changes"][0]["column"],
+            "age"
+        );
+        assert_eq!(
+            result["schema_diff"]["after_diagnostics"],
+            serde_json::json!([])
+        );
+        let added = result["relations_added"].as_array().unwrap();
+        let removed = result["relations_removed"].as_array().unwrap();
+        assert!(added.iter().any(|e| e["kind"] == "inheritance"));
+        assert!(removed.iter().any(|e| e["kind"] == "non_call_reference"));
+        assert!(removed.iter().any(|e| e["kind"] == "entrypoint"));
+        assert_eq!(frozen_graph(&*store.read().unwrap(), 1).unwrap(), frozen);
+        code.content = format!("# moved\n{}", code.content);
+        migration.content = format!("-- moved\n{}", migration.content);
+        store.upsert_document(&migration).unwrap();
+        store.upsert_document(&code).unwrap();
+        store.index_code().unwrap();
+        let moved = store
+            .code_index_diff(&DiffQuery {
+                before: 2,
+                after: Some(3),
+                ..q
+            })
+            .unwrap();
+        assert_eq!(moved["schema_diff"]["total"], 0, "{moved}");
+        assert_eq!(moved["relations_added_total"], 0);
+        assert_eq!(moved["relations_removed_total"], 0);
+    }
+    #[test]
+    fn schema_diff_captures_expression_only_changes_and_marks_legacy_coverage() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open(&root.path().join("expressions.duckdb")).unwrap();
+        let mut migration = doc(
+            "ddl",
+            "/p/migrations/001.sql",
+            "CREATE TABLE calc(a INT DEFAULT 1, b INT GENERATED ALWAYS AS (a + 1) STORED);",
+        );
+        store.upsert_document(&migration).unwrap();
+        store.index_code().unwrap();
+        let before = frozen_graph(&*store.read().unwrap(), 1).unwrap();
+        migration.content =
+            "CREATE TABLE calc(a INT DEFAULT 2, b INT GENERATED ALWAYS AS (a + 2) STORED);".into();
+        store.upsert_document(&migration).unwrap();
+        store.index_code().unwrap();
+        let after = frozen_graph(&*store.read().unwrap(), 2).unwrap();
+        let diff = store
+            .code_index_diff(&DiffQuery {
+                before: 1,
+                after: Some(2),
+                project: None,
+                limit: None,
+            })
+            .unwrap();
+        assert_eq!(diff["schema_diff"]["expression_changes_available"], true);
+        assert_eq!(
+            diff["schema_diff"]["items"][0]["column_changes_total"], 2,
+            "{diff}"
+        );
+        let mut legacy = before.clone();
+        legacy["format_version"] = 18.into();
+        let compatibility = schema_changes(&legacy, &after, None, 100);
+        assert_eq!(compatibility["expression_changes_available"], false);
+        assert_eq!(compatibility["total"], 0, "{compatibility}");
+        assert_eq!(frozen_graph(&*store.read().unwrap(), 1).unwrap(), before);
+    }
+
+    #[test]
+    fn frozen_constraints_diff_and_legacy_coverage_are_explicit() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open(&root.path().join("constraints.duckdb")).unwrap();
+        let mut d = doc(
+            "ddl",
+            "/p/migrations/001.sql",
+            "CREATE TABLE x(a INT CONSTRAINT positive CHECK(a>0), CONSTRAINT uq UNIQUE(a));",
+        );
+        store.upsert_document(&d).unwrap();
+        store.index_code().unwrap();
+        let before = frozen_graph(&*store.read().unwrap(), 1).unwrap();
+        d.content="CREATE TABLE x(a INT CONSTRAINT positive CHECK(a>1), CONSTRAINT uq UNIQUE(a), CONSTRAINT ceiling CHECK(a<100));".into();
+        store.upsert_document(&d).unwrap();
+        store.index_code().unwrap();
+        let after = frozen_graph(&*store.read().unwrap(), 2).unwrap();
+        let result = store
+            .code_index_diff(&DiffQuery {
+                before: 1,
+                after: Some(2),
+                project: None,
+                limit: Some(1),
+            })
+            .unwrap();
+        assert_eq!(result["schema_diff"]["constraint_changes_available"], true);
+        assert_eq!(result["schema_diff"]["total"], 1);
+        assert_eq!(result["schema_diff"]["items"][0]["column_changes_total"], 1);
+        assert_eq!(
+            result["schema_diff"]["items"][0]["constraints_truncated"],
+            true
+        );
+        assert_eq!(result["truncated"], true);
+        let mut legacy = before;
+        legacy["format_version"] = 19.into();
+        let compatibility = schema_changes(&legacy, &after, None, 100);
+        assert_eq!(compatibility["constraint_changes_available"], false);
+        assert_eq!(compatibility["total"], 0, "{compatibility}");
+    }
+
+    #[test]
+    fn missing_historical_schema_does_not_invent_a_replayed_snapshot() {
+        let result = schema_changes(
+            &serde_json::json!({}),
+            &serde_json::json!({"sql":{"tables":[]}}),
+            None,
+            1,
+        );
+        assert_eq!(result["available"], false);
+        assert_eq!(result["replay_performed"], false);
+    }
+
+    #[test]
+    fn immutable_history_reuses_noop_and_content_blobs_and_diffs_semantic_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.duckdb");
+        let store = Store::open(&path).unwrap();
+        store
+            .upsert_document(&doc(
+                "a",
+                "/p/a.rs",
+                "fn main() { foo(); let callback = foo; } fn foo() {}",
+            ))
+            .unwrap();
+        store
+            .upsert_document(&doc("text", "/p/readme.md", "unchanged text"))
+            .unwrap();
+        let first = store.index_code().unwrap();
+        assert_eq!(first.index_revision, Some(1));
+        assert!(first.revision_created);
+        assert_eq!(store.code_snapshot().unwrap().index_revision, Some(1));
+        let graph = {
+            let r = store.read().unwrap();
+            let row = r.get_by_id("code_index_revisions", "1").unwrap().unwrap();
+            cell_string(&row, "graph_json")
+        };
+        let frozen: serde_json::Value = serde_json::from_str(&graph).unwrap();
+        assert_eq!(frozen["format_version"], INDEX_FORMAT_VERSION);
+        assert!(
+            frozen["references"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["reference"]["name"] == "foo"
+                    && r["reference"]["is_call"] == false
+                    && r["resolution"] == "resolved_static")
+        );
+        let warm = store.index_code().unwrap();
+        assert_eq!(warm.index_revision, Some(1));
+        assert!(!warm.revision_created);
+        let mut a = store.get_document("a").unwrap().unwrap();
+        a.content="// moved definitions\nfn main() { bar(); let secret_value=1; } fn foo() {} fn bar() {}".into();
+        store.upsert_document(&a).unwrap();
+        assert_eq!(store.index_code().unwrap().index_revision, Some(2));
+        let diff = store
+            .code_index_diff(&DiffQuery {
+                before: 1,
+                after: None,
+                project: None,
+                limit: None,
+            })
+            .unwrap();
+        assert_eq!(diff["file_changes_total"], 1);
+        assert_eq!(diff["symbol_changes_total"], 2);
+        assert_eq!(diff["edges_added_total"], 1);
+        assert_eq!(diff["edges_removed_total"], 1);
+        assert!(!diff.to_string().contains("secret_value"));
+        assert_eq!(
+            cell_string(
+                &store
+                    .read()
+                    .unwrap()
+                    .get_by_id("code_index_revisions", "1")
+                    .unwrap()
+                    .unwrap(),
+                "graph_json"
+            ),
+            graph
+        );
+        let blobs = store
+            .read()
+            .unwrap()
+            .count_rows("code_index_source_blobs", None)
+            .unwrap();
+        assert_eq!(blobs, 3);
+        let page = store
+            .code_index_history(&HistoryQuery {
+                limit: Some(1),
+                before_revision: None,
+            })
+            .unwrap();
+        assert_eq!(page["items"][0]["index_rev"], 2);
+        assert_eq!(page["has_more"], true);
+        assert_eq!(
+            store
+                .code_index_history(&HistoryQuery {
+                    limit: Some(1),
+                    before_revision: Some(2)
+                })
+                .unwrap()["items"][0]["index_rev"],
+            1
+        );
+        drop(store);
+        let store = Store::open(&path).unwrap();
+        assert_eq!(
+            store
+                .code_index_diff(&DiffQuery {
+                    before: 1,
+                    after: Some(2),
+                    project: None,
+                    limit: Some(1)
+                })
+                .unwrap()["truncated"],
+            true
+        );
+    }
+    #[test]
+    fn deleting_every_document_makes_a_new_chronological_empty_revision() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("history.duckdb")).unwrap();
+        assert_eq!(store.index_code().unwrap().index_revision, Some(1));
+        store
+            .upsert_document(&doc("a", "/p/a.rs", "fn a() {}"))
+            .unwrap();
+        assert_eq!(store.index_code().unwrap().index_revision, Some(2));
+        store.delete_document("a").unwrap();
+        assert_eq!(store.index_code().unwrap().index_revision, Some(3));
+        let diff = store
+            .code_index_diff(&DiffQuery {
+                before: 2,
+                after: Some(3),
+                project: None,
+                limit: None,
+            })
+            .unwrap();
+        assert_eq!(diff["files"][0]["kind"], "removed");
+        assert_eq!(store.index_code().unwrap().index_revision, Some(3));
+        assert!(
+            store
+                .code_index_diff(&DiffQuery {
+                    before: 999,
+                    after: None,
+                    project: None,
+                    limit: None
+                })
+                .is_err()
+        );
+    }
+    #[test]
+    fn late_publication_failure_rolls_back_current_cache_and_revision_together() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("history.duckdb")).unwrap();
+        store
+            .upsert_document(&doc("a", "/p/a.rs", "fn old() {}"))
+            .unwrap();
+        store.index_code().unwrap();
+        let old_payload = cell_string(
+            &store
+                .read()
+                .unwrap()
+                .get_by_id("code_index_documents", "a")
+                .unwrap()
+                .unwrap(),
+            "payload",
+        );
+        store
+            .drop_collection_for_test("code_index_source_blobs")
+            .unwrap();
+        let mut a = store.get_document("a").unwrap().unwrap();
+        a.content = "fn new() {}".into();
+        store.upsert_document(&a).unwrap();
+        assert!(store.index_code().is_err());
+        assert_eq!(
+            cell_string(
+                &store
+                    .read()
+                    .unwrap()
+                    .get_by_id("code_index_documents", "a")
+                    .unwrap()
+                    .unwrap(),
+                "payload",
+            ),
+            old_payload
+        );
+        let history = store.code_index_history(&HistoryQuery::default()).unwrap();
+        assert_eq!(history["items"].as_array().unwrap().len(), 1);
+        assert_eq!(store.code_snapshot().unwrap().stale_documents, vec!["a"]);
+    }
+    #[test]
+    fn client_endpoints_history_is_frozen_and_guards_legacy_capture() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open(&root.path().join("clients.duckdb")).unwrap();
+        store
+            .upsert_document(&doc(
+                "client",
+                "/p/client.js",
+                "$.ajax({url:'/target',method:'GET'});",
+            ))
+            .unwrap();
+        store.index_code().unwrap();
+        store
+            .upsert_document(&doc(
+                "client",
+                "/p/client.js",
+                "$.ajax({url:'/target',method:'POST'});",
+            ))
+            .unwrap();
+        store.index_code().unwrap();
+        let q = DiffQuery {
+            before: 1,
+            after: Some(2),
+            project: None,
+            limit: None,
+        };
+        let diff = store.code_index_diff(&q).unwrap();
+        assert_eq!(diff["client_endpoint_relations_available"], true);
+        assert!(
+            diff["relations_added"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["reference_kind"] == "js:jquery:ajax" && r["request_method"] == "POST")
+        );
+        assert!(
+            diff["relations_removed"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["request_method"] == "GET")
+        );
+        let mut graph = frozen_graph(&*store.read().unwrap(), 1).unwrap();
+        graph
+            .as_object_mut()
+            .unwrap()
+            .remove("client_endpoints_format");
+        store
+            .write()
+            .unwrap()
+            .update_where(
+                "code_index_revisions",
+                lin::query::pred::eq("id", "1"),
+                RecBuilder::new()
+                    .str("graph_json", graph.to_string())
+                    .build(),
+            )
+            .unwrap();
+        let legacy = store.code_index_diff(&q).unwrap();
+        assert_eq!(legacy["client_endpoint_relations_available"], false);
+        assert!(
+            !legacy["relations_added"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .chain(legacy["relations_removed"].as_array().unwrap())
+                .any(|r| r["reference_kind"] == "js:jquery:ajax")
+        );
+    }
+}
 
 #[cfg(test)]
 mod integrity_tests {
@@ -913,9 +1670,8 @@ mod integrity_tests {
     #[test]
     fn missing_or_corrupt_history_blobs_are_errors_not_silent_file_deletions() {
         let dir = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&dir.path().join("history.duckdb")).unwrap();
+        let store = Store::open(&dir.path().join("history.duckdb")).unwrap();
         store
-            .documents()
             .upsert_document(&crate::models::Document {
                 id: "a".into(),
                 uri: "file:///p/a.rs".into(),
@@ -924,9 +1680,7 @@ mod integrity_tests {
                 ..Default::default()
             })
             .unwrap();
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        store.index_code().unwrap();
         let q = DiffQuery {
             before: 1,
             after: Some(1),
@@ -934,20 +1688,20 @@ mod integrity_tests {
             limit: None,
         };
         store
-            .lock()
+            .write()
             .unwrap()
-            .execute("UPDATE code_index_source_blobs SET content='corrupt'", [])
+            .update_where(
+                "code_index_source_blobs",
+                crate::db::lin_engine::pred_all(),
+                RecBuilder::new().str("content", "corrupt").build(),
+            )
             .unwrap();
-        assert!(crate::code_index::CodeIndex::new(&store)
-            .code_index_diff(&q)
-            .is_err());
+        assert!(store.code_index_diff(&q).is_err());
         store
-            .lock()
+            .write()
             .unwrap()
-            .execute("DELETE FROM code_index_source_blobs", [])
+            .delete_where("code_index_source_blobs", crate::db::lin_engine::pred_all())
             .unwrap();
-        assert!(crate::code_index::CodeIndex::new(&store)
-            .code_index_diff(&q)
-            .is_err());
+        assert!(store.code_index_diff(&q).is_err());
     }
 }

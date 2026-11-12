@@ -358,7 +358,7 @@ mod tests {
     }
     #[test]
     fn html_and_css_literals_keep_resource_edges_without_symbols() {
-        let html="<link href='main.css?x=1&amp;y=2'><script src='./app.js#v'></script><iframe src='other.html'></iframe>";
+        let html = "<link href='main.css?x=1&amp;y=2'><script src='./app.js#v'></script><iframe src='other.html'></iframe>";
         let documents = docs(&[
             ("/p/index.html", "p", html),
             (
@@ -373,12 +373,16 @@ mod tests {
         ]);
         let edges = edges(&documents);
         assert_eq!(edges.len(), 5, "{edges:?}");
-        assert!(edges
-            .iter()
-            .any(|e| e.reference_kind == "css:import" && e.candidates == ["2"]));
-        assert!(edges
-            .iter()
-            .any(|e| e.reference_kind == "css:url" && e.candidates == ["3"]));
+        assert!(
+            edges
+                .iter()
+                .any(|e| e.reference_kind == "css:import" && e.candidates == ["2"])
+        );
+        assert!(
+            edges
+                .iter()
+                .any(|e| e.reference_kind == "css:url" && e.candidates == ["3"])
+        );
         let link = edges
             .iter()
             .find(|e| e.reference_kind == "html:link:href")
@@ -390,13 +394,15 @@ mod tests {
     }
     #[test]
     fn html_base_affects_earlier_attributes_and_inline_css_with_full_offsets() {
-        let source="<link href='base.css'>\n<base href='/deployed/'>\n<style>\n@import 'base.css';\n.a{background:url('base.css')}\n</style>";
+        let source = "<link href='base.css'>\n<base href='/deployed/'>\n<style>\n@import 'base.css';\n.a{background:url('base.css')}\n</style>";
         let documents = docs(&[("/p/index.html", "p", source), ("/p/base.css", "p", "")]);
         let edges = edges(&documents);
         assert_eq!(edges.len(), 3, "{edges:?}");
-        assert!(edges
-            .iter()
-            .all(|e| e.candidates.is_empty() && e.resolution_basis == "html_base_url_unresolved"));
+        assert!(
+            edges.iter().all(
+                |e| e.candidates.is_empty() && e.resolution_basis == "html_base_url_unresolved"
+            )
+        );
         let css = edges
             .iter()
             .find(|e| e.reference_kind == "css:import")
@@ -406,17 +412,31 @@ mod tests {
     }
     #[test]
     fn url_unknowns_duplicates_comments_and_css_conditions_never_guess_files() {
-        let documents=docs(&[("/p/index.html","p","<!-- <script src='base.css'></script> --><link href='base.css' href='other.css'><link href='/base.css'><link href='https://x/base.css'><a href='base%2ecss'>encoded</a><a href='#base.css'>fragment</a><a href='base.css/'>directory</a>"),("/p/base.css","p",""),("/p/style.css","p","/* @import 'base.css'; */ @import 'base.css' screen; @supports (background: url('condition.css')) {.a{background:url('base.css')}} @namespace url('namespace.css'); .b{content:'base.css'; background:url(var(--asset));}")]);
+        let documents = docs(&[
+            (
+                "/p/index.html",
+                "p",
+                "<!-- <script src='base.css'></script> --><link href='base.css' href='other.css'><link href='/base.css'><link href='https://x/base.css'><a href='base%2ecss'>encoded</a><a href='#base.css'>fragment</a><a href='base.css/'>directory</a>",
+            ),
+            ("/p/base.css", "p", ""),
+            (
+                "/p/style.css",
+                "p",
+                "/* @import 'base.css'; */ @import 'base.css' screen; @supports (background: url('condition.css')) {.a{background:url('base.css')}} @namespace url('namespace.css'); .b{content:'base.css'; background:url(var(--asset));}",
+            ),
+        ]);
         let edges = edges(&documents);
         assert_eq!(
             edges.iter().filter(|e| e.document_id == "0").count(),
             5,
             "{edges:?}"
         );
-        assert!(edges
-            .iter()
-            .filter(|e| e.document_id == "0")
-            .all(|e| e.candidates.is_empty()));
+        assert!(
+            edges
+                .iter()
+                .filter(|e| e.document_id == "0")
+                .all(|e| e.candidates.is_empty())
+        );
         let css: Vec<_> = edges.iter().filter(|e| e.document_id == "2").collect();
         assert_eq!(css.len(), 2, "{css:?}");
         assert!(css.iter().all(|e| e.candidates == ["1"]));
@@ -424,18 +444,28 @@ mod tests {
     #[test]
     fn html_form_actions_and_unquoted_css_import_urls_keep_exact_targets() {
         let documents = docs(&[
-            ("/p/forms.html", "p", "<form action='handler.php?save=1'><button formaction='handler.php'>save</button><input formaction='handler.php'></form>"),
+            (
+                "/p/forms.html",
+                "p",
+                "<form action='handler.php?save=1'><button formaction='handler.php'>save</button><input formaction='handler.php'></form>",
+            ),
             ("/p/handler.php", "p", "<?php function submit() {}"),
-            ("/p/main.css", "p", "@import url(base.css) print; .a{background:url(base.css)}"),
+            (
+                "/p/main.css",
+                "p",
+                "@import url(base.css) print; .a{background:url(base.css)}",
+            ),
             ("/p/base.css", "p", ""),
             ("/p/quoted.html", "p", r#"<link href="'handler.php'">"#),
         ]);
         let edges = edges(&documents);
         assert_eq!(edges.len(), 6, "{edges:?}");
-        assert!(edges
-            .iter()
-            .filter(|e| e.document_id == "4")
-            .all(|e| e.candidates.is_empty()));
+        assert!(
+            edges
+                .iter()
+                .filter(|e| e.document_id == "4")
+                .all(|e| e.candidates.is_empty())
+        );
         for kind in [
             "html:form:action",
             "html:button:formaction",
@@ -477,7 +507,7 @@ mod tests {
     fn resource_impact_dead_files_refresh_and_frozen_legacy_diff() {
         use crate::models::Document;
         let temp = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&temp.path().join("resources.duckdb")).unwrap();
+        let store = Store::open(&temp.path().join("resources.duckdb")).unwrap();
         let doc = |id: &str, path: &str, body: &str| Document {
             id: id.into(),
             uri: format!("file://{path}"),
@@ -487,33 +517,25 @@ mod tests {
             ..Default::default()
         };
         let mut page = doc("page", "/p/index.html", "<link href='main.css'>");
-        store.documents().upsert_document(&page).unwrap();
+        store.upsert_document(&page).unwrap();
         store
-            .documents()
             .upsert_document(&doc("main", "/p/main.css", "@import 'base.css';"))
             .unwrap();
         store
-            .documents()
             .upsert_document(&doc("base", "/p/base.css", ".base{color:red}"))
             .unwrap();
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        store.index_code().unwrap();
         let q = CodeQuery {
             impact_file: Some("/p/base.css".into()),
             ..Default::default()
         };
-        let snapshot = crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap();
+        let snapshot = store.code_snapshot().unwrap();
         let impact = snapshot.query("impact", &q);
         assert_eq!(impact["items"][0]["path"], "/p/main.css", "{impact}");
         assert_eq!(impact["items"][1]["path"], "/p/index.html");
         assert_eq!(impact["items"][1]["depth"], 2);
         assert_eq!(impact["items"][0]["via_kind"], "file_resource_candidate");
-        let dead = crate::code_index::CodeIndex::new(&store)
-            .code_dead_files(&CodeQuery::default())
-            .unwrap();
+        let dead = store.code_dead_files(&CodeQuery::default()).unwrap();
         assert!(
             !dead["items"]
                 .as_array()
@@ -523,29 +545,22 @@ mod tests {
             "{dead}"
         );
         page.content = "<p>removed</p>".into();
-        store.documents().upsert_document(&page).unwrap();
+        store.upsert_document(&page).unwrap();
         assert_eq!(
-            crate::code_index::CodeIndex::new(&store)
-                .code_snapshot()
-                .unwrap()
-                .query("impact", &q)["items"]
+            store.code_snapshot().unwrap().query("impact", &q)["items"]
                 .as_array()
                 .unwrap()
                 .len(),
             1
         );
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        store.index_code().unwrap();
         let dq = history::DiffQuery {
             before: 1,
             after: Some(2),
             project: None,
             limit: None,
         };
-        let diff = crate::code_index::CodeIndex::new(&store)
-            .code_index_diff(&dq)
-            .unwrap();
+        let diff = store.code_index_diff(&dq).unwrap();
         assert_eq!(diff["file_resource_relations_available"], true);
         assert!(
             diff["relations_removed"]
@@ -556,40 +571,21 @@ mod tests {
             "{diff}"
         );
         page.content = "<link href='base.css'>".into();
-        store.documents().upsert_document(&page).unwrap();
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        assert_eq!(
-            crate::code_index::CodeIndex::new(&store)
-                .code_index_diff(&dq)
-                .unwrap(),
-            diff
-        );
-        let c = store.lock().unwrap();
-        let raw: String = c
-            .query_row(
-                "SELECT graph_json FROM code_index_revisions WHERE id=1",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        store.upsert_document(&page).unwrap();
+        store.index_code().unwrap();
+        assert_eq!(store.code_index_diff(&dq).unwrap(), diff);
+        let raw = crate::code_index::test_get_rev_graph_json(&store, 1);
         let mut graph: serde_json::Value = serde_json::from_str(&raw).unwrap();
         graph.as_object_mut().unwrap().remove("file_resources");
-        c.execute(
-            "UPDATE code_index_revisions SET graph_json=? WHERE id=1",
-            [graph.to_string()],
-        )
-        .unwrap();
-        drop(c);
-        let legacy = crate::code_index::CodeIndex::new(&store)
-            .code_index_diff(&dq)
-            .unwrap();
+        crate::code_index::test_set_rev_graph_json(&store, 1, &graph.to_string());
+        let legacy = store.code_index_diff(&dq).unwrap();
         assert_eq!(legacy["file_resource_relations_available"], false);
-        assert!(!legacy["relations_removed"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|e| e["kind"] == "file_resource_candidate"));
+        assert!(
+            !legacy["relations_removed"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["kind"] == "file_resource_candidate")
+        );
     }
 }

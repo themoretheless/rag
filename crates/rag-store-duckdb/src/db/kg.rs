@@ -1,22 +1,18 @@
-//! Temporal knowledge-graph facts (`kg_facts`): add, query, invalidate, supersede, timeline, stats.
+//! Temporal knowledge-graph facts (`kg_facts`): add, query, invalidate, supersede, timeline, stats over `lin`.
+
+use std::collections::{BTreeSet, HashSet};
 
 use chrono::{DateTime, Utc};
-use duckdb::params;
 use uuid::Uuid;
 
+use super::lin_engine::{
+    LinReader, LinWriter, RecBuilder, cell_nonempty_string, cell_str, cell_string,
+};
+use super::rows;
 use super::store::Store;
 use crate::error::{AppError, Result};
 use crate::models::{KgFact, KgStats};
 use crate::util::{format_db_timestamp as format_ts, parse_flexible_timestamp};
-
-/// Shared SELECT list for kg_facts rows (order matches [`row_to_kg_fact`]).
-const KG_FACT_SELECT: &str = r#"
-    id, subject, predicate, object,
-    CAST(valid_from AS VARCHAR), CAST(valid_to AS VARCHAR),
-    status, superseded_by, source_document_id, source, confidence, metadata_json,
-    CAST(created_at AS VARCHAR), CAST(updated_at AS VARCHAR),
-    CAST(invalidated_at AS VARCHAR)
-"#;
 
 /// Fields for [`Store::kg_add`].
 #[derive(Debug, Clone, Copy)]
@@ -43,54 +39,390 @@ pub struct KgSupersedeInput<'a> {
     pub confidence: Option<f64>,
 }
 
-fn load_fact_locked(conn: &duckdb::Connection, id: &str) -> Result<Option<KgFact>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {KG_FACT_SELECT} FROM kg_facts WHERE id = ? LIMIT 1"
-    ))?;
-    let mut rows = stmt.query(params![id])?;
-    match rows.next()? {
-        Some(row) => Ok(Some(row_to_kg_fact(row)?)),
-        None => Ok(None),
+impl Store {
+    /// Insert a temporal fact. Idempotent for open active SPO matches (returns existing).
+    ///
+    /// Validity is half-open `[valid_from, valid_to)`. Rejects inverted windows.
+    pub fn kg_add(&self, fact: KgFactInput<'_>) -> Result<KgFact> {
+        let KgFactInput {
+            subject,
+            predicate,
+            object,
+            valid_from,
+            valid_to,
+            source_document_id,
+            confidence,
+            metadata_json,
+        } = fact;
+        let subject = require_nonempty(subject, "subject")?;
+        let predicate = normalize_predicate(predicate)?;
+        let object = require_nonempty(object, "object")?;
+        check_window(valid_from, valid_to)?;
+
+        let source_document_id = opt_trim(source_document_id);
+        let metadata = match metadata_json.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(s) => s.to_string(),
+            None => "{}".into(),
+        };
+        let now = Utc::now();
+        let now_s = format_ts(now);
+
+        let mut w = self.write()?;
+
+        // Idempotent: same open active SPO already present.
+        for row in w.find_by_eq("kg_facts", "subject", &subject)? {
+            if is_open_active_spo(&row, &predicate, &object) {
+                return rows::kg_fact(&row);
+            }
+        }
+
+        let id = Uuid::new_v4().to_string();
+        let conf = confidence.unwrap_or(1.0);
+        let rec = RecBuilder::new()
+            .id(&id)
+            .str("subject", &subject)
+            .str("predicate", &predicate)
+            .str("object", &object)
+            .opt_string("valid_from", valid_from.map(format_ts))
+            .opt_string("valid_to", valid_to.map(format_ts))
+            .str("status", "active")
+            .opt_str("superseded_by", None)
+            .opt_string("source_document_id", source_document_id.clone())
+            .opt_string("source", source_document_id)
+            .f64("confidence", conf)
+            .str("metadata_json", &metadata)
+            .str("created_at", &now_s)
+            .str("updated_at", &now_s)
+            .opt_str("invalidated_at", None)
+            .build();
+        w.upsert("kg_facts", rec)?;
+
+        load_fact_locked(&w, &id)?.ok_or_else(|| AppError::db("kg_add: insert not readable"))
+    }
+
+    /// Query facts by optional SPO filters and optional point-in-time.
+    ///
+    /// - Without `at_time`: returns `status = 'active'` rows matching filters.
+    /// - With `at_time`: half-open temporal filter
+    ///   `(valid_from IS NULL OR valid_from <= t) AND (valid_to IS NULL OR valid_to > t)`.
+    pub fn kg_query(
+        &self,
+        subject: Option<&str>,
+        predicate: Option<&str>,
+        object: Option<&str>,
+        at_time: Option<DateTime<Utc>>,
+    ) -> Result<Vec<KgFact>> {
+        Ok(self
+            .kg_query_page(subject, predicate, object, at_time, None)?
+            .0)
+    }
+
+    /// Facts matching the filters, at most `limit` of them in query order,
+    /// plus the total number of matches.
+    pub fn kg_query_page(
+        &self,
+        subject: Option<&str>,
+        predicate: Option<&str>,
+        object: Option<&str>,
+        at_time: Option<DateTime<Utc>>,
+        limit: Option<usize>,
+    ) -> Result<(Vec<KgFact>, usize)> {
+        let subject = opt_trim(subject);
+        let predicate = predicate
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_ascii_lowercase().replace(' ', "_"));
+        let object = opt_trim(object);
+
+        let r = self.read()?;
+        let candidate_rows: Vec<lin::Row> = if let Some(ref s) = subject {
+            r.find_by_eq("kg_facts", "subject", s)?
+        } else if let Some(ref p) = predicate {
+            r.find_by_eq("kg_facts", "predicate", p)?
+        } else if at_time.is_none() {
+            r.find_by_eq("kg_facts", "status", "active")?
+        } else {
+            r.filter_map_rows("kg_facts", |row| Ok(Some(row.clone())))?
+        };
+
+        let mut matches = Vec::new();
+        for row in &candidate_rows {
+            if let Some(ref s) = subject {
+                if cell_str(row, "subject") != Some(s.as_str()) {
+                    continue;
+                }
+            }
+            if let Some(ref p) = predicate {
+                if cell_str(row, "predicate") != Some(p.as_str()) {
+                    continue;
+                }
+            }
+            if let Some(ref o) = object {
+                if cell_str(row, "object") != Some(o.as_str()) {
+                    continue;
+                }
+            }
+            let fact = rows::kg_fact(row)?;
+            if let Some(t) = at_time {
+                let starts_ok = fact.valid_from.is_none_or(|vf| vf <= t);
+                let ends_ok = fact.valid_to.is_none_or(|vt| vt > t);
+                if !starts_ok || !ends_ok {
+                    continue;
+                }
+            } else if fact.status != "active" {
+                continue;
+            }
+            matches.push(fact);
+        }
+
+        sort_kg_facts(&mut matches);
+        let total = matches.len();
+        if let Some(lim) = limit {
+            matches.truncate(lim);
+        }
+        Ok((matches, total))
+    }
+
+    /// Mark matching open active fact(s) as invalidated.
+    ///
+    /// Sets `valid_to = ended` (default now), `status = 'invalidated'`, and `invalidated_at`.
+    pub fn kg_invalidate(
+        &self,
+        subject: &str,
+        predicate: &str,
+        object: &str,
+        ended: Option<DateTime<Utc>>,
+    ) -> Result<Vec<KgFact>> {
+        let subject = require_nonempty(subject, "subject")?;
+        let predicate = normalize_predicate(predicate)?;
+        let object = require_nonempty(object, "object")?;
+        let ended = ended.unwrap_or_else(Utc::now);
+        let ended_s = format_ts(ended);
+        let now_s = format_ts(Utc::now());
+
+        self.with_tx(|tx| {
+            let mut ids: Vec<String> = Vec::new();
+            for row in tx.find_by_eq("kg_facts", "subject", &subject)? {
+                if !is_open_active_spo(&row, &predicate, &object) {
+                    continue;
+                }
+                if let Some(raw) = cell_nonempty_string(&row, "valid_from") {
+                    let vf = parse_ts(&raw)?;
+                    if ended < vf {
+                        return Err(AppError::config(format!(
+                            "kg_invalidate: ended={ended_s} is before valid_from={raw}"
+                        )));
+                    }
+                }
+                ids.push(cell_string(&row, "id"));
+            }
+
+            if ids.is_empty() {
+                return Ok(Vec::new());
+            }
+
+            for id in &ids {
+                tx.update_where(
+                    "kg_facts",
+                    lin::query::pred::eq("id", id.as_str()),
+                    RecBuilder::new()
+                        .str("valid_to", &ended_s)
+                        .str("status", "invalidated")
+                        .str("invalidated_at", &ended_s)
+                        .str("updated_at", &now_s)
+                        .build(),
+                )?;
+            }
+
+            let mut out = Vec::with_capacity(ids.len());
+            for id in &ids {
+                if let Some(f) = load_fact_locked(tx, id)? {
+                    out.push(f);
+                }
+            }
+            Ok(out)
+        })
+    }
+
+    /// Atomically replace an open fact's object at a shared boundary instant.
+    ///
+    /// Closes matching `(subject, predicate, old_object)` with `valid_to = at` and
+    /// `status = 'superseded'`, then opens `(subject, predicate, new_object)` with
+    /// `valid_from = at`. Point-in-time queries at `at` return only the successor
+    /// (half-open upper bound).
+    ///
+    /// If no open old fact exists, still opens the successor (degrades to add).
+    pub fn kg_supersede(&self, change: KgSupersedeInput<'_>) -> Result<KgFact> {
+        let KgSupersedeInput {
+            subject,
+            predicate,
+            old_object,
+            new_object,
+            at,
+            source_document_id,
+            confidence,
+        } = change;
+        let subject = require_nonempty(subject, "subject")?;
+        let predicate = normalize_predicate(predicate)?;
+        let old_object = require_nonempty(old_object, "old_object")?;
+        let new_object = require_nonempty(new_object, "new_object")?;
+        let at = at.unwrap_or_else(Utc::now);
+        let at_s = format_ts(at);
+        let now = Utc::now();
+        let now_s = format_ts(now);
+        let source_document_id = opt_trim(source_document_id);
+        let conf = confidence.unwrap_or(1.0);
+
+        self.with_tx(|tx| {
+            let subject_rows = tx.find_by_eq("kg_facts", "subject", &subject)?;
+
+            let mut old_ids: Vec<String> = Vec::new();
+            let mut existing_new_id: Option<String> = None;
+
+            for row in &subject_rows {
+                if is_open_active_spo(row, &predicate, &old_object) {
+                    if let Some(raw) = cell_nonempty_string(row, "valid_from") {
+                        let vf = parse_ts(&raw)?;
+                        if at < vf {
+                            return Err(AppError::config(format!(
+                                "kg_supersede: at={at_s} is before valid_from={raw}"
+                            )));
+                        }
+                    }
+                    old_ids.push(cell_string(row, "id"));
+                }
+                if existing_new_id.is_none() && is_open_active_spo(row, &predicate, &new_object) {
+                    existing_new_id = Some(cell_string(row, "id"));
+                }
+            }
+
+            let creating_new = existing_new_id.is_none();
+            let new_id = existing_new_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+
+            for id in &old_ids {
+                tx.update_where(
+                    "kg_facts",
+                    lin::query::pred::eq("id", id.as_str()),
+                    RecBuilder::new()
+                        .str("valid_to", &at_s)
+                        .str("status", "superseded")
+                        .str("superseded_by", &new_id)
+                        .str("updated_at", &now_s)
+                        .build(),
+                )?;
+            }
+
+            if creating_new {
+                let rec = RecBuilder::new()
+                    .id(&new_id)
+                    .str("subject", &subject)
+                    .str("predicate", &predicate)
+                    .str("object", &new_object)
+                    .str("valid_from", &at_s)
+                    .opt_str("valid_to", None)
+                    .str("status", "active")
+                    .opt_str("superseded_by", None)
+                    .opt_string("source_document_id", source_document_id.clone())
+                    .opt_string("source", source_document_id)
+                    .f64("confidence", conf)
+                    .str("metadata_json", "{}")
+                    .str("created_at", &now_s)
+                    .str("updated_at", &now_s)
+                    .opt_str("invalidated_at", None)
+                    .build();
+                tx.upsert("kg_facts", rec)?;
+            }
+
+            load_fact_locked(tx, &new_id)?
+                .ok_or_else(|| AppError::db("kg_supersede: new fact not readable"))
+        })
+    }
+
+    /// Chronological facts for a subject (any status), ordered by `valid_from`.
+    pub fn kg_timeline(&self, subject: &str) -> Result<Vec<KgFact>> {
+        let subject = require_nonempty(subject, "subject")?;
+        let r = self.read()?;
+        let mut out: Vec<KgFact> = r
+            .find_by_eq("kg_facts", "subject", &subject)?
+            .iter()
+            .map(rows::kg_fact)
+            .collect::<Result<Vec<_>>>()?;
+        sort_kg_facts(&mut out);
+        Ok(out)
+    }
+
+    /// Aggregate counts and distinct relationship types.
+    pub fn kg_stats(&self) -> Result<KgStats> {
+        let r = self.read()?;
+        let mut total_facts = 0u64;
+        let mut active_facts = 0u64;
+        let mut invalidated_facts = 0u64;
+        let mut superseded_facts = 0u64;
+        let mut subjects: HashSet<String> = HashSet::new();
+        let mut predicates: BTreeSet<String> = BTreeSet::new();
+
+        r.scan_each("kg_facts", |row| {
+            total_facts += 1;
+            match cell_str(row, "status").unwrap_or("active") {
+                "active" | "" => active_facts += 1,
+                "invalidated" => invalidated_facts += 1,
+                "superseded" => superseded_facts += 1,
+                _ => {}
+            }
+            if let Some(s) = cell_str(row, "subject") {
+                subjects.insert(s.to_string());
+            }
+            if let Some(p) = cell_str(row, "predicate") {
+                predicates.insert(p.to_string());
+            }
+            Ok(true)
+        })?;
+
+        let distinct_subjects = subjects.len() as u64;
+        let distinct_predicates = predicates.len() as u64;
+        let relationship_types = predicates.into_iter().collect();
+
+        Ok(KgStats {
+            total_facts,
+            active_facts,
+            invalidated_facts,
+            superseded_facts,
+            distinct_subjects,
+            distinct_predicates,
+            relationship_types,
+        })
+    }
+
+    /// Load one fact by primary key.
+    pub fn kg_get(&self, fact_id: &str) -> Result<Option<KgFact>> {
+        let r = self.read()?;
+        load_fact_locked(&r, fact_id)
     }
 }
 
-fn row_to_kg_fact(row: &duckdb::Row<'_>) -> Result<KgFact> {
-    let valid_from = opt_parse_ts(row.get::<_, Option<String>>(4)?)?;
-    let valid_to = opt_parse_ts(row.get::<_, Option<String>>(5)?)?;
-    let created_raw: String = row.get(12)?;
-    let updated_raw: Option<String> = row.get(13)?;
-    let invalidated_at = opt_parse_ts(row.get::<_, Option<String>>(14)?)?;
+fn is_open_active_spo(row: &lin::Row, predicate: &str, object: &str) -> bool {
+    let status = cell_str(row, "status").unwrap_or("active");
+    (status == "active" || status.is_empty())
+        && cell_nonempty_string(row, "valid_to").is_none()
+        && cell_str(row, "predicate") == Some(predicate)
+        && cell_str(row, "object") == Some(object)
+}
 
-    let created_at = parse_ts(&created_raw)?;
-    let updated_at = match updated_raw {
-        Some(s) if !s.trim().is_empty() => parse_ts(&s)?,
-        _ => created_at,
-    };
+fn sort_kg_facts(facts: &mut [KgFact]) {
+    // ORDER BY valid_from ASC NULLS FIRST, created_at ASC, id ASC
+    facts.sort_by(|a, b| {
+        a.valid_from
+            .cmp(&b.valid_from)
+            .then_with(|| a.created_at.cmp(&b.created_at))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+}
 
-    let status: Option<String> = row.get(6)?;
-    let metadata: Option<String> = row.get(11)?;
-
-    Ok(KgFact {
-        id: row.get(0)?,
-        subject: row.get(1)?,
-        predicate: row.get(2)?,
-        object: row.get(3)?,
-        valid_from,
-        valid_to,
-        status: status
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "active".into()),
-        superseded_by: row.get(7)?,
-        source_document_id: row.get(8)?,
-        source: row.get(9)?,
-        confidence: row.get(10)?,
-        metadata_json: metadata
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "{}".into()),
-        created_at,
-        updated_at,
-        invalidated_at,
-    })
+fn load_fact_locked(r: &impl LinReader, id: &str) -> Result<Option<KgFact>> {
+    r.get_by_id("kg_facts", id)?
+        .as_ref()
+        .map(rows::kg_fact)
+        .transpose()
 }
 
 fn require_nonempty(s: &str, field: &str) -> Result<String> {
@@ -125,477 +457,9 @@ fn check_window(valid_from: Option<DateTime<Utc>>, valid_to: Option<DateTime<Utc
     Ok(())
 }
 
-fn opt_parse_ts(raw: Option<String>) -> Result<Option<DateTime<Utc>>> {
-    match raw {
-        Some(s) if !s.trim().is_empty() => Ok(Some(parse_ts(&s)?)),
-        _ => Ok(None),
-    }
-}
-
 fn parse_ts(s: &str) -> Result<DateTime<Utc>> {
     parse_flexible_timestamp(s)
         .ok_or_else(|| AppError::db(format!("invalid timestamp value: {}", s.trim())))
-}
-
-/// Temporal knowledge-graph facts.
-///
-/// A repository over the shared Store connection; get one from [`Store::kg`].
-#[derive(Clone, Copy)]
-pub struct KgRepo<'a> {
-    pub(in crate::db) store: &'a Store,
-}
-
-impl KgRepo<'_> {
-    /// Insert a temporal fact. Idempotent for open active SPO matches (returns existing).
-    ///
-    /// Validity is half-open `[valid_from, valid_to)`. Rejects inverted windows.
-    pub fn kg_add(&self, fact: KgFactInput<'_>) -> Result<KgFact> {
-        let KgFactInput {
-            subject,
-            predicate,
-            object,
-            valid_from,
-            valid_to,
-            source_document_id,
-            confidence,
-            metadata_json,
-        } = fact;
-        let subject = require_nonempty(subject, "subject")?;
-        let predicate = normalize_predicate(predicate)?;
-        let object = require_nonempty(object, "object")?;
-        check_window(valid_from, valid_to)?;
-
-        let source_document_id = opt_trim(source_document_id);
-        let metadata = match metadata_json.map(str::trim).filter(|s| !s.is_empty()) {
-            Some(s) => s.to_string(),
-            None => "{}".into(),
-        };
-        let now = Utc::now();
-        let now_s = format_ts(now);
-
-        let conn = self.store.lock()?;
-
-        // Idempotent: same open active SPO already present.
-        {
-            let mut stmt = conn.prepare(
-                r#"
-                SELECT id FROM kg_facts
-                WHERE subject = ? AND predicate = ? AND object = ?
-                  AND status = 'active' AND valid_to IS NULL
-                LIMIT 1
-                "#,
-            )?;
-            let mut rows = stmt.query(params![subject, predicate, object])?;
-            if let Some(row) = rows.next()? {
-                let id: String = row.get(0)?;
-                drop(rows);
-                drop(stmt);
-                return load_fact_locked(&conn, &id)?
-                    .ok_or_else(|| AppError::db("kg_add: existing fact vanished"));
-            }
-        }
-
-        let id = Uuid::new_v4().to_string();
-        let conf = confidence.unwrap_or(1.0);
-        conn.execute(
-            r#"
-            INSERT INTO kg_facts (
-              id, subject, predicate, object,
-              valid_from, valid_to, status, superseded_by,
-              source_document_id, source, confidence, metadata_json,
-              created_at, updated_at, invalidated_at
-            ) VALUES (
-              ?, ?, ?, ?,
-              CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), 'active', NULL,
-              ?, ?, ?, ?,
-              CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), NULL
-            )
-            "#,
-            params![
-                id,
-                subject,
-                predicate,
-                object,
-                valid_from.map(format_ts),
-                valid_to.map(format_ts),
-                source_document_id.clone(),
-                source_document_id.clone(),
-                conf,
-                metadata,
-                now_s.as_str(),
-                now_s.as_str(),
-            ],
-        )?;
-
-        load_fact_locked(&conn, &id)?.ok_or_else(|| AppError::db("kg_add: insert not readable"))
-    }
-
-    /// SQL and binds for the SPO / point-in-time filters of [`Self::kg_query`].
-    pub(in crate::db) fn kg_query_sql(
-        subject: Option<&str>,
-        predicate: Option<&str>,
-        object: Option<&str>,
-        at_time: Option<DateTime<Utc>>,
-    ) -> Result<(String, Vec<String>)> {
-        let subject = opt_trim(subject);
-        let predicate = predicate
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_ascii_lowercase().replace(' ', "_"));
-        let object = opt_trim(object);
-
-        let mut sql = format!("SELECT {KG_FACT_SELECT} FROM kg_facts WHERE 1=1");
-        let mut binds: Vec<String> = Vec::new();
-
-        if let Some(ref s) = subject {
-            sql.push_str(" AND subject = ?");
-            binds.push(s.clone());
-        }
-        if let Some(ref p) = predicate {
-            sql.push_str(" AND predicate = ?");
-            binds.push(p.clone());
-        }
-        if let Some(ref o) = object {
-            sql.push_str(" AND object = ?");
-            binds.push(o.clone());
-        }
-
-        if let Some(t) = at_time {
-            let t_s = format_ts(t);
-            sql.push_str(
-                " AND (valid_from IS NULL OR valid_from <= CAST(? AS TIMESTAMP))\
-                 AND (valid_to IS NULL OR valid_to > CAST(? AS TIMESTAMP))",
-            );
-            binds.push(t_s.clone());
-            binds.push(t_s);
-        } else {
-            sql.push_str(" AND status = 'active'");
-        }
-
-        sql.push_str(" ORDER BY valid_from ASC NULLS FIRST, created_at ASC, id ASC");
-        Ok((sql, binds))
-    }
-
-    /// Query facts by optional SPO filters and optional point-in-time.
-    ///
-    /// - Without `at_time`: returns `status = 'active'` rows matching filters.
-    /// - With `at_time`: half-open temporal filter
-    ///   `(valid_from IS NULL OR valid_from <= t) AND (valid_to IS NULL OR valid_to > t)`.
-    pub fn kg_query(
-        &self,
-        subject: Option<&str>,
-        predicate: Option<&str>,
-        object: Option<&str>,
-        at_time: Option<DateTime<Utc>>,
-    ) -> Result<Vec<KgFact>> {
-        Ok(self
-            .kg_query_page(subject, predicate, object, at_time, None)?
-            .0)
-    }
-
-    /// Facts matching the filters, at most `limit` of them in query order,
-    /// plus the total number of matches.
-    pub fn kg_query_page(
-        &self,
-        subject: Option<&str>,
-        predicate: Option<&str>,
-        object: Option<&str>,
-        at_time: Option<DateTime<Utc>>,
-        limit: Option<usize>,
-    ) -> Result<(Vec<KgFact>, usize)> {
-        let (sql, binds) = Self::kg_query_sql(subject, predicate, object, at_time)?;
-        let conn = self.store.lock()?;
-        let param_refs: Vec<&dyn duckdb::ToSql> =
-            binds.iter().map(|s| s as &dyn duckdb::ToSql).collect();
-        let Some(limit) = limit else {
-            let mut stmt = conn.prepare(&sql)?;
-            let out = crate::db::rows::query_vec(&mut stmt, param_refs.as_slice(), row_to_kg_fact)?;
-            let total = out.len();
-            return Ok((out, total));
-        };
-        let total: i64 = conn.query_row(
-            &format!("SELECT COUNT(*) FROM ({sql}) AS matches"),
-            param_refs.as_slice(),
-            |row| row.get(0),
-        )?;
-        let mut stmt = conn.prepare(&format!("{sql} LIMIT {limit}"))?;
-        let out = crate::db::rows::query_vec(&mut stmt, param_refs.as_slice(), row_to_kg_fact)?;
-        Ok((out, total.max(0) as usize))
-    }
-
-    /// Mark matching open active fact(s) as invalidated.
-    ///
-    /// Sets `valid_to = ended` (default now), `status = 'invalidated'`, and `invalidated_at`.
-    pub fn kg_invalidate(
-        &self,
-        subject: &str,
-        predicate: &str,
-        object: &str,
-        ended: Option<DateTime<Utc>>,
-    ) -> Result<Vec<KgFact>> {
-        let subject = require_nonempty(subject, "subject")?;
-        let predicate = normalize_predicate(predicate)?;
-        let object = require_nonempty(object, "object")?;
-        let ended = ended.unwrap_or_else(Utc::now);
-        let ended_s = format_ts(ended);
-        let now_s = format_ts(Utc::now());
-
-        let conn = self.store.lock()?;
-
-        // Collect ids first so we can validate windows and return updated rows.
-        let mut ids: Vec<String> = Vec::new();
-        {
-            let mut stmt = conn.prepare(
-                r#"
-                SELECT id, CAST(valid_from AS VARCHAR) FROM kg_facts
-                WHERE subject = ? AND predicate = ? AND object = ?
-                  AND status = 'active' AND valid_to IS NULL
-                "#,
-            )?;
-            let mut rows = stmt.query(params![subject, predicate, object])?;
-            crate::db::rows::visit_rows(&mut rows, |row| {
-                let id: String = row.get(0)?;
-                let vf_raw: Option<String> = row.get(1)?;
-                if let Some(raw) = vf_raw {
-                    let vf = parse_ts(&raw)?;
-                    if ended < vf {
-                        return Err(AppError::config(format!(
-                            "kg_invalidate: ended={ended_s} is before valid_from={raw}"
-                        )));
-                    }
-                }
-                ids.push(id);
-                Ok(())
-            })?;
-        }
-
-        if ids.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        for id in &ids {
-            conn.execute(
-                r#"
-                UPDATE kg_facts
-                SET valid_to = CAST(? AS TIMESTAMP),
-                    status = 'invalidated',
-                    invalidated_at = CAST(? AS TIMESTAMP),
-                    updated_at = CAST(? AS TIMESTAMP)
-                WHERE id = ?
-                "#,
-                params![ended_s.as_str(), ended_s.as_str(), now_s.as_str(), id],
-            )?;
-        }
-
-        let mut out = Vec::with_capacity(ids.len());
-        for id in &ids {
-            if let Some(f) = load_fact_locked(&conn, id)? {
-                out.push(f);
-            }
-        }
-        Ok(out)
-    }
-
-    /// Atomically replace an open fact's object at a shared boundary instant.
-    ///
-    /// Closes matching `(subject, predicate, old_object)` with `valid_to = at` and
-    /// `status = 'superseded'`, then opens `(subject, predicate, new_object)` with
-    /// `valid_from = at`. Point-in-time queries at `at` return only the successor
-    /// (half-open upper bound).
-    ///
-    /// If no open old fact exists, still opens the successor (degrades to add).
-    pub fn kg_supersede(&self, change: KgSupersedeInput<'_>) -> Result<KgFact> {
-        let KgSupersedeInput {
-            subject,
-            predicate,
-            old_object,
-            new_object,
-            at,
-            source_document_id,
-            confidence,
-        } = change;
-        let subject = require_nonempty(subject, "subject")?;
-        let predicate = normalize_predicate(predicate)?;
-        let old_object = require_nonempty(old_object, "old_object")?;
-        let new_object = require_nonempty(new_object, "new_object")?;
-        let at = at.unwrap_or_else(Utc::now);
-        let at_s = format_ts(at);
-        let now = Utc::now();
-        let now_s = format_ts(now);
-        let source_document_id = opt_trim(source_document_id);
-        let conf = confidence.unwrap_or(1.0);
-
-        let conn = self.store.lock()?;
-
-        // Close open old facts at the shared boundary.
-        let mut old_ids: Vec<String> = Vec::new();
-        {
-            let mut stmt = conn.prepare(
-                r#"
-                SELECT id, CAST(valid_from AS VARCHAR) FROM kg_facts
-                WHERE subject = ? AND predicate = ? AND object = ?
-                  AND status = 'active' AND valid_to IS NULL
-                "#,
-            )?;
-            let mut rows = stmt.query(params![subject, predicate, old_object])?;
-            crate::db::rows::visit_rows(&mut rows, |row| {
-                let id: String = row.get(0)?;
-                let vf_raw: Option<String> = row.get(1)?;
-                if let Some(raw) = vf_raw {
-                    let vf = parse_ts(&raw)?;
-                    if at < vf {
-                        return Err(AppError::config(format!(
-                            "kg_supersede: at={at_s} is before valid_from={raw}"
-                        )));
-                    }
-                }
-                old_ids.push(id);
-                Ok(())
-            })?;
-        }
-
-        // If successor already open and active, return it after closing olds.
-        let existing_new_id: Option<String> = {
-            let mut stmt = conn.prepare(
-                r#"
-                SELECT id FROM kg_facts
-                WHERE subject = ? AND predicate = ? AND object = ?
-                  AND status = 'active' AND valid_to IS NULL
-                LIMIT 1
-                "#,
-            )?;
-            let mut rows = stmt.query(params![subject, predicate, new_object])?;
-            match rows.next()? {
-                Some(row) => Some(row.get(0)?),
-                None => None,
-            }
-        };
-
-        let creating_new = existing_new_id.is_none();
-        let new_id = existing_new_id.unwrap_or_else(|| Uuid::new_v4().to_string());
-
-        for id in &old_ids {
-            conn.execute(
-                r#"
-                UPDATE kg_facts
-                SET valid_to = CAST(? AS TIMESTAMP),
-                    status = 'superseded',
-                    superseded_by = ?,
-                    updated_at = CAST(? AS TIMESTAMP)
-                WHERE id = ?
-                "#,
-                params![at_s.as_str(), new_id.as_str(), now_s.as_str(), id],
-            )?;
-        }
-
-        if creating_new {
-            conn.execute(
-                r#"
-                INSERT INTO kg_facts (
-                  id, subject, predicate, object,
-                  valid_from, valid_to, status, superseded_by,
-                  source_document_id, source, confidence, metadata_json,
-                  created_at, updated_at, invalidated_at
-                ) VALUES (
-                  ?, ?, ?, ?,
-                  CAST(? AS TIMESTAMP), NULL, 'active', NULL,
-                  ?, ?, ?, '{}',
-                  CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), NULL
-                )
-                "#,
-                params![
-                    new_id,
-                    subject,
-                    predicate,
-                    new_object,
-                    at_s.as_str(),
-                    source_document_id.clone(),
-                    source_document_id.clone(),
-                    conf,
-                    now_s.as_str(),
-                    now_s.as_str(),
-                ],
-            )?;
-        }
-
-        load_fact_locked(&conn, &new_id)?
-            .ok_or_else(|| AppError::db("kg_supersede: new fact not readable"))
-    }
-
-    /// Chronological facts for a subject (any status), ordered by `valid_from`.
-    pub fn kg_timeline(&self, subject: &str) -> Result<Vec<KgFact>> {
-        let subject = require_nonempty(subject, "subject")?;
-        let conn = self.store.lock()?;
-        let mut stmt = conn.prepare(&format!(
-            r#"
-            SELECT {KG_FACT_SELECT}
-            FROM kg_facts
-            WHERE subject = ?
-            ORDER BY valid_from ASC NULLS FIRST, created_at ASC, id ASC
-            "#
-        ))?;
-        let out = crate::db::rows::query_vec(&mut stmt, params![subject], row_to_kg_fact)?;
-        Ok(out)
-    }
-
-    /// Aggregate counts and distinct relationship types.
-    pub fn kg_stats(&self) -> Result<KgStats> {
-        let conn = self.store.lock()?;
-
-        // All counts in one scan (was six queries).
-        let (
-            total_facts,
-            active_facts,
-            invalidated_facts,
-            superseded_facts,
-            distinct_subjects,
-            distinct_predicates,
-        ): (i64, i64, i64, i64, i64, i64) = conn.query_row(
-            "SELECT COUNT(*), \
-                    COUNT(*) FILTER (WHERE status = 'active'), \
-                    COUNT(*) FILTER (WHERE status = 'invalidated'), \
-                    COUNT(*) FILTER (WHERE status = 'superseded'), \
-                    COUNT(DISTINCT subject), COUNT(DISTINCT predicate) \
-             FROM kg_facts",
-            [],
-            |r| {
-                Ok((
-                    r.get(0)?,
-                    r.get(1)?,
-                    r.get(2)?,
-                    r.get(3)?,
-                    r.get(4)?,
-                    r.get(5)?,
-                ))
-            },
-        )?;
-
-        let mut relationship_types = Vec::new();
-        {
-            let mut stmt =
-                conn.prepare("SELECT DISTINCT predicate FROM kg_facts ORDER BY predicate ASC")?;
-            crate::db::rows::for_each_row(&mut stmt, [], |row| {
-                relationship_types.push(row.get::<_, String>(0)?);
-                Ok(())
-            })?;
-        }
-
-        Ok(KgStats {
-            total_facts: total_facts as u64,
-            active_facts: active_facts as u64,
-            invalidated_facts: invalidated_facts as u64,
-            superseded_facts: superseded_facts as u64,
-            distinct_subjects: distinct_subjects as u64,
-            distinct_predicates: distinct_predicates as u64,
-            relationship_types,
-        })
-    }
-
-    /// Load one fact by primary key.
-    pub fn kg_get(&self, fact_id: &str) -> Result<Option<KgFact>> {
-        let conn = self.store.lock()?;
-        load_fact_locked(&conn, fact_id)
-    }
 }
 
 #[cfg(test)]
@@ -616,7 +480,6 @@ mod tests {
         let store = open_temp();
         for object in ["Acme", "Globex", "Initech"] {
             store
-                .kg()
                 .kg_add(KgFactInput {
                     subject: "Dana",
                     predicate: "worked_at",
@@ -630,15 +493,11 @@ mod tests {
                 .expect("add");
         }
         let (items, total) = store
-            .kg()
             .kg_query_page(Some("Dana"), None, None, None, Some(2))
             .expect("page");
         assert_eq!(items.len(), 2);
         assert_eq!(total, 3);
-        let all = store
-            .kg()
-            .kg_query(Some("Dana"), None, None, None)
-            .expect("all");
+        let all = store.kg_query(Some("Dana"), None, None, None).expect("all");
         assert_eq!(all.len(), 3);
         let ids = |facts: &[KgFact]| facts.iter().map(|fact| fact.id.clone()).collect::<Vec<_>>();
         assert_eq!(ids(&items), ids(&all[..2]));
@@ -648,7 +507,6 @@ mod tests {
     fn kg_add_query_active_and_idempotent() {
         let store = open_temp();
         let f1 = store
-            .kg()
             .kg_add(KgFactInput {
                 subject: "Alice",
                 predicate: "works_at",
@@ -666,7 +524,6 @@ mod tests {
         assert_eq!(f1.status, "active");
 
         let again = store
-            .kg()
             .kg_add(KgFactInput {
                 subject: "Alice",
                 predicate: "works_at",
@@ -681,7 +538,6 @@ mod tests {
         assert_eq!(again.id, f1.id);
 
         let hits = store
-            .kg()
             .kg_query(Some("Alice"), Some("works_at"), None, None)
             .expect("query");
         assert_eq!(hits.len(), 1);
@@ -692,7 +548,6 @@ mod tests {
     fn kg_invalidate_and_at_time_query() {
         let store = open_temp();
         store
-            .kg()
             .kg_add(KgFactInput {
                 subject: "Bob",
                 predicate: "lives_in",
@@ -707,7 +562,6 @@ mod tests {
 
         let ended = ts(2022, 6, 1);
         let inv = store
-            .kg()
             .kg_invalidate("Bob", "lives_in", "Paris", Some(ended))
             .expect("invalidate");
         assert_eq!(inv.len(), 1);
@@ -715,26 +569,22 @@ mod tests {
         assert!(inv[0].valid_to.is_some());
 
         let active = store
-            .kg()
             .kg_query(Some("Bob"), None, None, None)
             .expect("active query");
         assert!(active.is_empty());
 
         let mid = store
-            .kg()
             .kg_query(Some("Bob"), None, None, Some(ts(2021, 1, 1)))
             .expect("at_time mid");
         assert_eq!(mid.len(), 1);
 
         let after = store
-            .kg()
             .kg_query(Some("Bob"), None, None, Some(ts(2023, 1, 1)))
             .expect("at_time after");
         assert!(after.is_empty());
 
         // Half-open: at exact valid_to the fact is no longer valid.
         let boundary = store
-            .kg()
             .kg_query(Some("Bob"), None, None, Some(ended))
             .expect("at_time boundary");
         assert!(boundary.is_empty());
@@ -744,7 +594,6 @@ mod tests {
     fn kg_supersede_closes_old_and_opens_new() {
         let store = open_temp();
         store
-            .kg()
             .kg_add(KgFactInput {
                 subject: "Carol",
                 predicate: "employer",
@@ -759,7 +608,6 @@ mod tests {
 
         let at = ts(2024, 3, 15);
         let new_f = store
-            .kg()
             .kg_supersede(KgSupersedeInput {
                 subject: "Carol",
                 predicate: "employer",
@@ -774,7 +622,7 @@ mod tests {
         assert_eq!(new_f.status, "active");
         assert_eq!(new_f.valid_from, Some(at));
 
-        let timeline = store.kg().kg_timeline("Carol").expect("timeline");
+        let timeline = store.kg_timeline("Carol").expect("timeline");
         assert_eq!(timeline.len(), 2);
         let old = timeline.iter().find(|f| f.object == "OldCo").expect("old");
         assert_eq!(old.status, "superseded");
@@ -783,14 +631,12 @@ mod tests {
 
         // At boundary: only successor (half-open).
         let at_b = store
-            .kg()
             .kg_query(Some("Carol"), Some("employer"), None, Some(at))
             .expect("query at");
         assert_eq!(at_b.len(), 1);
         assert_eq!(at_b[0].object, "NewCo");
 
         let before = store
-            .kg()
             .kg_query(Some("Carol"), Some("employer"), None, Some(ts(2020, 1, 1)))
             .expect("query before");
         assert_eq!(before.len(), 1);
@@ -801,7 +647,6 @@ mod tests {
     fn kg_stats_counts() {
         let store = open_temp();
         store
-            .kg()
             .kg_add(KgFactInput {
                 subject: "X",
                 predicate: "rel_a",
@@ -814,7 +659,6 @@ mod tests {
             })
             .unwrap();
         store
-            .kg()
             .kg_add(KgFactInput {
                 subject: "X",
                 predicate: "rel_b",
@@ -826,9 +670,9 @@ mod tests {
                 metadata_json: None,
             })
             .unwrap();
-        store.kg().kg_invalidate("X", "rel_a", "Y", None).unwrap();
+        store.kg_invalidate("X", "rel_a", "Y", None).unwrap();
 
-        let s = store.kg().kg_stats().expect("stats");
+        let s = store.kg_stats().expect("stats");
         assert_eq!(s.total_facts, 2);
         assert_eq!(s.active_facts, 1);
         assert_eq!(s.invalidated_facts, 1);
@@ -841,31 +685,33 @@ mod tests {
     #[test]
     fn kg_add_rejects_empty_and_inverted() {
         let store = open_temp();
-        assert!(store
-            .kg()
-            .kg_add(KgFactInput {
-                subject: "",
-                predicate: "p",
-                object: "o",
-                valid_from: None,
-                valid_to: None,
-                source_document_id: None,
-                confidence: None,
-                metadata_json: None
-            })
-            .is_err());
-        assert!(store
-            .kg()
-            .kg_add(KgFactInput {
-                subject: "s",
-                predicate: "p",
-                object: "o",
-                valid_from: Some(ts(2022, 1, 1)),
-                valid_to: Some(ts(2020, 1, 1)),
-                source_document_id: None,
-                confidence: None,
-                metadata_json: None
-            })
-            .is_err());
+        assert!(
+            store
+                .kg_add(KgFactInput {
+                    subject: "",
+                    predicate: "p",
+                    object: "o",
+                    valid_from: None,
+                    valid_to: None,
+                    source_document_id: None,
+                    confidence: None,
+                    metadata_json: None
+                })
+                .is_err()
+        );
+        assert!(
+            store
+                .kg_add(KgFactInput {
+                    subject: "s",
+                    predicate: "p",
+                    object: "o",
+                    valid_from: Some(ts(2022, 1, 1)),
+                    valid_to: Some(ts(2020, 1, 1)),
+                    source_document_id: None,
+                    confidence: None,
+                    metadata_json: None
+                })
+                .is_err()
+        );
     }
 }

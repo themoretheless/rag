@@ -7,7 +7,7 @@
 use crate::mcp::error::mcp_error;
 use crate::models::OpsLogEntry;
 use crate::source_sync::{
-    sync_sources_nonblocking, SourceSyncCommand, SourceSyncControl, SourceSyncOutcome,
+    SourceSyncCommand, SourceSyncControl, SourceSyncOutcome, sync_sources_nonblocking,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,12 +21,12 @@ use rmcp::service::RequestContext;
 use rmcp::{ErrorData as McpError, RoleServer, ServerHandler};
 use serde::Serialize;
 
-use super::surface::{self, ToolSurface, INDEX_FIRST_PLAYBOOK, SPINE_TOOLS_BLURB};
+use super::surface::{self, INDEX_FIRST_PLAYBOOK, SPINE_TOOLS_BLURB, ToolSurface};
 
 use super::tools::{CollectionEntryParams, SyncSourcesParams, UpdateDocumentMetaParams};
 use crate::config::Config;
-use crate::db::store::CorpusMutationGuard;
 use crate::db::Store;
+use crate::db::store::CorpusMutationGuard;
 use crate::diagnostics::LlmStatusReport;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
@@ -915,14 +915,12 @@ mod audit_tests {
     #[test]
     fn one_parse_summary_matches_the_separate_checks() {
         let results = [
-            CallToolResult::success(vec![Content::json(
-                serde_json::json!({"hits": [1, 2, 3], "count": 3}),
-            )
-            .unwrap()]),
-            CallToolResult::success(vec![Content::json(
-                serde_json::json!({"success": false, "errors": ["x"]}),
-            )
-            .unwrap()]),
+            CallToolResult::success(vec![
+                Content::json(serde_json::json!({"hits": [1, 2, 3], "count": 3})).unwrap(),
+            ]),
+            CallToolResult::success(vec![
+                Content::json(serde_json::json!({"success": false, "errors": ["x"]})).unwrap(),
+            ]),
             CallToolResult::success(vec![Content::json(serde_json::json!([1, 2])).unwrap()]),
             CallToolResult::success(vec![Content::text("not json")]),
             CallToolResult::error(vec![Content::text("boom")]),
@@ -966,12 +964,14 @@ mod audit_tests {
                 })
             })
             .collect();
-        let result = CallToolResult::success(vec![Content::json(serde_json::json!({
-            "hits": hits,
-            "count": 10,
-            "query": "lorem",
-        }))
-        .unwrap()]);
+        let result = CallToolResult::success(vec![
+            Content::json(serde_json::json!({
+                "hits": hits,
+                "count": 10,
+                "query": "lorem",
+            }))
+            .unwrap(),
+        ]);
         const CALLS: u32 = 20_000;
         for analysis in [false, true] {
             let mut samples = Vec::new();
@@ -1067,59 +1067,56 @@ mod audit_tests {
 
     #[test]
     fn result_hint_exposes_only_bounded_counts() {
-        let result = CallToolResult::success(vec![Content::json(serde_json::json!({
-            "count": 7,
-            "query": "private search",
-            "path": "/private/source.md"
-        }))
-        .unwrap()]);
+        let result = CallToolResult::success(vec![
+            Content::json(serde_json::json!({
+                "count": 7,
+                "query": "private search",
+                "path": "/private/source.md"
+            }))
+            .unwrap(),
+        ]);
         assert_eq!(result_hint(&result).as_deref(), Some("count 7"));
     }
 
     #[test]
     fn aggregate_report_failures_are_not_telemetry_successes() {
-        let explicit_failure = CallToolResult::success(vec![Content::json(
-            serde_json::json!({"success": false, "errors": []}),
-        )
-        .unwrap()]);
+        let explicit_failure = CallToolResult::success(vec![
+            Content::json(serde_json::json!({"success": false, "errors": []})).unwrap(),
+        ]);
         assert!(!tool_result_succeeded(&explicit_failure));
 
-        let additive_error = CallToolResult::success(vec![Content::json(
-            serde_json::json!({"errors": ["FTS_FINALIZATION_FAILED"]}),
-        )
-        .unwrap()]);
+        let additive_error = CallToolResult::success(vec![
+            Content::json(serde_json::json!({"errors": ["FTS_FINALIZATION_FAILED"]})).unwrap(),
+        ]);
         assert!(!tool_result_succeeded(&additive_error));
 
-        let failed_documents = CallToolResult::success(vec![Content::json(
-            serde_json::json!({"documents_failed": [{"path": "redacted"}]}),
-        )
-        .unwrap()]);
+        let failed_documents = CallToolResult::success(vec![
+            Content::json(serde_json::json!({"documents_failed": [{"path": "redacted"}]})).unwrap(),
+        ]);
         assert!(!tool_result_succeeded(&failed_documents));
 
-        let nested_partial_reembed =
-            CallToolResult::success(vec![Content::json(serde_json::json!({
+        let nested_partial_reembed = CallToolResult::success(vec![
+            Content::json(serde_json::json!({
                 "errors": [],
                 "reembed_all": {"documents_failed": 1, "skipped_cap": 0}
             }))
-            .unwrap()]);
+            .unwrap(),
+        ]);
         assert!(!tool_result_succeeded(&nested_partial_reembed));
 
-        let organize_partial = CallToolResult::success(vec![Content::json(
-            serde_json::json!({"applied_ok": 1, "applied_failed": 1}),
-        )
-        .unwrap()]);
+        let organize_partial = CallToolResult::success(vec![
+            Content::json(serde_json::json!({"applied_ok": 1, "applied_failed": 1})).unwrap(),
+        ]);
         assert!(!tool_result_succeeded(&organize_partial));
 
-        let graph_partial = CallToolResult::success(vec![Content::json(
-            serde_json::json!({"rebuild_graph": {"failed": 1}}),
-        )
-        .unwrap()]);
+        let graph_partial = CallToolResult::success(vec![
+            Content::json(serde_json::json!({"rebuild_graph": {"failed": 1}})).unwrap(),
+        ]);
         assert!(!tool_result_succeeded(&graph_partial));
 
-        let successful = CallToolResult::success(vec![Content::json(
-            serde_json::json!({"success": true, "errors": []}),
-        )
-        .unwrap()]);
+        let successful = CallToolResult::success(vec![
+            Content::json(serde_json::json!({"success": true, "errors": []})).unwrap(),
+        ]);
         assert!(tool_result_succeeded(&successful));
     }
 }

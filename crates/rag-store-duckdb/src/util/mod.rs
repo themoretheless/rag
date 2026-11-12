@@ -15,7 +15,7 @@ pub use path::{
     backup_artifact_paths, refuse_live_database_target, resolve_allowlisted_output_file,
     validate_backup_output_paths,
 };
-pub use slug::{slugify, SlugPolicy};
+pub use slug::{SlugPolicy, slugify};
 pub use text::{
     excerpt_chars, first_line, first_prose_line, non_blank, trimmed_non_blank, truncate_chars,
 };

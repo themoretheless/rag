@@ -6,8 +6,8 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
-use crate::db::store::DocumentDerivedWrite;
 use crate::db::Store;
+use crate::db::store::DocumentDerivedWrite;
 use crate::document_indexer::DocumentIndexer;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};

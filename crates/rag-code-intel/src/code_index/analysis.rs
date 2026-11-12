@@ -1,5 +1,12 @@
 //! Syntactic entrypoints/routes, conservative reachability and structural call slices.
 use super::*;
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct EntryPointsQuery {
+    /// Exact project/wing; scopes source loading and discovery, including host dependencies.
+    pub project: Option<String>,
+    #[serde(flatten)]
+    pub query: CodeQuery,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct RouteSpec {
     pub handler: String,
@@ -11,8 +18,23 @@ pub(super) struct RouteSpec {
     #[serde(default)]
     pub start: usize,
 }
+#[derive(Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TestContext {
+    pub host_symbol_id: String,
+    pub lexical_owner_symbol_id: String,
+    pub effective_method: String,
+    pub origin: String,
+    pub host_document_id: String,
+    pub host_path: String,
+    pub host_revision: i64,
+    pub host_content_hash: String,
+    pub trait_body: bool,
+    pub framework_execution_verified: bool,
+}
 #[derive(Debug, Serialize)]
 pub struct EntryPoint {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub test_context: Option<TestContext>,
     pub document_id: String,
     pub start_byte: usize,
     pub project: Option<String>,
@@ -296,6 +318,9 @@ pub(super) fn entrypoints(
 ) -> Vec<EntryPoint> {
     let mut entries = Vec::new();
     for (id, doc) in docs {
+        if doc.php_names.is_some() {
+            entries.extend(super::php_names::test_entrypoints(docs, doc));
+        }
         let exports: HashSet<_> = doc.exports.values().map(String::as_str).collect();
         for symbol in symbols.iter().filter(|s| s.document_id == *id) {
             let owner = symbol.qualified_name.split("::").next().unwrap_or("");
@@ -332,6 +357,7 @@ pub(super) fn entrypoints(
             };
             if let Some(kind) = kind {
                 entries.push(EntryPoint {
+                    test_context: None,
                     document_id: id.clone(),
                     project: doc.project.clone(),
                     revision: doc.revision,
@@ -354,6 +380,7 @@ pub(super) fn entrypoints(
         }
         for endpoint in &doc.endpoints {
             entries.push(EntryPoint {
+                test_context: None,
                 document_id: id.clone(),
                 project: doc.project.clone(),
                 revision: doc.revision,
@@ -406,6 +433,7 @@ pub(super) fn entrypoints(
             });
             if targets.is_empty() {
                 entries.push(EntryPoint {
+                    test_context: None,
                     document_id: id.clone(),
                     project: doc.project.clone(),
                     revision: doc.revision,
@@ -432,6 +460,7 @@ pub(super) fn entrypoints(
             };
             for symbol in targets {
                 entries.push(EntryPoint {
+                    test_context: None,
                     document_id: id.clone(),
                     project: doc.project.clone(),
                     revision: doc.revision,
@@ -464,6 +493,7 @@ pub(super) fn entrypoints(
             &a.method,
             &a.reference_kind,
             &a.request_method,
+            &a.test_context,
         )
             .cmp(&(
                 &b.path,
@@ -475,6 +505,7 @@ pub(super) fn entrypoints(
                 &b.method,
                 &b.reference_kind,
                 &b.request_method,
+                &b.test_context,
             ))
     });
     entries.dedup_by(|a, b| {
@@ -485,6 +516,7 @@ pub(super) fn entrypoints(
             && a.route == b.route
             && a.method == b.method
             && a.reference_kind == b.reference_kind
+            && a.test_context == b.test_context
             && a.request_method == b.request_method
             && a.path == b.path
             && a.line == b.line
@@ -573,6 +605,9 @@ impl CodeSnapshot {
                         e.symbol_id
                             .as_deref()
                             .is_some_and(|id| selected.contains(id))
+                            || e.test_context
+                                .as_ref()
+                                .is_some_and(|c| selected.contains(c.host_symbol_id.as_str()))
                     }
                 })
                 .collect();
@@ -598,6 +633,12 @@ impl CodeSnapshot {
                     "client_defaults_interceptors_and_ajax_setup_resolved":false,
                     "fetch_default_method_inferred":false,
                     "php_handler_binding_verified":false,
+                    "phpunit_discovery_semantics":"effective_public_instance_candidates_on_captured_TestCase_hosts_with_trait_aliases_and_base_precedence",
+                    "phpunit_runtime_discovery_verified":false,
+                    "phpunit_inherited_and_trait_test_candidates":true,
+                    "phpunit_discovery_limits":{"hosts_per_document":128,"names_per_host":1024,"trait_depth":32,"ancestry_depth":64,"work_per_host":65536},
+                    "phpunit_candidate_enumeration_complete":false,
+                    "test_discovery_complete":false,
                     "route_path_semantics":"declared_literal_not_effective_mount_path",
                     "php_group_prefix_resolved":false,
                     "endpoint_urls_fetched":false
@@ -727,33 +768,50 @@ mod tests {
     }
     #[test]
     fn routes_retain_decorators_imported_handlers_and_unknown_handlers() {
-        let snap=snapshot(&[
-            ("/p/main.py","@app.get('/users/{id}')\ndef user():\n    return 1\n"),
-            ("/p/main.js","import {handler as serve} from './handlers'; app.get('/health',serve); app.post('/unknown',missing); app.get('/anon', () => 'body');"),
-            ("/p/handlers.js","export function handler() {}"),
-            ("/p/src/main.rs","fn handler() {} fn main() { let app = Router::new().route(r#\"/rust\"#, get(handler)); }"),
+        let snap = snapshot(&[
+            (
+                "/p/main.py",
+                "@app.get('/users/{id}')\ndef user():\n    return 1\n",
+            ),
+            (
+                "/p/main.js",
+                "import {handler as serve} from './handlers'; app.get('/health',serve); app.post('/unknown',missing); app.get('/anon', () => 'body');",
+            ),
+            ("/p/handlers.js", "export function handler() {}"),
+            (
+                "/p/src/main.rs",
+                "fn handler() {} fn main() { let app = Router::new().route(r#\"/rust\"#, get(handler)); }",
+            ),
         ]);
         let routes = snap.query("routes", &CodeQuery::default());
         let items = routes["items"].as_array().unwrap();
         assert_eq!(items.len(), 5, "{routes}");
-        assert!(items
-            .iter()
-            .any(|r| r["route"] == "/users/{id}" && r["resolution"] == "resolved_static"));
+        assert!(
+            items
+                .iter()
+                .any(|r| r["route"] == "/users/{id}" && r["resolution"] == "resolved_static")
+        );
         assert!(
             items
                 .iter()
                 .any(|r| r["route"] == "/health"
                     && r["symbol_id"].as_str().unwrap().starts_with("2:"))
         );
-        assert!(items
-            .iter()
-            .any(|r| r["route"] == "/unknown" && r["symbol_id"].is_null()));
-        assert!(items
-            .iter()
-            .any(|r| r["route"] == "/anon" && r["resolution"] == "unresolved"));
-        assert!(items
-            .iter()
-            .any(|r| r["route"] == "/rust" && r["method"] == "GET"));
+        assert!(
+            items
+                .iter()
+                .any(|r| r["route"] == "/unknown" && r["symbol_id"].is_null())
+        );
+        assert!(
+            items
+                .iter()
+                .any(|r| r["route"] == "/anon" && r["resolution"] == "unresolved")
+        );
+        assert!(
+            items
+                .iter()
+                .any(|r| r["route"] == "/rust" && r["method"] == "GET")
+        );
         let scoped = snap.query(
             "routes",
             &CodeQuery {
@@ -763,15 +821,20 @@ mod tests {
         );
         assert_eq!(scoped["total"], 3);
         let roots = snap.query("entrypoints", &CodeQuery::default());
-        assert!(roots["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|r| r["symbol_id"].is_string()));
+        assert!(
+            roots["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r["symbol_id"].is_string())
+        );
     }
     #[test]
     fn python_decorator_methods_are_literal_deduplicated_and_span_bound() {
-        let snap = snapshot(&[("/p/routes.py", "@app.route('/multi', methods=['post', 'GET', 'GET'])\ndef handler(): pass\n@app.api_route('/api', methods=('PATCH', 'DELETE'))\ndef handler(): pass\n@app.route('/dynamic', methods=['GET', verb])\ndef dynamic(): pass\n@app.route('/empty', methods=[])\ndef empty(): pass\n@app.route('/escaped', methods=['G\\x45T'])\ndef escaped(): pass\n@app.get('/fixed', response_model=Result)\ndef fixed(): pass\n")]);
+        let snap = snapshot(&[(
+            "/p/routes.py",
+            "@app.route('/multi', methods=['post', 'GET', 'GET'])\ndef handler(): pass\n@app.api_route('/api', methods=('PATCH', 'DELETE'))\ndef handler(): pass\n@app.route('/dynamic', methods=['GET', verb])\ndef dynamic(): pass\n@app.route('/empty', methods=[])\ndef empty(): pass\n@app.route('/escaped', methods=['G\\x45T'])\ndef escaped(): pass\n@app.get('/fixed', response_model=Result)\ndef fixed(): pass\n",
+        )]);
         let routes = snap.query("routes", &CodeQuery::default());
         let items = routes["items"].as_array().unwrap();
         assert_eq!(items.len(), 8, "{routes}");
@@ -798,7 +861,10 @@ mod tests {
     }
     #[test]
     fn python_route_methods_do_not_partially_trust_dynamic_collections() {
-        let snap = snapshot(&[("/p/routes.py", "@app.api_route('/set', methods={'post', 'GET'})\ndef a(): pass\n@app.route('/splat', methods=['GET', *extra])\ndef b(): pass\n@app.route('/scalar', methods='POST')\ndef c(): pass\n@app.route('/invalid', methods=['GET', 'BOGUS'])\ndef d(): pass\n@app.route('/fstring', methods=[f'GET'])\ndef e(): pass\n@app.route('/concat', methods=['G' 'ET'])\ndef f(): pass\n@app.route('/default')\ndef g(): pass\n")]);
+        let snap = snapshot(&[(
+            "/p/routes.py",
+            "@app.api_route('/set', methods={'post', 'GET'})\ndef a(): pass\n@app.route('/splat', methods=['GET', *extra])\ndef b(): pass\n@app.route('/scalar', methods='POST')\ndef c(): pass\n@app.route('/invalid', methods=['GET', 'BOGUS'])\ndef d(): pass\n@app.route('/fstring', methods=[f'GET'])\ndef e(): pass\n@app.route('/concat', methods=['G' 'ET'])\ndef f(): pass\n@app.route('/default')\ndef g(): pass\n",
+        )]);
         let result = snap.query("routes", &CodeQuery::default());
         let items = result["items"].as_array().unwrap();
         assert_eq!(items.len(), 8, "{result}");
@@ -863,14 +929,19 @@ mod tests {
     }
     #[test]
     fn php_route_inventory_does_not_guess_handler_bindings() {
-        let snap = snapshot(&[("/p/routes.php", "<?php function show() { return 1; } Route::get('/read', 'show'); Route::match(['GET','POST'], '/multi', [Controller::class, 'save']);")]);
+        let snap = snapshot(&[(
+            "/p/routes.php",
+            "<?php function show() { return 1; } Route::get('/read', 'show'); Route::match(['GET','POST'], '/multi', [Controller::class, 'save']);",
+        )]);
         let routes = snap.query("routes", &CodeQuery::default());
         assert_eq!(routes["total"], 3, "{routes}");
-        assert!(routes["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|r| r["symbol_id"].is_null() && r["resolution"] == "unresolved"));
+        assert!(
+            routes["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r["symbol_id"].is_null() && r["resolution"] == "unresolved")
+        );
         assert_eq!(routes["detail"]["php_handler_binding_verified"], false);
         let roots = snap.query("entrypoints", &CodeQuery::default());
         assert_eq!(roots["total"], 0, "{roots}");
@@ -879,7 +950,10 @@ mod tests {
     }
     #[test]
     fn reachability_dead_candidates_and_callbacks() {
-        let snap=snapshot(&[("/p/a.rs","fn main() { live(); let f=callback; } fn live() { nested(); } fn nested() {} fn unused() {} fn callback() {} #[test] fn verifies_behavior() { nested(); }")]);
+        let snap = snapshot(&[(
+            "/p/a.rs",
+            "fn main() { live(); let f=callback; } fn live() { nested(); } fn nested() {} fn unused() {} fn callback() {} #[test] fn verifies_behavior() { nested(); }",
+        )]);
         let dead = snap.query("dead_code", &CodeQuery::default());
         let items = dead["items"].as_array().unwrap();
         assert_eq!(items.len(), 1, "{dead}");

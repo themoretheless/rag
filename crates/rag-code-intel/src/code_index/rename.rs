@@ -1,6 +1,6 @@
 //! Reviewed, source-bound Rust rename plans. No textual fallback for unbound names.
 use super::*;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -211,13 +211,17 @@ fn live(path: &Path, roots: &[PathBuf]) -> Result<(PathBuf, String)> {
     }
     Ok((canonical, source))
 }
-fn build(conn: &duckdb::Connection, q: &RenameQuery, roots: &[PathBuf]) -> Result<Plan> {
+fn build(
+    r: &impl crate::db::lin_engine::LinReader,
+    q: &RenameQuery,
+    roots: &[PathBuf],
+) -> Result<Plan> {
     identifier(&q.new_name)?;
     if q.project.trim().is_empty() {
         return Err(AppError::Invalid("project is required".into()));
     }
-    let snapshot = snapshot_locked(conn, Some(&q.project))?;
-    let tests = snapshot_locked_view(conn, Some(&q.project), true)?;
+    let snapshot = snapshot_locked(r, Some(&q.project))?;
+    let tests = snapshot_locked_view(r, Some(&q.project), true)?;
     let mut targets: Vec<_> = snapshot
         .symbols
         .iter()
@@ -274,7 +278,7 @@ fn build(conn: &duckdb::Connection, q: &RenameQuery, roots: &[PathBuf]) -> Resul
     let revision = snapshot
         .index_revision
         .ok_or_else(|| AppError::Invalid("index required".into()))?;
-    let files = history::files(conn, revision, Some(&q.project))?;
+    let files = history::files(r, revision, Some(&q.project))?;
     if files.len() > 1000 || files.iter().map(|f| f.source.len()).sum::<usize>() > 32 * 1024 * 1024
     {
         return Err(AppError::Invalid(
@@ -477,30 +481,25 @@ fn build(conn: &duckdb::Connection, q: &RenameQuery, roots: &[PathBuf]) -> Resul
 
 impl<'a> CodeIndex<'a> {
     pub fn code_rename_preview(&self, q: &RenameQuery, roots: &[PathBuf]) -> Result<Value> {
-        self.store.with_conn(|conn| {
-            let tx = conn.transaction()?;
-            let plan = build(&tx, q, roots)?;
-            tx.commit()?;
-            Ok(plan.report)
-        })
+        let r = self.store.read()?;
+        let plan = build(&*r, q, roots)?;
+        Ok(plan.report)
     }
     pub fn code_rename_apply(&self, q: &RenameApply, roots: &[PathBuf]) -> Result<Value> {
-        self.store.with_conn(|conn| {
-            let tx = conn.transaction()?;
-            let plan = build(&tx, &q.query, roots)?;
-            if plan.report["status"] != "preview"
-                || plan.report["plan_token"].as_str() != Some(q.plan_token.as_str())
-            {
-                return Err(AppError::Invalid(
-                    "rename plan changed or blocked; request and review a fresh preview".into(),
-                ));
-            }
-            // Finish the read transaction before writing files, retaining the Store lock
-            // so ingestion cannot silently advance the captured corpus during apply.
-            tx.commit()?;
-            // The Store lock is released when this closure returns.
-            apply(plan, roots)
-        })
+        let w = self.store.write()?;
+        let plan = build(&*w, &q.query, roots)?;
+        if plan.report["status"] != "preview"
+            || plan.report["plan_token"].as_str() != Some(q.plan_token.as_str())
+        {
+            return Err(AppError::Invalid(
+                "rename plan changed or blocked; request and review a fresh preview".into(),
+            ));
+        }
+        // Retain the exclusive Store write guard while replacing files so ingestion
+        // cannot silently advance the captured corpus during apply.
+        let result = apply(plan, roots)?;
+        drop(w);
+        Ok(result)
     }
 }
 
@@ -711,19 +710,32 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let root = dir.path().canonicalize().unwrap().join("sources");
             std::fs::create_dir_all(root.join("src")).unwrap();
-            let store = crate::testkit::open_test_store(&dir.path().join("rename.duckdb")).unwrap();
+            let store = Store::open(&dir.path().join("rename.duckdb")).unwrap();
             let f = Self { store, dir, root };
-            for (id,source) in [("Cargo.toml","[package]\nname='rename-fixture'\nversion='0.1.0'\nedition='2021'\n"),("src/lib.rs","pub mod api; pub mod client;\n// value stays in comments\npub const MESSAGE: &str = \"value\";\n"),("src/api.rs","pub fn value()->i32{1}\n"),("src/client.rs","pub fn use_value()->i32{crate::api::value()}\n")] {f.put(id,source,1);}
-            crate::code_index::CodeIndex::new(&f.store)
-                .index_code()
-                .unwrap();
+            for (id, source) in [
+                (
+                    "Cargo.toml",
+                    "[package]\nname='rename-fixture'\nversion='0.1.0'\nedition='2021'\n",
+                ),
+                (
+                    "src/lib.rs",
+                    "pub mod api; pub mod client;\n// value stays in comments\npub const MESSAGE: &str = \"value\";\n",
+                ),
+                ("src/api.rs", "pub fn value()->i32{1}\n"),
+                (
+                    "src/client.rs",
+                    "pub fn use_value()->i32{crate::api::value()}\n",
+                ),
+            ] {
+                f.put(id, source, 1);
+            }
+            f.store.index_code().unwrap();
             f
         }
         fn put(&self, id: &str, source: &str, revision: i64) {
             let path = self.root.join(id);
             std::fs::write(&path, source).unwrap();
             self.store
-                .documents()
                 .upsert_document(&crate::models::Document {
                     id: id.into(),
                     uri: format!("file://{}", path.display()),
@@ -744,13 +756,13 @@ mod tests {
             }
         }
         fn preview(&self) -> Value {
-            crate::code_index::CodeIndex::new(&self.store)
+            self.store
                 .code_rename_preview(&self.query(), std::slice::from_ref(&self.root))
                 .unwrap()
         }
         fn plan(&self) -> Plan {
-            let conn = self.store.lock().unwrap();
-            build(&conn, &self.query(), std::slice::from_ref(&self.root)).unwrap()
+            let r = self.store.read().unwrap();
+            build(&*r, &self.query(), std::slice::from_ref(&self.root)).unwrap()
         }
     }
     #[test]
@@ -762,7 +774,8 @@ mod tests {
         assert_eq!(p["changes"].as_array().unwrap().len(), 2);
         let before = std::fs::read_to_string(f.root.join("src/api.rs")).unwrap();
         assert!(before.contains("fn value"));
-        let r = crate::code_index::CodeIndex::new(&f.store)
+        let r = f
+            .store
             .code_rename_apply(
                 &RenameApply {
                     query: f.query(),
@@ -777,12 +790,16 @@ mod tests {
             std::fs::read_to_string(f.root.join("src/api.rs")).unwrap(),
             "pub fn compute()->i32{1}\n"
         );
-        assert!(std::fs::read_to_string(f.root.join("src/client.rs"))
-            .unwrap()
-            .contains("api::compute()"));
-        assert!(std::fs::read_to_string(f.root.join("src/lib.rs"))
-            .unwrap()
-            .contains("\"value\""));
+        assert!(
+            std::fs::read_to_string(f.root.join("src/client.rs"))
+                .unwrap()
+                .contains("api::compute()")
+        );
+        assert!(
+            std::fs::read_to_string(f.root.join("src/lib.rs"))
+                .unwrap()
+                .contains("\"value\"")
+        );
         let journal: Value =
             serde_json::from_slice(&std::fs::read(r["journal"].as_str().unwrap()).unwrap())
                 .unwrap();
@@ -802,18 +819,22 @@ mod tests {
             query: f.query(),
             plan_token: "forged".into(),
         };
-        assert!(crate::code_index::CodeIndex::new(&f.store)
-            .code_rename_apply(&apply, std::slice::from_ref(&f.root))
-            .is_err());
+        assert!(
+            f.store
+                .code_rename_apply(&apply, std::slice::from_ref(&f.root))
+                .is_err()
+        );
         apply.plan_token = p["plan_token"].as_str().unwrap().into();
         std::fs::write(
             f.root.join("src/lib.rs"),
             "pub mod api;pub mod client;// concurrent\n",
         )
         .unwrap();
-        assert!(crate::code_index::CodeIndex::new(&f.store)
-            .code_rename_apply(&apply, std::slice::from_ref(&f.root))
-            .is_err());
+        assert!(
+            f.store
+                .code_rename_apply(&apply, std::slice::from_ref(&f.root))
+                .is_err()
+        );
         assert_eq!(
             std::fs::read_to_string(f.root.join("src/api.rs")).unwrap(),
             "pub fn value()->i32{1}\n"
@@ -833,9 +854,7 @@ mod tests {
             1,
         );
         f.put("Dockerfile", "FROM scratch\n# value compute\n", 1);
-        crate::code_index::CodeIndex::new(&f.store)
-            .index_code()
-            .unwrap();
+        f.store.index_code().unwrap();
         let preview = f.preview();
         assert_eq!(preview["status"], "preview", "{preview}");
         assert_eq!(preview["changes"].as_array().unwrap().len(), 2);
@@ -845,18 +864,22 @@ mod tests {
             "services: {changed: {image: other:v1}}\n",
         )
         .unwrap();
-        assert!(crate::code_index::CodeIndex::new(&f.store)
-            .code_rename_apply(
-                &RenameApply {
-                    query: f.query(),
-                    plan_token: preview["plan_token"].as_str().unwrap().into()
-                },
-                std::slice::from_ref(&f.root)
-            )
-            .is_err());
-        assert!(std::fs::read_to_string(f.root.join("src/api.rs"))
-            .unwrap()
-            .contains("fn value"));
+        assert!(
+            f.store
+                .code_rename_apply(
+                    &RenameApply {
+                        query: f.query(),
+                        plan_token: preview["plan_token"].as_str().unwrap().into()
+                    },
+                    std::slice::from_ref(&f.root)
+                )
+                .is_err()
+        );
+        assert!(
+            std::fs::read_to_string(f.root.join("src/api.rs"))
+                .unwrap()
+                .contains("fn value")
+        );
     }
     #[test]
     fn collisions_unknown_occurrences_aliases_and_trait_families_block() {
@@ -867,26 +890,24 @@ mod tests {
         ] {
             let f = Fixture::new();
             f.put("src/client.rs", source, 2);
-            crate::code_index::CodeIndex::new(&f.store)
-                .index_code()
-                .unwrap();
+            f.store.index_code().unwrap();
             let p = f.preview();
             assert_eq!(p["status"], "blocked", "{p}");
             assert!(p["plan_token"].is_null());
         }
         let f = Fixture::new();
         f.put("src/api.rs", "pub trait T{fn value()->i32{1}}", 2);
-        crate::code_index::CodeIndex::new(&f.store)
-            .index_code()
-            .unwrap();
+        f.store.index_code().unwrap();
         let p = f.preview();
         assert_eq!(p["status"], "blocked", "{p}");
         for name in ["fn", "x(){} fn injected", "r#self", ""] {
             let mut q = f.query();
             q.new_name = name.into();
-            assert!(crate::code_index::CodeIndex::new(&f.store)
-                .code_rename_preview(&q, std::slice::from_ref(&f.root))
-                .is_err());
+            assert!(
+                f.store
+                    .code_rename_preview(&q, std::slice::from_ref(&f.root))
+                    .is_err()
+            );
         }
     }
     #[test]
@@ -934,18 +955,19 @@ mod tests {
     #[test]
     fn paths_permissions_and_source_encoding_are_checked() {
         let f = Fixture::new();
-        assert!(crate::code_index::CodeIndex::new(&f.store)
-            .code_rename_preview(&f.query(), &[])
-            .is_err());
+        assert!(f.store.code_rename_preview(&f.query(), &[]).is_err());
         for bytes in [
             &b"\xffinvalid"[..],
             &b"\xef\xbb\xbfpub fn value()->i32{1}\n"[..],
         ] {
             let invalid = Fixture::new();
             std::fs::write(invalid.root.join("src/api.rs"), bytes).unwrap();
-            assert!(crate::code_index::CodeIndex::new(&invalid.store)
-                .code_rename_preview(&invalid.query(), std::slice::from_ref(&invalid.root))
-                .is_err());
+            assert!(
+                invalid
+                    .store
+                    .code_rename_preview(&invalid.query(), std::slice::from_ref(&invalid.root))
+                    .is_err()
+            );
         }
         let readonly = Fixture::new();
         let preview = readonly.preview();
@@ -957,9 +979,12 @@ mod tests {
             query: readonly.query(),
             plan_token: preview["plan_token"].as_str().unwrap().into(),
         };
-        assert!(crate::code_index::CodeIndex::new(&readonly.store)
-            .code_rename_apply(&request, std::slice::from_ref(&readonly.root))
-            .is_err());
+        assert!(
+            readonly
+                .store
+                .code_rename_apply(&request, std::slice::from_ref(&readonly.root))
+                .is_err()
+        );
         assert!(std::fs::read_to_string(&api).unwrap().contains("fn value"));
         #[cfg(unix)]
         {
@@ -968,22 +993,26 @@ mod tests {
             let original = f.dir.path().join("original.rs");
             std::fs::rename(&api, &original).unwrap();
             symlink(&original, &api).unwrap();
-            assert!(crate::code_index::CodeIndex::new(&f.store)
-                .code_rename_preview(&f.query(), std::slice::from_ref(&f.root))
-                .is_err());
+            assert!(
+                f.store
+                    .code_rename_preview(&f.query(), std::slice::from_ref(&f.root))
+                    .is_err()
+            );
             std::fs::remove_file(&api).unwrap();
             std::fs::hard_link(&original, &api).unwrap();
-            assert!(crate::code_index::CodeIndex::new(&f.store)
-                .code_rename_preview(&f.query(), std::slice::from_ref(&f.root))
-                .is_err());
+            assert!(
+                f.store
+                    .code_rename_preview(&f.query(), std::slice::from_ref(&f.root))
+                    .is_err()
+            );
         }
         assert_eq!(
-            rag_mcp::access::required_tool_role("rename"),
-            Some(rag_mcp::access::AccessRole::Read)
+            crate::access::required_tool_role("rename"),
+            Some(crate::access::AccessRole::Read)
         );
         assert_eq!(
-            rag_mcp::access::required_tool_role("apply_rename"),
-            Some(rag_mcp::access::AccessRole::Admin)
+            crate::access::required_tool_role("apply_rename"),
+            Some(crate::access::AccessRole::Admin)
         );
     }
 }

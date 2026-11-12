@@ -236,7 +236,7 @@ mod tests {
     }
     #[test]
     fn inline_urls_keep_decoded_values_and_original_multibyte_attribute_anchor() {
-        let source="<p>Привет</p>\n<div style=\"background:url(&quot;a.svg?x=1&amp;y=2&quot;); cursor:url('cursor.svg'),auto; content:'url(fake.svg)'\"></div>";
+        let source = "<p>Привет</p>\n<div style=\"background:url(&quot;a.svg?x=1&amp;y=2&quot;); cursor:url('cursor.svg'),auto; content:'url(fake.svg)'\"></div>";
         let out = parsed(source);
         assert!(out.symbols.is_empty() && out.references.is_empty());
         assert_eq!(
@@ -282,7 +282,7 @@ mod tests {
     }
     #[test]
     fn inline_responsive_images_keep_choice_evidence_without_synthetic_offsets() {
-        let source="<div style=\"background-image:image-set('a.svg' 1x type('image/svg+xml'),url('b.svg') 2x)\"></div>";
+        let source = "<div style=\"background-image:image-set('a.svg' 1x type('image/svg+xml'),url('b.svg') 2x)\"></div>";
         let out = parsed(source);
         assert_eq!(out.file_resources.len(), 2, "{:?}", out.file_resources);
         for spec in &out.file_resources {
@@ -295,14 +295,17 @@ mod tests {
             assert_eq!(&source[spec.start_byte..spec.start_byte + 1], "\"");
             assert!(!choice.selection_proven);
         }
-        assert!(out
-            .file_resources
-            .iter()
-            .all(|s| s.target != "image/svg+xml"));
+        assert!(
+            out.file_resources
+                .iter()
+                .all(|s| s.target != "image/svg+xml")
+        );
     }
     #[test]
     fn declaration_list_recovery_does_not_treat_rules_or_at_rules_as_inline_resources() {
-        let out=parsed("<div style=\"};background:url('after.svg'); .bad{background:url('fake.svg')}; @import 'phantom.css'; cursor:url('cursor.svg'),auto; broken tokens; mask-image:url('last.svg')\"></div><img src='ordinary.svg'>");
+        let out = parsed(
+            "<div style=\"};background:url('after.svg'); .bad{background:url('fake.svg')}; @import 'phantom.css'; cursor:url('cursor.svg'),auto; broken tokens; mask-image:url('last.svg')\"></div><img src='ordinary.svg'>",
+        );
         let mut targets: Vec<_> = out
             .file_resources
             .iter()
@@ -313,14 +316,17 @@ mod tests {
             targets,
             ["after.svg", "cursor.svg", "last.svg", "ordinary.svg"]
         );
-        assert!(out
-            .binding_limitations
-            .iter()
-            .any(|c| c == "INLINE_STYLE_DECLARATION_SYNTAX_UNVERIFIED"));
+        assert!(
+            out.binding_limitations
+                .iter()
+                .any(|c| c == "INLINE_STYLE_DECLARATION_SYNTAX_UNVERIFIED")
+        );
     }
     #[test]
     fn duplicate_template_and_base_contexts_do_not_choose_arbitrary_targets() {
-        let out=parsed("<p style=\"background:url('duplicate.svg')\" STYLE=\"background:url('other.svg')\"></p><p :style=\"dynamic\"></p><svg xml:base='/elsewhere/'><g style=\"fill:url('paint.svg')\"></g></svg><p style=\"background:url('normal.svg')\"></p>");
+        let out = parsed(
+            "<p style=\"background:url('duplicate.svg')\" STYLE=\"background:url('other.svg')\"></p><p :style=\"dynamic\"></p><svg xml:base='/elsewhere/'><g style=\"fill:url('paint.svg')\"></g></svg><p style=\"background:url('normal.svg')\"></p>",
+        );
         assert_eq!(out.file_resources.len(), 2, "{:?}", out.file_resources);
         assert!(
             out.file_resources
@@ -350,10 +356,11 @@ mod tests {
             "color:red;".repeat(MAX_ATTRIBUTE_BYTES / 10 + 1)
         );
         let out = parsed(&large);
-        assert!(out
-            .binding_limitations
-            .iter()
-            .any(|c| c == "INLINE_STYLE_ATTRIBUTE_BYTE_BUDGET_EXCEEDED"));
+        assert!(
+            out.binding_limitations
+                .iter()
+                .any(|c| c == "INLINE_STYLE_ATTRIBUTE_BYTE_BUDGET_EXCEEDED")
+        );
         assert_eq!(out.file_resources.len(), 1);
         let deep = format!(
             "<p style=\"background:{}url('deep.svg'){}; mask-image:url('valid.svg')\"></p>",
@@ -374,7 +381,7 @@ mod tests {
     fn inline_resource_impact_liveness_refresh_and_frozen_property_diffs() {
         use crate::models::Document;
         let temp = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&temp.path().join("inline.duckdb")).unwrap();
+        let store = Store::open(&temp.path().join("inline.duckdb")).unwrap();
         let doc = |id: &str, path: &str, body: &str| Document {
             id: id.into(),
             uri: format!("file://{id}"),
@@ -383,33 +390,30 @@ mod tests {
             content: body.into(),
             ..Default::default()
         };
-        let mut page=doc("page","/p/page.html","<div style=\"background:url(&quot;a.svg&quot;);mask-image:image-set('a.svg' 1x,'b.svg' 2x)\"></div>");
+        let mut page = doc(
+            "page",
+            "/p/page.html",
+            "<div style=\"background:url(&quot;a.svg&quot;);mask-image:image-set('a.svg' 1x,'b.svg' 2x)\"></div>",
+        );
         for d in [
             page.clone(),
             doc("a", "/p/a.svg", "<svg/>"),
             doc("b", "/p/b.svg", "<svg/>"),
         ] {
-            store.documents().upsert_document(&d).unwrap();
+            store.upsert_document(&d).unwrap();
         }
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        store.index_code().unwrap();
         let q = CodeQuery {
             impact_file: Some("/p/b.svg".into()),
             ..Default::default()
         };
-        let result = crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap()
-            .query("impact", &q);
+        let result = store.code_snapshot().unwrap().query("impact", &q);
         assert_eq!(result["items"][0]["path"], "/p/page.html", "{result}");
         assert_eq!(
             result["items"][0]["via"]["inline"]["property"],
             "mask-image"
         );
-        let dead = crate::code_index::CodeIndex::new(&store)
-            .code_dead_files(&CodeQuery::default())
-            .unwrap();
+        let dead = store.code_dead_files(&CodeQuery::default()).unwrap();
         assert!(
             dead["protected"]
                 .as_array()
@@ -419,26 +423,21 @@ mod tests {
             "{dead}"
         );
         page.content = page.content.replace("2x", "3x");
-        store.documents().upsert_document(&page).unwrap();
-        assert!(crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap()
-            .query("impact", &q)["items"]
-            .as_array()
-            .unwrap()
-            .is_empty());
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        store.upsert_document(&page).unwrap();
+        assert!(
+            store.code_snapshot().unwrap().query("impact", &q)["items"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        store.index_code().unwrap();
         let dq = history::DiffQuery {
             before: 1,
             after: Some(2),
             project: None,
             limit: None,
         };
-        let diff = crate::code_index::CodeIndex::new(&store)
-            .code_index_diff(&dq)
-            .unwrap();
+        let diff = store.code_index_diff(&dq).unwrap();
         assert_eq!(diff["inline_style_relations_available"], true);
         assert!(
             diff["relations_added"]
@@ -449,17 +448,10 @@ mod tests {
             "{diff}"
         );
         page.content = format!("\n\n{}", page.content.replace("&quot;", "&#34;"));
-        store.documents().upsert_document(&page).unwrap();
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        assert_eq!(
-            crate::code_index::CodeIndex::new(&store)
-                .code_index_diff(&dq)
-                .unwrap(),
-            diff
-        );
-        let moved = crate::code_index::CodeIndex::new(&store)
+        store.upsert_document(&page).unwrap();
+        store.index_code().unwrap();
+        assert_eq!(store.code_index_diff(&dq).unwrap(), diff);
+        let moved = store
             .code_index_diff(&history::DiffQuery {
                 before: 2,
                 after: Some(3),
@@ -470,11 +462,9 @@ mod tests {
         assert_eq!(moved["relations_added_total"], 0);
         assert_eq!(moved["relations_removed_total"], 0);
         page.content = page.content.replace("background:", "list-style-image:");
-        store.documents().upsert_document(&page).unwrap();
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        let roles = crate::code_index::CodeIndex::new(&store)
+        store.upsert_document(&page).unwrap();
+        store.index_code().unwrap();
+        let roles = store
             .code_index_diff(&history::DiffQuery {
                 before: 3,
                 after: Some(4),
@@ -490,28 +480,14 @@ mod tests {
                 .any(|e| e["inline"]["property"] == "list-style-image"),
             "{roles}"
         );
-        let c = store.lock().unwrap();
-        let raw: String = c
-            .query_row(
-                "SELECT graph_json FROM code_index_revisions WHERE id=1",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let raw = crate::code_index::test_get_rev_graph_json(&store, 1);
         let mut graph: serde_json::Value = serde_json::from_str(&raw).unwrap();
         graph
             .as_object_mut()
             .unwrap()
             .remove("inline_style_resources_format");
-        c.execute(
-            "UPDATE code_index_revisions SET graph_json=? WHERE id=1",
-            [graph.to_string()],
-        )
-        .unwrap();
-        drop(c);
-        let legacy = crate::code_index::CodeIndex::new(&store)
-            .code_index_diff(&dq)
-            .unwrap();
+        crate::code_index::test_set_rev_graph_json(&store, 1, &graph.to_string());
+        let legacy = store.code_index_diff(&dq).unwrap();
         assert_eq!(legacy["inline_style_relations_available"], false);
         assert_eq!(legacy["relations_added_total"], 0);
         assert_eq!(legacy["relations_removed_total"], 0);

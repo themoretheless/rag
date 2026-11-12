@@ -1,0 +1,19 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 29.95s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 11 tests
+test code_index::resolve::python_names::tests::handler_alias_parser_shape_keeps_one_type_and_one_identifier ... ok
+test code_index::resolve::python_names::tests::python_locals_are_function_scoped_and_parameters_keep_their_initial_values ... ok
+test code_index::resolve::python_names::tests::class_dictionaries_do_not_shadow_method_globals_and_defaults_use_parent_scope ... ok
+test code_index::resolve::python_names::tests::a_typed_parameter_keeps_its_value_before_a_later_local_assignment ... ok
+test code_index::resolve::python_names::tests::normalized_import_aliases_use_python_module_identifier_spelling ... ok
+test code_index::resolve::python_names::tests::normalized_python_parameters_shadow_globals_without_rewriting_evidence ... ok
+test code_index::resolve::python_names::tests::class_body_and_method_default_names_follow_the_actual_evaluation_scope ... ok
+test code_index::resolve::python_names::tests::assignment_rhs_uses_the_preceding_receiver_and_commits_the_new_type_afterwards ... ok
+test code_index::resolve::python_names::tests::opaque_python_binders_and_shadowed_super_do_not_gain_false_targets ... ok
+test code_index::resolve::python_names::tests::for_targets_shadow_global_calls_but_not_other_imports ... ok
+test code_index::resolve::python_names::tests::handler_aliases_shadow_globals_and_cleanup_masks_inner_reassignments ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1426 filtered out; finished in 0.01s
+

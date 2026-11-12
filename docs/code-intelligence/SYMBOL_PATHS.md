@@ -39,6 +39,11 @@ dispatch. Even unique trait/inheritance/static-call edges retain the underlying
 resolver's semantics. `direction=back` reverses traversal, while `both` admits
 both directions; each step keeps original source/target and `reversed`.
 
+PHP trait bindings now match captured lexical consumers in every direction.
+Target uniqueness is checked within the selected context; aggregate alternatives
+remain labelled. Conditional paths add node/step context identities and original
+class definitions. See [trait-frame paths](TRACE_TRAIT_CONTEXTS.md).
+
 Breadth-first traversal returns shorter paths first with stable source/target/
 relation/location ordering. Paths cannot repeat a symbol. Equal-symbol endpoints
 produce a zero-edge identity path. Every step contains source/target definitions,
@@ -60,4 +65,4 @@ supported semantics and depth remain limited. `absence_proven` and
 `runtime_path_proven` are always false. There is no full data-flow slicing or
 dynamic execution guarantee.
 
-Qualification: [native and real-MCP fixture evidence](../qualification/symbol-paths-2026-10-25/README.md).
+Qualification: [native and real-MCP fixture evidence](qualification/symbol-paths-2026-10-25/README.md).

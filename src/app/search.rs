@@ -8,7 +8,7 @@ use crate::config::Config;
 use crate::db::Store;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
-use crate::eval::{source_versions_json, RetrievalTrace, SourceVersion, SpanBuilder};
+use crate::eval::{RetrievalTrace, SourceVersion, SpanBuilder, source_versions_json};
 use crate::models::{Document, SearchHit};
 use crate::retrieval::{self, ChunkText, DocumentWithChunks, PackContextCommand, SearchRequest};
 use crate::util::run_blocking;

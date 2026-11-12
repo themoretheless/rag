@@ -645,10 +645,12 @@ pub fn resource_snapshot() -> ResourceSnapshot {
     RESOURCE_SAMPLER_STARTED.call_once(|| {
         std::thread::Builder::new()
             .name("resource-sampler".into())
-            .spawn(|| loop {
-                let snap = sample_resources();
-                *RESOURCE_SAMPLE.write().unwrap_or_else(|p| p.into_inner()) = Some(snap);
-                std::thread::sleep(Duration::from_secs(2));
+            .spawn(|| {
+                loop {
+                    let snap = sample_resources();
+                    *RESOURCE_SAMPLE.write().unwrap_or_else(|p| p.into_inner()) = Some(snap);
+                    std::thread::sleep(Duration::from_secs(2));
+                }
             })
             .ok();
     });

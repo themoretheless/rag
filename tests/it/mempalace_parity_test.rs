@@ -7,11 +7,11 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, TimeZone, Utc};
+use rag_mcp::StatusReport;
 use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
 use rag_mcp::models::{Document, GraphNode};
 use rag_mcp::testkit::{open_temp_store, test_config};
-use rag_mcp::StatusReport;
-use rag_mcp::{content_hash, diary_read, diary_write, wake_up, Store, REL_TUNNEL};
+use rag_mcp::{REL_TUNNEL, Store, content_hash, diary_read, diary_write, wake_up};
 use uuid::Uuid;
 
 const DIMS: usize = 32;
@@ -156,14 +156,18 @@ fn wing_room_taxonomy() {
         .expect("research wing");
     assert_eq!(research.document_count, 3);
     assert_eq!(research.rooms.len(), 2);
-    assert!(research
-        .rooms
-        .iter()
-        .any(|r| r.room == "rag" && r.document_count == 2));
-    assert!(research
-        .rooms
-        .iter()
-        .any(|r| r.room == "llm" && r.document_count == 1));
+    assert!(
+        research
+            .rooms
+            .iter()
+            .any(|r| r.room == "rag" && r.document_count == 2)
+    );
+    assert!(
+        research
+            .rooms
+            .iter()
+            .any(|r| r.room == "llm" && r.document_count == 1)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -483,9 +487,10 @@ async fn diary_write_read_and_wake_up() {
 
     let read = diary_read(&store, "CLAUDE", 10).expect("diary_read");
     assert!(read.len() >= 2);
-    assert!(read
-        .iter()
-        .any(|e| e.content == "noticed the FTS index was empty"));
+    assert!(
+        read.iter()
+            .any(|e| e.content == "noticed the FTS index was empty")
+    );
     assert!(read.iter().any(|e| e.id == w2.entry.id));
     // Newest first.
     assert!(read[0].created_at >= read[1].created_at);
@@ -601,10 +606,12 @@ async fn diary_write_read_and_wake_up() {
     .expect("wake_up claude");
     assert_eq!(report_claude.agent_name.as_deref(), Some("claude"));
     assert_eq!(report_claude.diary.len(), 2);
-    assert!(report_claude
-        .diary
-        .iter()
-        .any(|e| e.content == "second note same agent"));
+    assert!(
+        report_claude
+            .diary
+            .iter()
+            .any(|e| e.content == "second note same agent")
+    );
 }
 
 // ---------------------------------------------------------------------------

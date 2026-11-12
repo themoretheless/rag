@@ -991,6 +991,7 @@ impl<'a> Resolver<'a> {
         candidates.sort();
         candidates.dedup();
         CallEdge {
+            context_evidence: None,
             reference: r.clone(),
             resolution: match candidates.len() {
                 0 => "unresolved",
@@ -1129,7 +1130,11 @@ mod tests {
     }
     #[test]
     fn ruby_owner_and_receiver_kinds_distinguish_instance_class_and_top_level_methods() {
-        let (symbols,edges)=bound(&[("/p/main.rb","p","module A\n class C\n  def helper; 1; end\n  def run; helper(); self.helper(); end\n  def self.helper; 2; end\n  def self.run; helper(); end\n end\nend\ndef helper; 3; end\ndef main\n helper()\n A::C.run()\n c=A::C.new('PRIVATE_BODY')\n c.run()\nend\nmain()\n")]);
+        let (symbols, edges) = bound(&[(
+            "/p/main.rb",
+            "p",
+            "module A\n class C\n  def helper; 1; end\n  def run; helper(); self.helper(); end\n  def self.helper; 2; end\n  def self.run; helper(); end\n end\nend\ndef helper; 3; end\ndef main\n helper()\n A::C.run()\n c=A::C.new('PRIVATE_BODY')\n c.run()\nend\nmain()\n",
+        )]);
         assert_eq!(
             targets(&symbols, &edges, "A::C#run", "helper"),
             ["A::C#helper"]
@@ -1145,13 +1150,15 @@ mod tests {
         assert_eq!(targets(&symbols, &edges, "main", "helper"), ["helper"]);
         assert_eq!(targets(&symbols, &edges, "main", "A::C.run"), ["A::C.run"]);
         assert_eq!(targets(&symbols, &edges, "main", "c.run"), ["A::C#run"]);
-        assert!(!serde_json::to_string(&edges)
-            .unwrap()
-            .contains("PRIVATE_BODY"));
+        assert!(
+            !serde_json::to_string(&edges)
+                .unwrap()
+                .contains("PRIVATE_BODY")
+        );
     }
     #[test]
     fn ruby_parameters_reassignments_control_flow_and_block_shadows_do_not_invent_receiver_types() {
-        let source="class C\n def run; 1; end\nend\ndef safe\n c=C.new\n c.run()\nend\ndef parameter(c)\n c.run()\nend\ndef changed\n c=C.new\n c=other\n c.run()\nend\ndef conditional(flag)\n if flag\n  c=C.new\n end\n c.run()\nend\ndef blocks\n c=C.new\n [1].each do |c|\n  c.run()\n end\n c.run()\nend\n";
+        let source = "class C\n def run; 1; end\nend\ndef safe\n c=C.new\n c.run()\nend\ndef parameter(c)\n c.run()\nend\ndef changed\n c=C.new\n c=other\n c.run()\nend\ndef conditional(flag)\n if flag\n  c=C.new\n end\n c.run()\nend\ndef blocks\n c=C.new\n [1].each do |c|\n  c.run()\n end\n c.run()\nend\n";
         let (symbols, edges) = bound(&[("/p/main.rb", "p", source)]);
         assert_eq!(targets(&symbols, &edges, "safe", "c.run"), ["C#run"]);
         for caller in ["parameter", "changed", "conditional"] {
@@ -1170,10 +1177,12 @@ mod tests {
         assert_eq!(calls.len(), 2);
         assert!(calls[0].candidates.is_empty());
         assert_eq!(calls[1].candidates.len(), 1);
-        assert!(edges
-            .iter()
-            .filter(|e| e.reference.name == "c")
-            .all(|e| !e.reference.is_call));
+        assert!(
+            edges
+                .iter()
+                .filter(|e| e.reference.name == "c")
+                .all(|e| !e.reference.is_call)
+        );
     }
     #[test]
     fn ruby_require_relative_superclass_and_project_scopes_preserve_captured_candidates() {
@@ -1234,7 +1243,7 @@ mod tests {
     }
     #[test]
     fn ruby_nesting_and_absolute_constants_do_not_guess_qualified_outer_lexical_scope() {
-        let source="class Target\n def self.ping; 0; end\nend\nmodule Outer\n class Target\n  def self.ping; 1; end\n end\n module Inner\n  def self.run; Target.ping(); ::Target.ping(); end\n end\nend\nmodule Outer::Flat\n def self.run; Target.ping(); end\nend\n";
+        let source = "class Target\n def self.ping; 0; end\nend\nmodule Outer\n class Target\n  def self.ping; 1; end\n end\n module Inner\n  def self.run; Target.ping(); ::Target.ping(); end\n end\nend\nmodule Outer::Flat\n def self.run; Target.ping(); end\nend\n";
         let (symbols, edges) = bound(&[("/p/names.rb", "p", source)]);
         assert_eq!(
             targets(&symbols, &edges, "Outer::Inner.run", "Target.ping"),
@@ -1251,17 +1260,19 @@ mod tests {
     }
     #[test]
     fn ruby_reopened_methods_mutations_constant_writes_and_constructor_overrides_remain_explicit() {
-        let source="class C\n def run; 1; end\nend\nclass C\n def run; 2; end\nend\nclass D\n include M\n def run; 3; end\nend\nclass E\n def self.new; Object.new; end\n def run; 4; end\nend\nclass F < E\n def run; 5; end\nend\ndef main\n C.new.run()\n D.new.run()\n E.new.run()\n F.new.run()\nend\n";
+        let source = "class C\n def run; 1; end\nend\nclass C\n def run; 2; end\nend\nclass D\n include M\n def run; 3; end\nend\nclass E\n def self.new; Object.new; end\n def run; 4; end\nend\nclass F < E\n def run; 5; end\nend\ndef main\n C.new.run()\n D.new.run()\n E.new.run()\n F.new.run()\nend\n";
         let (symbols, edges) = bound(&[("/p/reopen.rb", "p", source)]);
         assert_eq!(targets(&symbols, &edges, "main", "C.new(...).run").len(), 2);
         for receiver in ["D", "E", "F"] {
-            assert!(targets(
-                &symbols,
-                &edges,
-                "main",
-                &format!("{receiver}.new(...).run")
-            )
-            .is_empty());
+            assert!(
+                targets(
+                    &symbols,
+                    &edges,
+                    "main",
+                    &format!("{receiver}.new(...).run")
+                )
+                .is_empty()
+            );
         }
         let (symbols, edges) = bound(&[(
             "/p/alias.rb",
@@ -1272,7 +1283,7 @@ mod tests {
     }
     #[test]
     fn ruby_bare_values_method_parentheses_endless_defs_and_eigenclass_defs_have_source_evidence() {
-        let source="def helper = 'PRIVATE_BODY'\ndef main(helper)\n helper\n helper()\nend\nclass C\n class << self\n  def run?; true; end\n end\nend\nC.run?()\n";
+        let source = "def helper = 'PRIVATE_BODY'\ndef main(helper)\n helper\n helper()\nend\nclass C\n class << self\n  def run?; true; end\n end\nend\nC.run?()\n";
         let docs = docs(&[("/p/syntax.rb", "p", source)]);
         let d = &docs["0"];
         let symbols = d.symbols.clone();
@@ -1290,17 +1301,19 @@ mod tests {
         assert_eq!(uses.len(), 2);
         assert!(!uses[0].reference.is_call && uses[0].candidates.is_empty());
         assert!(uses[1].reference.is_call && uses[1].candidates.len() == 1);
-        assert!(refs
-            .iter()
-            .any(|e| e.reference.name == "run?" && e.candidates.len() == 1));
-        assert!(d
-            .binding_limitations
-            .iter()
-            .any(|s| s.starts_with("RUBY_RUNTIME_")));
+        assert!(
+            refs.iter()
+                .any(|e| e.reference.name == "run?" && e.candidates.len() == 1)
+        );
+        assert!(
+            d.binding_limitations
+                .iter()
+                .any(|s| s.starts_with("RUBY_RUNTIME_"))
+        );
     }
     #[test]
     fn ruby_parallel_loop_rescue_and_pattern_bindings_are_values_not_method_calls() {
-        let source="def item; 1; end\ndef tuple_values\n item, rest=[1,2]\n item\n item()\nend\ndef loop_values\n for item in [1]\n  item\n end\nend\ndef rescue_values\n begin\n  raise 'error'\n rescue StandardError => item\n  item\n end\nend\ndef pattern_values(value)\n case value\n in [item]\n  item\n end\nend\n";
+        let source = "def item; 1; end\ndef tuple_values\n item, rest=[1,2]\n item\n item()\nend\ndef loop_values\n for item in [1]\n  item\n end\nend\ndef rescue_values\n begin\n  raise 'error'\n rescue StandardError => item\n  item\n end\nend\ndef pattern_values(value)\n case value\n in [item]\n  item\n end\nend\n";
         let (symbols, edges) = bound(&[("/p/bindings.rb", "p", source)]);
         let uses: Vec<_> = edges
             .iter()
@@ -1323,7 +1336,7 @@ mod tests {
     }
     #[test]
     fn ruby_initialize_and_instance_state_do_not_invalidate_normal_method_candidates() {
-        let source="class C\n def initialize(value)\n  @value=value\n  ready()\n end\n def ready; 1; end\n def run; ready(); end\nend\nC.new(1).run()\n";
+        let source = "class C\n def initialize(value)\n  @value=value\n  ready()\n end\n def ready; 1; end\n def run; ready(); end\nend\nC.new(1).run()\n";
         let documents = docs(&[("/p/constructor.rb", "p", source)]);
         let symbols = documents
             .values()
@@ -1336,13 +1349,19 @@ mod tests {
         );
         assert_eq!(targets(&symbols, &edges, "C#run", "ready"), ["C#ready"]);
         let entries = analysis::entrypoints(&symbols, &documents);
-        assert!(entries
-            .iter()
-            .any(|e| e.kind == "ruby_constructor_hook_candidate"));
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.kind == "ruby_constructor_hook_candidate")
+        );
     }
     #[test]
     fn ruby_dynamic_loads_unknown_receivers_and_parse_errors_do_not_guess_bindings() {
-        let docs=docs(&[("/p/a.rb","p","require 'other'\nrequire_relative \"#{prefix}/dynamic\"\nclass C\n def work; 1; end\nend\ndef main(other); other.work(); end\n")]);
+        let docs = docs(&[(
+            "/p/a.rb",
+            "p",
+            "require 'other'\nrequire_relative \"#{prefix}/dynamic\"\nclass C\n def work; 1; end\nend\ndef main(other); other.work(); end\n",
+        )]);
         let symbols = docs
             .values()
             .flat_map(|d| d.symbols.clone())
@@ -1359,9 +1378,11 @@ mod tests {
             .values()
             .flat_map(|d| d.symbols.clone())
             .collect::<Vec<_>>();
-        assert!(resolve::references(&symbols, &docs)
-            .iter()
-            .all(|e| e.candidates.is_empty()));
+        assert!(
+            resolve::references(&symbols, &docs)
+                .iter()
+                .all(|e| e.candidates.is_empty())
+        );
         assert!(inheritance::edges(&symbols, &docs).is_empty());
     }
 }
@@ -1373,7 +1394,7 @@ mod integration_tests {
     #[test]
     fn ruby_index_cache_refresh_body_and_immutable_import_history_are_qualified() {
         let temp = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&temp.path().join("ruby.duckdb")).unwrap();
+        let store = Store::open(&temp.path().join("ruby.duckdb")).unwrap();
         let doc = |id: &str, path: &str, source: &str| Document {
             id: id.into(),
             uri: format!("file://{id}"),
@@ -1388,20 +1409,20 @@ mod integration_tests {
             "/p/base.rb",
             "class Base\n def work; 'PRIVATE_BODY'; end\nend\n",
         );
-        let mut client=doc("client","/p/client.rb","require_relative 'base'\nclass Child < Base\n def run; work(); end\nend\ndef main; Child.new.run(); end\nmain()\n");
-        store.documents().upsert_document(&base).unwrap();
-        store.documents().upsert_document(&client).unwrap();
-        let report = crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        let mut client = doc(
+            "client",
+            "/p/client.rb",
+            "require_relative 'base'\nclass Child < Base\n def run; work(); end\nend\ndef main; Child.new.run(); end\nmain()\n",
+        );
+        store.upsert_document(&base).unwrap();
+        store.upsert_document(&client).unwrap();
+        let report = store.index_code().unwrap();
         assert_eq!(report.indexed, 2);
         let q = CodeQuery {
             symbol: Some("Base#work".into()),
             ..Default::default()
         };
-        let snapshot = crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap();
+        let snapshot = store.code_snapshot().unwrap();
         let callers = snapshot.query("callers", &q);
         assert!(
             !callers["items"].as_array().unwrap().is_empty(),
@@ -1415,12 +1436,10 @@ mod integration_tests {
             },
         );
         assert_eq!(impact["items"][0]["path"], "/p/client.rb");
-        let body = crate::code_index::CodeIndex::new(&store)
-            .code_body(&q)
-            .unwrap();
+        let body = store.code_body(&q).unwrap();
         assert!(body.to_string().contains("PRIVATE_BODY"));
         assert!(!callers.to_string().contains("PRIVATE_BODY"));
-        let full = crate::code_index::CodeIndex::new(&store)
+        let full = store
             .index_code_with_options(&resolution_cache::IndexOptions {
                 force_full_resolution: true,
             })
@@ -1428,26 +1447,21 @@ mod integration_tests {
         assert!(!full.revision_created);
         assert_eq!(full.resolution.unwrap().equivalent_to_existing, Some(true));
         client.content = "class Child\n def run; 1; end\nend\n".into();
-        store.documents().upsert_document(&client).unwrap();
-        assert!(crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap()
-            .query("callers", &q)["items"]
-            .as_array()
-            .unwrap()
-            .is_empty());
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        store.upsert_document(&client).unwrap();
+        assert!(
+            store.code_snapshot().unwrap().query("callers", &q)["items"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        store.index_code().unwrap();
         let dq = history::DiffQuery {
             before: 1,
             after: Some(2),
             project: Some("p".into()),
             limit: None,
         };
-        let diff = crate::code_index::CodeIndex::new(&store)
-            .code_index_diff(&dq)
-            .unwrap();
+        let diff = store.code_index_diff(&dq).unwrap();
         assert_eq!(diff["ruby_relations_available"], true);
         assert!(
             diff["relations_removed"]
@@ -1466,41 +1480,22 @@ mod integration_tests {
             "{diff}"
         );
         client.content = "require_relative 'base'\n".into();
-        store.documents().upsert_document(&client).unwrap();
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        assert_eq!(
-            crate::code_index::CodeIndex::new(&store)
-                .code_index_diff(&dq)
-                .unwrap(),
-            diff
-        );
-        let c = store.lock().unwrap();
-        let raw: String = c
-            .query_row(
-                "SELECT graph_json FROM code_index_revisions WHERE id=1",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        store.upsert_document(&client).unwrap();
+        store.index_code().unwrap();
+        assert_eq!(store.code_index_diff(&dq).unwrap(), diff);
+        let raw = crate::code_index::test_get_rev_graph_json(&store, 1);
         let mut graph: serde_json::Value = serde_json::from_str(&raw).unwrap();
         graph.as_object_mut().unwrap().remove("ruby_syntax_format");
-        c.execute(
-            "UPDATE code_index_revisions SET graph_json=? WHERE id=1",
-            [graph.to_string()],
-        )
-        .unwrap();
-        drop(c);
-        let legacy = crate::code_index::CodeIndex::new(&store)
-            .code_index_diff(&dq)
-            .unwrap();
+        crate::code_index::test_set_rev_graph_json(&store, 1, &graph.to_string());
+        let legacy = store.code_index_diff(&dq).unwrap();
         assert_eq!(legacy["ruby_relations_available"], false);
-        assert!(!legacy["relations_removed"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|e| e["import_kind"] == "ruby_require_relative_candidate"
-                || e["relation"] == "ruby_superclass_candidate"));
+        assert!(
+            !legacy["relations_removed"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["import_kind"] == "ruby_require_relative_candidate"
+                    || e["relation"] == "ruby_superclass_candidate")
+        );
     }
 }

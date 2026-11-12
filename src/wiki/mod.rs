@@ -9,14 +9,14 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::config::Config;
-use crate::db::store::DocumentDerivedWrite;
 use crate::db::Store;
+use crate::db::store::DocumentDerivedWrite;
 use crate::document_indexer::DocumentIndexer;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
 use crate::llm::{CompileResult, ConsolidateProposal};
 use crate::models::{Document, Layer, OpsLogEntry, WikiIndexEntry};
-use crate::util::{content_hash, slugify as shared_slugify, SlugPolicy};
+use crate::util::{SlugPolicy, content_hash, slugify as shared_slugify};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 

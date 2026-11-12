@@ -195,10 +195,8 @@ fn qualify(scope: &str, name: &str) -> String {
 }
 fn storage(node: Node, source: &str, value: &str) -> bool {
     let mut c = node.walk();
-    let found = node
-        .named_children(&mut c)
-        .any(|n| n.kind() == "storage_class_specifier" && text(n, source) == value);
-    found
+    node.named_children(&mut c)
+        .any(|n| n.kind() == "storage_class_specifier" && text(n, source) == value)
 }
 fn guard(node: Node, source: &str, path: &str) -> bool {
     if !header(path)
@@ -1085,6 +1083,7 @@ pub(super) fn resolve(
     found.sort();
     found.dedup();
     CallEdge {
+        context_evidence: None,
         reference: r.clone(),
         resolution: match found.len() {
             0 => "unresolved",
@@ -1209,7 +1208,11 @@ mod tests {
     }
     #[test]
     fn c_declarators_distinguish_functions_function_pointer_variables_and_values() {
-        let s=snapshot(&[("/p/main.c","p","static void local(void){} static void caller(void){local();} int main(void){caller(); int (*cb)(void)=0; cb(); void (*value)(void)=local;}")]);
+        let s = snapshot(&[(
+            "/p/main.c",
+            "p",
+            "static void local(void){} static void caller(void){local();} int main(void){caller(); int (*cb)(void)=0; cb(); void (*value)(void)=local;}",
+        )]);
         assert_eq!(
             s.symbols
                 .iter()
@@ -1217,10 +1220,11 @@ mod tests {
                 .count(),
             3
         );
-        assert!(!s
-            .symbols
-            .iter()
-            .any(|s| s.name == "cb" || s.name == "value"));
+        assert!(
+            !s.symbols
+                .iter()
+                .any(|s| s.name == "cb" || s.name == "value")
+        );
         assert_eq!(names(&s, calls(&s, "local")[0]), vec!["local"]);
         assert!(calls(&s, "cb")[0].candidates.is_empty());
         let r = s.query(
@@ -1297,23 +1301,40 @@ mod tests {
     }
     #[test]
     fn cpp_header_methods_inheritance_and_overload_arity_link_to_source_bodies() {
-        let s=snapshot(&[
-            ("/p/api.h","p","#pragma once\nnamespace api {struct Base {void work();void work(int x);};struct Worker:Base {void run();};void over(int x);void over(double x);}"),
-            ("/p/api.cpp","p","#include \"api.h\"\nvoid api::Base::work(){} void api::Base::work(int x){} void api::Worker::run(){} void api::over(int x){} void api::over(double x){}"),
-            ("/p/main.cpp","p","#include \"api.h\"\nvoid use(api::Worker &w){w.run();w.work();api::over(1);}"),
+        let s = snapshot(&[
+            (
+                "/p/api.h",
+                "p",
+                "#pragma once\nnamespace api {struct Base {void work();void work(int x);};struct Worker:Base {void run();};void over(int x);void over(double x);}",
+            ),
+            (
+                "/p/api.cpp",
+                "p",
+                "#include \"api.h\"\nvoid api::Base::work(){} void api::Base::work(int x){} void api::Worker::run(){} void api::over(int x){} void api::over(double x){}",
+            ),
+            (
+                "/p/main.cpp",
+                "p",
+                "#include \"api.h\"\nvoid use(api::Worker &w){w.run();w.work();api::over(1);}",
+            ),
         ]);
         assert_eq!(names(&s, calls(&s, "w.run")[0]), vec!["api::Worker::run"]);
         assert_eq!(names(&s, calls(&s, "w.work")[0]), vec!["api::Base::work"]);
         assert_eq!(calls(&s, "api::over")[0].candidates.len(), 2);
         assert_eq!(calls(&s, "api::over")[0].resolution, "ambiguous");
-        assert!(s
-            .inheritance
-            .iter()
-            .any(|e| e.base_expression == "Base" && !e.candidates.is_empty()));
+        assert!(
+            s.inheritance
+                .iter()
+                .any(|e| e.base_expression == "Base" && !e.candidates.is_empty())
+        );
     }
     #[test]
     fn cpp_member_name_hiding_precedes_namespace_functions_and_base_overloads() {
-        let s=snapshot(&[("/p/main.cpp","p","void work(int x){} struct Base{void work(int x){}};struct Child:Base{void work(){}void use(){work(1);}};")]);
+        let s = snapshot(&[(
+            "/p/main.cpp",
+            "p",
+            "void work(int x){} struct Base{void work(int x){}};struct Child:Base{void work(){}void use(){work(1);}};",
+        )]);
         assert!(calls(&s, "work")[0].candidates.is_empty());
         let s = snapshot(&[(
             "/p/main.cpp",
@@ -1324,7 +1345,11 @@ mod tests {
     }
     #[test]
     fn macros_conditional_branches_and_unknown_include_paths_do_not_get_unique_targets() {
-        let s=snapshot(&[("/p/main.c","p","#define work() other()\nvoid work(void){}\n#if ENABLE\nvoid chosen(void){}\n#else\nvoid chosen(void){}\n#endif\nvoid use(void){work();chosen();}")]);
+        let s = snapshot(&[(
+            "/p/main.c",
+            "p",
+            "#define work() other()\nvoid work(void){}\n#if ENABLE\nvoid chosen(void){}\n#else\nvoid chosen(void){}\n#endif\nvoid use(void){work();chosen();}",
+        )]);
         assert!(calls(&s, "work")[0].candidates.is_empty());
         assert_eq!(calls(&s, "chosen")[0].resolution, "ambiguous");
         let s = snapshot(&[
@@ -1409,12 +1434,13 @@ FROM users WHERE path='c:\work')SQL";}
     }
     #[test]
     fn template_and_anonymous_type_methods_never_collapse_into_free_functions() {
-        let source="template<class T>struct Box;template<class T>struct Box<T*>{void run(){}};struct {void hidden(){}} object;void use(){run();hidden();}";
+        let source = "template<class T>struct Box;template<class T>struct Box<T*>{void run(){}};struct {void hidden(){}} object;void use(){run();hidden();}";
         let s = snapshot(&[("/p/a.cpp", "p", source)]);
-        assert!(!s
-            .symbols
-            .iter()
-            .any(|s| s.qualified_name == "run" || s.qualified_name == "hidden"));
+        assert!(
+            !s.symbols
+                .iter()
+                .any(|s| s.qualified_name == "run" || s.qualified_name == "hidden")
+        );
         assert!(calls(&s, "run")[0].candidates.is_empty());
         assert!(calls(&s, "hidden")[0].candidates.is_empty());
     }

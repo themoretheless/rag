@@ -87,11 +87,11 @@ macro/cfg expansion, arbitrary return-type inference, complex/generic/union type
 dynamic dispatch and arbitrary alias assignments. Without captured manifests,
 Rust modules retain the conventional `src` layout fallback. Captured `Cargo.toml`
 now adds partial target roots, declared modules, ordinary `#[path]`, custom crate
-names and renamed/inherited path dependencies; see [Rust Cargo graph](code-intelligence/RUST_CARGO_GRAPH.md).
+names and renamed/inherited path dependencies; see [Rust Cargo graph](RUST_CARGO_GRAPH.md).
 Feature/cfg configuration, full Cargo semantics and compiler-grade resolution remain open.
 Rust member calls now support a qualified AST subset of declared-return chains,
 await, named fields, array/slice/Vec elements, standard Box/Arc/Rc and explicit
-generic return arguments; see [receiver typing](code-intelligence/RUST_RECEIVER_TYPES.md). This does
+generic return arguments; see [receiver typing](RUST_RECEIVER_TYPES.md). This does
 not close arbitrary inference, traits/generic impls or the broader quality gates.
 Constructor-shaped Python assignments are a syntax heuristic, not a runtime
 guarantee. Class bodies retain lexical ownership rather than a runtime execution
@@ -216,14 +216,14 @@ Reference: https://github.com/paulmann/RAGRAF (reviewed 2026-10-23).
 `schema`, `table_usage` and `write_check` are implemented on the full MCP surface.
 SQL files share the persistent syntax cache and source-sync refresh; static SQL
 literals carry source/symbol evidence. Migration DDL replay and write checks fail
-closed on incomplete or ambiguous schemas. See [SQL_CODE_ANALYSIS.md](code-intelligence/SQL_CODE_ANALYSIS.md)
+closed on incomplete or ambiguous schemas. See [SQL_CODE_ANALYSIS.md](SQL_CODE_ANALYSIS.md)
 for supported changes, rollback conventions, examples and exact validation scope.
 
 ## Search and index history
 
 `search_multi`, `duplicates`, `index_revisions`, `diff`, `catalog`, `index_status`,
 `freshness`, `live_read`, `drift_report` and `drift_ack` are implemented.
-See [CODE_HISTORY.md](code-intelligence/CODE_HISTORY.md) for consistency, evidence, limits and access
+See [CODE_HISTORY.md](CODE_HISTORY.md) for consistency, evidence, limits and access
 contracts. The full RAGRAF goal remains open; this checklist does not substitute
 for end-to-end parity or superiority qualification.
 
@@ -232,7 +232,7 @@ for end-to-end parity or superiority qualification.
 `class_usage` and `policy_trace` are available on the full MCP surface. CSS/HTML
 syntax grammars and basic PHP declaration/call parsing extend the index. Remaining
 language/compiler/control-flow qualification is still open. See
-[CSS_POLICY_ANALYSIS.md](code-intelligence/CSS_POLICY_ANALYSIS.md) for supported syntax, project
+[CSS_POLICY_ANALYSIS.md](CSS_POLICY_ANALYSIS.md) for supported syntax, project
 isolation, fallback semantics, uncertainty and budgets.
 
 
@@ -406,31 +406,31 @@ matrix or establish deployment.
 
 ### Ruby syntax transfer
 
-[Ruby code analysis](code-intelligence/RUBY_CODE_ANALYSIS.md) adds captured `.rb` declarations, owner-qualified method/constant candidates, conservative constructor locals, require-relative file scopes, single-superclass candidates and frozen/cache/sync integration. This closes part of the remaining language gap; runtime dispatch, framework and full language qualification remain open.
+[Ruby code analysis](RUBY_CODE_ANALYSIS.md) adds captured `.rb` declarations, owner-qualified method/constant candidates, conservative constructor locals, require-relative file scopes, single-superclass candidates and frozen/cache/sync integration. This closes part of the remaining language gap; runtime dispatch, framework and full language qualification remain open.
 
 ### C# syntax transfer
 
-[The C# index](code-intelligence/CSHARP_CODE_ANALYSIS.md) now captures namespaces, type/member declarations, calls and base syntax, with conservative namespace/alias/type/arity candidates. Source sync, stale guards, impact, cache equivalence and frozen base history are integrated. Compiler/build/overload/runtime conformance and the remaining language matrix stay open.
+[The C# index](CSHARP_CODE_ANALYSIS.md) now captures namespaces, type/member declarations, calls and base syntax, with conservative namespace/alias/type/arity candidates. Source sync, stale guards, impact, cache equivalence and frozen base history are integrated. Compiler/build/overload/runtime conformance and the remaining language matrix stay open.
 
 ### Perl syntax and variables transfer
 
-[Perl code intelligence](code-intelligence/PERL_CODE_ANALYSIS.md) uses the maintained grammar for package/sub/class/method syntax and scalar/array/hash declarations and references. Captured package/lexical calls, single-parent candidates and package-file relations integrate with source sync, stale guards, impact, cache equivalence and immutable history. INC/exports, dynamic/runtime/experimental forms and complete parity remain open.
+[Perl code intelligence](PERL_CODE_ANALYSIS.md) uses the maintained grammar for package/sub/class/method syntax and scalar/array/hash declarations and references. Captured package/lexical calls, single-parent candidates and package-file relations integrate with source sync, stale guards, impact, cache equivalence and immutable history. INC/exports, dynamic/runtime/experimental forms and complete parity remain open.
 
 ### PowerShell syntax transfer
 
-[PowerShell code intelligence](code-intelligence/POWERSHELL_CODE_ANALYSIS.md) adds functions/classes/methods/properties/enums, captured case-insensitive command scopes, literal source-load relations and static/this/single-base candidates. Source sync, stale guards, impact, cache equivalence and immutable history are integrated. Ambient session/alias/scope/export, full language/runtime behavior and complete parity remain open.
+[PowerShell code intelligence](POWERSHELL_CODE_ANALYSIS.md) adds functions/classes/methods/properties/enums, captured case-insensitive command scopes, literal source-load relations and static/this/single-base candidates. Source sync, stale guards, impact, cache equivalence and immutable history are integrated. Ambient session/alias/scope/export, full language/runtime behavior and complete parity remain open.
 
 ### Duplicate candidate role evidence
 
-[Duplicate role contract 2](code-intelligence/DUPLICATE_ROLE_EVIDENCE.md) extends primary-candidate ranking with bound values/types, module imports and HTML/CSS resource candidates. Source and target fingerprint/project guards, non-code published identity, complete evidence counts, deterministic bounded retention and primary visibility under member limits are integrated. Runtime activity, representative ranking/scale and complete parity remain open.
+[Duplicate role contract 2](DUPLICATE_ROLE_EVIDENCE.md) extends primary-candidate ranking with bound values/types, module imports and HTML/CSS resource candidates. Source and target fingerprint/project guards, non-code published identity, complete evidence counts, deterministic bounded retention and primary visibility under member limits are integrated. Runtime activity, representative ranking/scale and complete parity remain open.
 
 ### Search family roles and coherent observations
 
-[Search role evidence](code-intelligence/SEARCH_ROLE_EVIDENCE.md) now includes captured imports/resources and non-code identities outside target prefixes. Search and duplicates share a scoped corpus/index read transaction, retain independent evidence counts/caps and validate source fingerprints. A cloned-connection source/cache/history publication case qualifies read-view coherence; global ranking, runtime usage, representative scale and complete parity remain open.
+[Search role evidence](SEARCH_ROLE_EVIDENCE.md) now includes captured imports/resources and non-code identities outside target prefixes. Search and duplicates share a scoped corpus/index read transaction, retain independent evidence counts/caps and validate source fingerprints. A cloned-connection source/cache/history publication case qualifies read-view coherence; global ranking, runtime usage, representative scale and complete parity remain open.
 
 ### Literal path mention roles
 
-[Literal path role evidence](code-intelligence/LITERAL_PATH_ROLE_EVIDENCE.md) now supplements search/duplicate rankings with exact stored-text mentions such as JS endpoint constants. Same-project published identities, global basename guards, path/URL boundaries, typed-pair suppression and explicit work/retention budgets preserve uncertainty. Runtime path binding, representative quality/scale and complete parity remain open.
+[Literal path role evidence](LITERAL_PATH_ROLE_EVIDENCE.md) now supplements search/duplicate rankings with exact stored-text mentions such as JS endpoint constants. Same-project published identities, global basename guards, path/URL boundaries, typed-pair suppression and explicit work/retention budgets preserve uncertainty. Runtime path binding, representative quality/scale and complete parity remain open.
 
 ### Duplicate member comparison (2026-10-26)
 
@@ -439,7 +439,7 @@ the selected primary and both directional unique-line deltas. The phase has
 independent pair/byte/line budgets, explicit null metrics for unchecked pairs,
 source identities and body-free output. It runs after returned group/member
 limits and does not change token-trigram grouping. See
-[DUPLICATE_PRIMARY_COMPARISON.md](code-intelligence/DUPLICATE_PRIMARY_COMPARISON.md) and
+[DUPLICATE_PRIMARY_COMPARISON.md](DUPLICATE_PRIMARY_COMPARISON.md) and
 [qualification](qualification/duplicate-comparison-2026-10-26/README.md).
 Full RAGRAF parity, runtime binding/deletion safety and representative quality
 and scale remain open.
@@ -452,7 +452,7 @@ independent exact stored-text partitions. Proper exact subgroups remain visible;
 only identical member sets suppress redundant family groups. Returned families
 classify as `family`, `same_name` or explicit `not_checked`, with bounded primary
 comparison coverage and unrounded threshold decisions. The default component
-view remains available. See [contract](code-intelligence/DUPLICATE_FAMILY_GROUPING.md) and
+view remains available. See [contract](DUPLICATE_FAMILY_GROUPING.md) and
 [qualification](qualification/duplicate-families-2026-10-26/README.md).
 Representative corpus quality/scale, broader runtime roles and full parity remain
 unverified; classification does not imply semantic equivalence or deletion safety.
@@ -465,7 +465,7 @@ All duplicate modes expose qualified capture evidence or explicit unknowns per
 member. Text decoding and PDF/OOXML extraction now bind to exactly the captured
 input; binary document extractors read a temporary snapshot. Source sync upgrades
 legacy metadata and refreshes byte-only changes with unchanged decoded text.
-[Contract](code-intelligence/SOURCE_BYTE_DUPLICATES.md),
+[Contract](SOURCE_BYTE_DUPLICATES.md),
 [qualification](qualification/source-byte-copies-2026-10-26/README.md).
 Direct byte comparison, current filesystem equality, arbitrary binary ingestion,
 representative scale and full RAGRAF parity remain unverified.
@@ -478,7 +478,7 @@ filters, captured read/write owner or ownerless-file evidence, and separately
 qualified route registrations/client mentions cover previously absent target
 kinds. Handler alternatives at one registration are grouped and do not become
 fake source owners or runtime dispatch proof. Counts precede output limits;
-stale facts remain excluded. [Contract](code-intelligence/NON_CODE_REFERENCES.md),
+stale facts remain excluded. [Contract](NON_CODE_REFERENCES.md),
 [qualification](qualification/non-code-references-2026-10-26/README.md).
 Translation keys, remaining non-code kinds, broader surfaces and representative
 quality/scale remain open; this does not close the full parity goal.
@@ -491,7 +491,7 @@ Exact decoded keys, quote-aware static PHP escapes, UTF-8 source provenance,
 per-project identity and explicit capture limits improve the reference's raw
 stripping/line-dedup behavior. Frozen relations preserve repeat counts, ignore
 position/literal-spelling churn and refuse fabricated comparisons against
-legacy or incomplete captures. [Contract](code-intelligence/TRANSLATION_KEY_REFERENCES.md),
+legacy or incomplete captures. [Contract](TRANSLATION_KEY_REFERENCES.md),
 [qualification](qualification/translation-keys-2026-10-26/README.md).
 Catalogue/locale/framework resolution, dynamic/named PHP forms, broader formats,
 shared-key symbol listing, remaining surfaces, representative quality/scale and
@@ -504,7 +504,7 @@ its unchanged default code-definition view. Project-scoped stable IDs, prefix/na
 lookups, literal contains selection, source-window counts and independently bounded
 proofs provide discoverable navigation through `reference_target`. Shared nodes
 have no invented last-writer definition location; schema/use-only tables and
-route handler alternatives remain explicit. [Contract](code-intelligence/SHARED_SYMBOL_NODES.md),
+route handler alternatives remain explicit. [Contract](SHARED_SYMBOL_NODES.md),
 [qualification](qualification/symbol-nodes-2026-10-26/README.md).
 Catalogue/framework binding, unresolved external placeholders, broader domains
 and surfaces, ranking/scale and full parity remain unverified.
@@ -517,23 +517,117 @@ before output caps. Route handlers remain alternatives, never fake source owners
 Shared symbol nodes provide impact selectors. A reproduced JS parse-error bridge
 is now excluded in the common symbol walker; SQL schema-only identities also
 participate in disambiguation before source/access filters.
-[Contract](code-intelligence/LITERAL_TARGET_IMPACT.md),
+[Contract](LITERAL_TARGET_IMPACT.md),
 [qualification](qualification/literal-impact-2026-10-26/README.md).
 Runtime binding/impact, unsupported import/ownership forms, broader surfaces and
 representative quality/scale remain unproven; full parity remains open.
 
 ### PHPDoc parameter contracts
 
-PHP/PHTML named callable symbols now retain structured stated parameter contracts, nested/optional shapes, AST parameter binding and explicit unsupported/ambiguous/limited evidence. See [contract and remaining boundaries](code-intelligence/PHP_PARAMETER_CONTRACTS.md). Runtime type checking, inherited contracts, dialect precedence and semantic contract diffs remain open; this does not close whole-product parity.
+PHP/PHTML named callable symbols now retain structured stated parameter contracts, nested/optional shapes, AST parameter binding and explicit unsupported/ambiguous/limited evidence. See [contract and remaining boundaries](PHP_PARAMETER_CONTRACTS.md). Runtime type checking, inherited contracts, dialect precedence and semantic contract diffs remain open; this does not close whole-product parity.
 
 ### Client HTTP endpoint syntax
 
-[Qualified contract](code-intelligence/CLIENT_ENDPOINT_REFERENCES.md) extends fetch evidence with AST jQuery/Axios URL candidates, explicit method basis and legacy-aware immutable relations. Runtime client identity/defaults, library instances, XHR and relative URL resolution remain open.
+[Qualified contract](CLIENT_ENDPOINT_REFERENCES.md) extends fetch evidence with AST jQuery/Axios URL candidates, explicit method basis and legacy-aware immutable relations. Runtime client identity/defaults, library instances, XHR and relative URL resolution remain open.
 
 ### Stored code read windows and ID navigation
 
-[Contract](code-intelligence/CODE_READS.md) adds project-scoped file/document/ID reads, inclusive line windows and shared text budgets. Nested/partially overlapping source intervals are returned once, and chunk IDs require exact current source mapping. One read transaction binds selection to source identity. Broader source-mode/style/transformed-chunk and scale acceptance remains open.
+[Contract](CODE_READS.md) adds project-scoped file/document/ID reads, inclusive line windows and shared text budgets. Nested/partially overlapping source intervals are returned once, and chunk IDs require exact current source mapping. One read transaction binds selection to source identity. Broader source-mode/style/transformed-chunk and scale acceptance remains open.
 
 ### Complete traversal of bounded source reads
 
-[Source cursors](code-intelligence/CODE_SOURCE_PAGINATION.md) resume record/character/segment pages against a checked current view. UTF-8 byte windows and delimited IDs extend navigation; canonical partitions preserve unique bytes across pages. This improves large/single-line source reads while leaving historical snapshots, other source modes, styles and representative scale open.
+[Source cursors](CODE_SOURCE_PAGINATION.md) resume record/character/segment pages against a checked current view. UTF-8 byte windows and delimited IDs extend navigation; canonical partitions preserve unique bytes across pages. This improves large/single-line source reads while leaving historical snapshots, other source modes, styles and representative scale open.
+
+### PHP namespace candidates (2026-10-26)
+
+PHP/PHTML namespace regions, domain-separated imports and direct declared-method
+candidates now feed the shared graph; callable values remain separate from calls.
+See [contract and boundaries](PHP_NAMESPACE_BINDINGS.md). This closes a bounded
+binding gap, not PHP compiler/runtime or full RAGRAF parity.
+
+### PHP inherited method candidates (2026-10-26)
+
+Captured namespace-resolved class bases now feed inherited call/reference targets,
+`parent::`, inheritance and separate override candidates. Trait composition, late
+static/runtime subtype dispatch and compiler compatibility remain open.
+[Contract and verification](PHP_INHERITANCE.md).
+
+### PHP trait method composition (2026-10-26)
+
+Captured nested trait providers and explicit insteadof/as adaptations now feed
+method candidates and separate trait-use dependency relations. Original declaration
+identities and effective consumer visibility are preserved. Full compiler/runtime
+semantics and consumer-specific trait-body contexts remain open.
+[Contract and qualification](PHP_TRAIT_COMPOSITION.md).
+
+### PHP trait-body contexts (2026-10-26)
+
+Original trait body references now preserve per-consumer bindings and uncertainty
+in callers/callees/references/impact. Frozen context relations detect owner-target
+swaps even with unchanged aggregate call edges; legacy metadata is qualified.
+Runtime flow and full-path correlation remain open.
+[Contract and verification](PHP_TRAIT_CONTEXTS.md).
+
+### Captured PHP trait impact paths (2026-10-26)
+
+Impact now matches captured trait entry/body lexical consumer states, preserving
+valid alternate contexts while pruning incompatible class branches. SQL-table
+impact shares the matching traversal. Compiler/runtime path completeness and
+other analyses remain open. [Contract and verification](PHP_TRAIT_PATHS.md).
+
+### Git trait-context witnesses (2026-10-26)
+
+Git source impact now retains exact per-consumer predecessor paths and includes
+normalized contexts in binding-change detection. Shared symbols no longer cause
+witness stitching between different class consumers. Runtime/compiler/scale
+qualification remains open. [Contract and verification](GIT_TRAIT_CONTEXTS.md).
+
+### Trait-aware symbol trace paths (2026-10-26)
+
+Symbol path search now applies captured trait frames in every direction, with
+conditional consumer identities, per-context target ambiguity and bounded fresh
+metadata checks. Runtime/dataflow completeness remains open.
+[Contract and qualification](TRACE_TRAIT_CONTEXTS.md).
+
+[PHPUnit declaration candidates](PHPUNIT_ENTRYPOINTS.md) extend entrypoint discovery
+with imported TestCase ancestry, direct public instance test names and Test
+attributes. Cached capability repair and legacy-qualified frozen entrypoint diffs
+are included. [Affected test recommendations](AFFECTED_TESTS.md) now consume these
+direct candidates with coherent captured trait states and per-state witness
+reconstruction. PHPUnit execution/configuration, inherited or trait-provided tests
+and runtime coverage remain unverified.
+
+[Effective PHPUnit candidates](PHPUNIT_EFFECTIVE_TESTS.md) add captured inherited
+and trait-provided test methods, preserving concrete host/effective name and
+actual body provenance. Recommendations and frozen history preserve invocation
+identity. Framework execution/configuration, datasets and exhaustive runtime test
+discovery remain unverified; this does not establish full parity.
+
+[PHPUnit host availability witnesses](PHPUNIT_HOST_DEPENDENCIES.md) extend related
+tests to class/base/trait changes with unchanged method bodies. They preserve
+source/host identities, use separate non-call evidence, and support alias-only
+Git before/after recommendations. Runtime discovery/configuration and complete
+impact/test coverage remain unverified.
+
+[Native Python value slices](PYTHON_DATA_FLOW.md) add a bounded first data-flow
+backend alongside structural slice, with versioned local definitions/uses and
+matched positional argument/return boundaries. It does not close complete CPG,
+control/heap/alias flow, other languages or representative quality/scale. Frozen
+facts are captured; normalized value-relation history comparison remains explicit
+unavailable.
+
+Python canonical identifier binding and SQL impact requalification (format 83): [evidence](qualification/python-bindings-2026-10-26/README.md). SQL passed all 15 MCP scenarios on the same build as the Python scope/normalization changes; workspace 1632 passed, strict Clippy and eight MCP scripts passed. Unsupported Python binder forms remain explicit unknowns; full data-flow/CPG and compiler/runtime parity remain open.
+
+Python branch value-flow follow-up (format 84/value capture 4): [evidence](qualification/python-branch-flow-2026-10-26/README.md). If/elif/else merges, early-return exclusion and condition dependencies passed native regressions and 27 MCP value-flow checks. Final workspace: 1637 passed, 0 failed, 1 ignored; strict Clippy/build and eight MCP scripts passed. Predicate feasibility/correlation, complete CFG/loops/exceptions/alias flow and full CPG remain open.
+
+Python loop value-flow and checked cyclic edge follow-up (format 85/value capture 5): [evidence](qualification/python-loop-flow-2026-10-26/README.md). While/for headers, backedges, abstract iteration values, zero-iteration alternatives and break/continue/else are qualified; plain-for bindings no longer block unrelated imports. Returned edges now retain checked reachable cycles with an explicit 2000-edge cap. Workspace: 1646 passed, 0 failed, 1 ignored; strict Clippy/build and eight MCP scripts passed, including 35 Python value-flow checks and 15 SQL-impact scenarios. Complete CFG/exception/alias and feasibility/termination proofs remain open.
+
+Frozen Python value-history comparison: [evidence](qualification/python-value-diff-2026-10-26/README.md). Compatible capture-5 graphs now expose normalized node syntax changes, local/cyclic edges and unique positional call/return candidate changes, independent of source offsets and ordinary comments/spacing. Legacy/incomplete/unsupported/inventory/provenance guards are qualified. Workspace: 1655 passed, 0 failed, 1 ignored; strict Clippy/build and nine MCP scripts passed, including 12 value-diff checks, 35 value-slice checks and 15 SQL-impact scenarios. Runtime/semantic proof, minimal edit matching, full CFG/exception/alias flow and full CPG remain open.
+
+Python finally completion-flow follow-up (extraction 86/value capture 6): [evidence](qualification/python-finally-flow-2026-10-26/README.md). Saved return values, updated break/continue states, overriding explicit completions and protected expression-error prefixes are qualified with context-specific finalizer nodes/call frames. Frozen diff normalization 2 supports capture 5/6. Workspace: 1671 passed, 0 failed, 1 ignored; strict Clippy/build and ten MCP scripts passed, including 20 finalizer checks, 35 value-slice checks, 12 value-diff checks and 15 SQL-impact scenarios. Except/type matching, full exception/CFG/alias and runtime/CPG semantics remain open.
+
+Python handler/else completion-flow follow-up (extraction 87/capture 7): [evidence](qualification/python-except-flow-2026-10-26/README.md). Bare and unproven typed handler alternatives, normal-only else, alias object values/cleanup, captured re-raise, sibling escape boundaries and finalizer precedence are qualified. Scope capture 3 shares the real alias AST adapter; normalization 3 accepts captures 5..7 with contextual version guards. Workspace: 1685 passed, 0 failed, 1 ignored; strict Clippy/build and eleven MCP scripts passed, including 20 handler, 20 finalizer, 35 value-slice, 12 value-diff and 15 SQL-impact checks. Type/filter execution proof and full CFG/alias/compiler/runtime/CPG coverage remain open.
+
+Python assignment-order follow-up (extraction 88/scope capture 4): [evidence](qualification/python-assignment-order-2026-10-26/README.md). A retained failing regression proves the prior RHS receiver-type error; deferred commit, annotation-only locals, augmented-result invalidation and source refresh are now qualified. Workspace: 1691 passed, 0 failed, 1 ignored; strict Clippy/build and twelve MCP scripts passed, including 15 assignment-order and 15 SQL-impact checks. Branch-sensitive type alternatives, complete compiler/runtime and full CPG semantics remain open.
+
+Python receiver-origin follow-up (extraction 89/scope capture 5): [evidence](qualification/python-receiver-joins-2026-10-26/README.md). Bounded ordinary branch/loop joins, returned-arm exclusion, aliases, imported/inherited body deduplication and partial-known uncertainty are qualified, including dead-code/test safety accounting and missing flow inventory guards. Workspace: 1700 passed, 0 failed, 1 ignored; strict Clippy/build and thirteen MCP scripts passed, including 16 receiver-join and 15 SQL-impact checks. Precise exception/closure/heap/type/runtime contexts and full compiler/CFG/CPG acceptance remain open.

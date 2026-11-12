@@ -231,11 +231,13 @@ async fn ingest_file_delegates_to_atomic_pipeline_with_canonical_source() {
             .len(),
         result.chunk_count
     );
-    assert!(store
-        .graph()
-        .find_node_by_document_id(&document.id)
-        .expect("graph lookup")
-        .is_some());
+    assert!(
+        store
+            .graph()
+            .find_node_by_document_id(&document.id)
+            .expect("graph lookup")
+            .is_some()
+    );
     let mut retained = document.clone();
     retained.metadata_json = r#"{"custom":"keep"}"#.into();
     retained.status = "archived".into();
@@ -269,14 +271,10 @@ async fn source_manifest_failure_rolls_back_document_and_derived_state() {
     let temp = tempfile::tempdir().expect("tempdir");
     let config = test_config(temp.path().join("source-manifest-atomic.duckdb"));
     let store = crate::testkit::open_test_store(&config.db_path).expect("store");
-    store
-        .lock()
-        .unwrap()
-        .execute_batch("DROP TABLE source_manifest")
-        .unwrap();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
 
-    let error = IngestService::new(&store, &embedder, &config)
+    crate::db::source_manifest::TEST_FAIL_SOURCE_MANIFEST_UPSERT.with(|f| f.set(true));
+    let res = IngestService::new(&store, &embedder, &config)
         .ingest_source(
             IngestCommand {
                 source_file: Some("/sources/atomic.md".into()),
@@ -291,17 +289,20 @@ async fn source_manifest_failure_rolls_back_document_and_derived_state() {
                 mtime_ns: 1,
             },
         )
-        .await
-        .expect_err("manifest write must fail");
+        .await;
+    crate::db::source_manifest::TEST_FAIL_SOURCE_MANIFEST_UPSERT.with(|f| f.set(false));
+    let error = res.expect_err("manifest write must fail");
 
     assert!(error.to_string().contains("source_manifest"));
     assert!(store.documents().list_documents().unwrap().is_empty());
-    assert!(store
-        .graph()
-        .get_graph_view(crate::models::GraphFilter::default())
-        .unwrap()
-        .nodes
-        .is_empty());
+    assert!(
+        store
+            .graph()
+            .get_graph_view(crate::models::GraphFilter::default())
+            .unwrap()
+            .nodes
+            .is_empty()
+    );
     assert!(store.graph().list_graph_edges().unwrap().is_empty());
 }
 
@@ -432,11 +433,13 @@ async fn embedding_failure_leaves_document_chunks_and_graph_unchanged() {
         .collect();
     assert_eq!(persisted_edges.len(), original_edges.len());
     assert_eq!(persisted_edges[0].id, original_edges[0].id);
-    assert!(store
-        .graph()
-        .find_nodes_by_label("New target")
-        .unwrap()
-        .is_empty());
+    assert!(
+        store
+            .graph()
+            .find_nodes_by_label("New target")
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -657,12 +660,14 @@ async fn ingest_url_extracts_html_and_is_searchable_and_deduped() {
     );
 
     // ops_log recorded the fetch.
-    assert!(store
-        .ops_log()
-        .list_ops_log(10)
-        .unwrap()
-        .iter()
-        .any(|entry| entry.op == "ingest_url"));
+    assert!(
+        store
+            .ops_log()
+            .list_ops_log(10)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.op == "ingest_url")
+    );
 
     // Re-ingest of the same final URL upserts the same document (dedup by uri).
     let again = service

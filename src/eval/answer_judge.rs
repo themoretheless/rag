@@ -7,8 +7,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::judges::{judge_citations, CitationJudgeInput, CitationJudgeResult};
-use super::prompts::{builtin_answer_judge, PromptVersion};
+use super::judges::{CitationJudgeInput, CitationJudgeResult, judge_citations};
+use super::prompts::{PromptVersion, builtin_answer_judge};
 use crate::error::{AppError, Result};
 use crate::llm::ChatMessage;
 
@@ -211,11 +211,7 @@ fn heuristic_scores(input: &AnswerJudgeInput, citation: &CitationJudgeResult) ->
     } else if let Some(gold) = input.gold_answer.as_deref() {
         token_coverage(gold, answer)
     } else {
-        if citation.citation_present {
-            1.0
-        } else {
-            0.5
-        }
+        if citation.citation_present { 1.0 } else { 0.5 }
     };
     let reference = input
         .gold_answer

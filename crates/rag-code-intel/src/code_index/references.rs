@@ -173,6 +173,9 @@ pub(super) fn query(
                 item["resolution"] = serde_json::json!(binding.resolution);
                 item["resolution_basis"] = serde_json::json!(binding.resolution_basis);
                 item["provenance"] = serde_json::json!(binding.provenance);
+                if let Some(contexts) = &binding.context_evidence {
+                    item["context_evidence"] = serde_json::json!(contexts);
+                }
                 items.push(item);
             }
         }
@@ -249,10 +252,23 @@ mod tests {
     use serde_json::Value;
     #[test]
     fn python_alias_callbacks_shadowing_and_member_reads_bind_to_definition() {
-        let s=snapshot(&[
-            ("/p/api.py","p","def work():\n    pass\nclass Service:\n    def run(self):\n        pass\n"),
-            ("/p/main.py","p","from api import work as execute, Service\ncallback = execute\ndef caller(execute):\n    execute()\n    return execute\ndef use(s: Service):\n    cb = s.run\n    execute()\n    return cb\n"),
-            ("/p/other.py","p","def work():\n    pass\ndef local():\n    return work\n")]);
+        let s = snapshot(&[
+            (
+                "/p/api.py",
+                "p",
+                "def work():\n    pass\nclass Service:\n    def run(self):\n        pass\n",
+            ),
+            (
+                "/p/main.py",
+                "p",
+                "from api import work as execute, Service\ncallback = execute\ndef caller(execute):\n    execute()\n    return execute\ndef use(s: Service):\n    cb = s.run\n    execute()\n    return cb\n",
+            ),
+            (
+                "/p/other.py",
+                "p",
+                "def work():\n    pass\ndef local():\n    return work\n",
+            ),
+        ]);
         let r = query(&s, "/p/api.py", "work", None);
         assert!(
             r["items"]
@@ -291,22 +307,34 @@ mod tests {
         assert_eq!(r["items"][0]["expression"], "s.run");
         assert_eq!(r["items"][0]["resolution_basis"], "receiver_type");
         let lexical = query(&s, "/p/api.py", "work", Some("lexical"));
-        assert!(lexical["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|r| r["path"] == "/p/other.py"));
-        assert!(!lexical["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|r| r["expression"] == "execute"));
+        assert!(
+            lexical["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["path"] == "/p/other.py")
+        );
+        assert!(
+            !lexical["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["expression"] == "execute")
+        );
     }
     #[test]
     fn rust_imported_function_values_qualified_methods_and_type_uses_are_bound() {
-        let s=snapshot(&[
-            ("/p/src/api.rs","p","pub fn work() {} pub struct Service; impl Service { pub fn run(&self) {} }"),
-            ("/p/src/main.rs","p","use crate::api::{work as execute, Service}; fn main() { let callback = execute; let other = crate::api::work; } fn use_it(s: Service) { let cb = Service::run; s.run(); }"),
+        let s = snapshot(&[
+            (
+                "/p/src/api.rs",
+                "p",
+                "pub fn work() {} pub struct Service; impl Service { pub fn run(&self) {} }",
+            ),
+            (
+                "/p/src/main.rs",
+                "p",
+                "use crate::api::{work as execute, Service}; fn main() { let callback = execute; let other = crate::api::work; } fn use_it(s: Service) { let cb = Service::run; s.run(); }",
+            ),
         ]);
         let r = query(&s, "/p/src/api.rs", "work", None);
         for expression in ["execute", "crate::api::work"] {
@@ -340,9 +368,17 @@ mod tests {
     }
     #[test]
     fn js_namespace_default_alias_and_inherited_method_values_keep_full_expression() {
-        let s=snapshot(&[
-            ("/p/api.ts","p","export default function work() {} export class Base { run() {} } export class Child extends Base {}"),
-            ("/p/main.ts","p","import execute, {Child} from './api'; import * as api from './api'; const cb = execute; const cb2 = api.default; function use(c: Child) { const cb = c.run; return cb; } function run() {} const x = unknown.run;"),
+        let s = snapshot(&[
+            (
+                "/p/api.ts",
+                "p",
+                "export default function work() {} export class Base { run() {} } export class Child extends Base {}",
+            ),
+            (
+                "/p/main.ts",
+                "p",
+                "import execute, {Child} from './api'; import * as api from './api'; const cb = execute; const cb2 = api.default; function use(c: Child) { const cb = c.run; return cb; } function run() {} const x = unknown.run;",
+            ),
         ]);
         let r = query(&s, "/p/api.ts", "work", None);
         for expression in ["execute", "api.default"] {
@@ -407,15 +443,23 @@ mod tests {
     }
     #[test]
     fn import_source_tokens_keyword_names_and_default_parameters_do_not_bind_as_usages() {
-        let s=snapshot(&[
-            ("/p/api.py","p","def work():\n    pass\n"),
-            ("/p/main.py","p","from api import work as execute\ndef work():\n    pass\ndef shadow(execute=None):\n    return execute\ndef kwargs():\n    other(work=1)\n"),
+        let s = snapshot(&[
+            ("/p/api.py", "p", "def work():\n    pass\n"),
+            (
+                "/p/main.py",
+                "p",
+                "from api import work as execute\ndef work():\n    pass\ndef shadow(execute=None):\n    return execute\ndef kwargs():\n    other(work=1)\n",
+            ),
         ]);
         assert_eq!(query(&s, "/p/main.py", "work", None)["total"], 0);
         let r = query(&s, "/p/api.py", "work", None);
         assert_eq!(r["total"], 1, "{r}");
         assert_eq!(r["items"][0]["expression"], "execute");
-        let s=snapshot(&[("/p/a.ts","p","function work() {} function f(work=()=>{}) { work(); return work; } function g(...work) { return work; }")]);
+        let s = snapshot(&[(
+            "/p/a.ts",
+            "p",
+            "function work() {} function f(work=()=>{}) { work(); return work; } function g(...work) { return work; }",
+        )]);
         assert_eq!(query(&s, "/p/a.ts", "work", None)["total"], 0);
     }
 }

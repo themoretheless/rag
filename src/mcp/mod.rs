@@ -38,6 +38,6 @@ mod wiki;
 pub use server::RagServer;
 mod http;
 pub use http::{mcp_http_router, mcp_http_service_for};
-pub use surface::{tool_allowed, ToolSurface, INDEX_FIRST_PLAYBOOK, SPINE_TOOLS_BLURB};
+pub use surface::{INDEX_FIRST_PLAYBOOK, SPINE_TOOLS_BLURB, ToolSurface, tool_allowed};
 
 mod analysis;

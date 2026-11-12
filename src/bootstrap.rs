@@ -12,7 +12,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
 use crate::db::Store;
-use crate::embeddings::{build_provider, EmbeddingProvider};
+use crate::embeddings::{EmbeddingProvider, build_provider};
 
 // Process-wide knobs live in the subsystems that read them (link ceiling in
 // `db::graph::resolve`, call-log size in `telemetry`, sync identity in

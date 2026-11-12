@@ -1,7 +1,8 @@
-//! Wiki pages filtered by their `knowledge_properties` metadata.
+//! Wiki pages filtered by their `knowledge_properties` metadata over `lin`.
 
-use duckdb::params_from_iter;
+use chrono::NaiveDate;
 
+use super::lin_engine::{LinReader, cell_i64, cell_opt_string, cell_str, cell_string};
 use crate::db::Store;
 use crate::error::Result;
 
@@ -36,58 +37,103 @@ pub fn list_knowledge_pages(
     store: &Store,
     filter: &KnowledgePageQuery,
 ) -> Result<(i64, Vec<KnowledgePageRow>)> {
-    let mut clauses = vec![
-        "layer = 'wiki'".to_string(),
-        super::sql::ACTIVE_DOCUMENT_SQL.into(),
-    ];
-    let mut values = Vec::new();
-    if !filter.q.is_empty() {
-        clauses.push("contains(lower(title || ' ' || uri), lower(?))".into());
-        values.push(filter.q.clone());
-    }
-    if !filter.wing.is_empty() {
-        clauses.push("wing = ?".into());
-        values.push(filter.wing.clone());
-    }
-    for (name, value) in [
-        ("document_type", &filter.document_type),
-        ("review_status", &filter.review_status),
-        ("owner", &filter.owner),
-    ] {
-        if !value.is_empty() {
-            clauses.push(format!(
-                "json_extract_string(TRY_CAST(metadata_json AS JSON), '$.knowledge_properties.{name}') = ?"
-            ));
-            values.push(value.clone());
+    let q_lower = (!filter.q.is_empty()).then(|| filter.q.to_lowercase());
+    let due_cutoff = if !filter.due_before.is_empty() {
+        NaiveDate::parse_from_str(filter.due_before.trim(), "%Y-%m-%d").ok()
+    } else {
+        None
+    };
+
+    let needs_json = !filter.document_type.is_empty()
+        || !filter.review_status.is_empty()
+        || !filter.owner.is_empty()
+        || !filter.due_before.is_empty();
+
+    let r = store.read()?;
+    let wiki_rows = r.find_by_eq("documents", "layer", "wiki")?;
+    let mut matched = Vec::new();
+
+    for row in &wiki_rows {
+        let status = cell_str(row, "status").unwrap_or("active");
+        if matches!(status, "archived" | "tombstone") {
+            continue;
         }
+        if !filter.wing.is_empty() && cell_str(row, "wing") != Some(filter.wing.as_str()) {
+            continue;
+        }
+        let title = cell_string(row, "title");
+        let uri = cell_string(row, "uri");
+        if let Some(ref ql) = q_lower {
+            let haystack = format!("{title} {uri}").to_lowercase();
+            if !haystack.contains(ql) {
+                continue;
+            }
+        }
+        let metadata_json = cell_string(row, "metadata_json");
+        if needs_json {
+            let parsed = serde_json::from_str::<serde_json::Value>(&metadata_json).ok();
+            let kp = parsed
+                .as_ref()
+                .and_then(|v| v.get("knowledge_properties"))
+                .and_then(|v| v.as_object());
+
+            let prop_str = |name: &str| -> Option<String> {
+                let val = kp?.get(name)?;
+                match val {
+                    serde_json::Value::String(s) => Some(s.clone()),
+                    serde_json::Value::Null => None,
+                    other => Some(other.to_string()),
+                }
+            };
+
+            if !filter.document_type.is_empty()
+                && prop_str("document_type").as_deref() != Some(filter.document_type.as_str())
+            {
+                continue;
+            }
+            if !filter.review_status.is_empty()
+                && prop_str("review_status").as_deref() != Some(filter.review_status.as_str())
+            {
+                continue;
+            }
+            if !filter.owner.is_empty()
+                && prop_str("owner").as_deref() != Some(filter.owner.as_str())
+            {
+                continue;
+            }
+            if !filter.due_before.is_empty() {
+                let Some(cutoff) = due_cutoff else {
+                    continue;
+                };
+                let Some(raw_due) = prop_str("review_due") else {
+                    continue;
+                };
+                let due_prefix = raw_due.trim().get(..10).unwrap_or(raw_due.trim());
+                let Ok(due_date) = NaiveDate::parse_from_str(due_prefix, "%Y-%m-%d") else {
+                    continue;
+                };
+                if due_date > cutoff {
+                    continue;
+                }
+            }
+        }
+
+        matched.push(KnowledgePageRow {
+            id: cell_string(row, "id"),
+            uri,
+            title,
+            wing: cell_opt_string(row, "wing"),
+            revision: cell_i64(row, "revision", 1),
+            metadata_json,
+        });
     }
-    if !filter.due_before.is_empty() {
-        clauses.push("TRY_CAST(json_extract_string(TRY_CAST(metadata_json AS JSON), '$.knowledge_properties.review_due') AS DATE) <= CAST(? AS DATE)".into());
-        values.push(filter.due_before.clone());
-    }
-    let condition = clauses.join(" AND ");
-    let conn = store.lock()?;
-    let total: i64 = conn.query_row(
-        &format!("SELECT COUNT(*) FROM documents WHERE {condition}"),
-        params_from_iter(values.iter()),
-        |r| r.get(0),
-    )?;
-    let sql = format!(
-        "SELECT id,uri,title,wing,revision,metadata_json FROM documents WHERE {condition} ORDER BY title,id LIMIT {KNOWLEDGE_PAGE_SIZE} OFFSET {}",
-        filter.offset
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt
-        .query_map(params_from_iter(values.iter()), |r| {
-            Ok(KnowledgePageRow {
-                id: r.get(0)?,
-                uri: r.get(1)?,
-                title: r.get(2)?,
-                wing: r.get(3)?,
-                revision: r.get(4)?,
-                metadata_json: r.get(5)?,
-            })
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    matched.sort_by(|a, b| a.title.cmp(&b.title).then_with(|| a.id.cmp(&b.id)));
+    let total = matched.len() as i64;
+    let rows = matched
+        .into_iter()
+        .skip(filter.offset as usize)
+        .take(KNOWLEDGE_PAGE_SIZE as usize)
+        .collect();
     Ok((total, rows))
 }

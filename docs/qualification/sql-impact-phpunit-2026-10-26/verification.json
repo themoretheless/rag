@@ -1,0 +1,49 @@
+{
+  "status": "passed",
+  "workspace": {
+    "passed": 1603,
+    "failed": 0,
+    "ignored": 1
+  },
+  "mcp_exit_codes": {
+    "table_impact": 0,
+    "php_trait_paths": 0,
+    "phpunit_entrypoints": 0,
+    "affected_tests": 0,
+    "trace_php_contexts": 0,
+    "git_php_contexts": 0
+  },
+  "binary_sha256_before": "41708e66e507025a19ae5eefbe038abddb856c005c5f20c6d5b12fba1df5146d",
+  "binary_sha256_after": "41708e66e507025a19ae5eefbe038abddb856c005c5f20c6d5b12fba1df5146d",
+  "source_hashes_before": {
+    "src/code_index.rs": "4fd4a26fbc333511f4565c9fedeff99e42285089bd3728fe6c038a350d2d39f5",
+    "src/code_index/analysis.rs": "66038ad181dfd2277b1a5e4e3fb6d3a216d46d711090a995c770dbcfd76119a1",
+    "src/code_index/history.rs": "db33d385090ab3a7ca830c57624e8ab0a729fa12e1d89fb12da15270940a9b12",
+    "src/code_index/impact.rs": "24cefaf6b4020de2b33902837b1cceafc9b85801fbd6268ffda75f29d1310e3d",
+    "src/code_index/impact/context_walk.rs": "9bc170e5a0653e9c1f4aba9af671c0bccd666f6e25d25e391bde34efb0301518",
+    "src/code_index/php_names.rs": "fd0702beb0ab912b2a3d9d91ad56f171e17779e49c174c7253aba84ef45e3e7d",
+    "src/code_index/php_names/capture.rs": "417b2d430f5064aa7ba71750550be7ad81d6dad4162c0cf6811d1a4a5bb4644b",
+    "src/code_index/php_names/phpunit.rs": "e450d9c638a686ea94a3c3326051bbc520edddeecd7218f197db5021c57010ea",
+    "src/code_index/php_names/tests.rs": "238c347324d1048333ec70c436442112c535ca5c1a1366ffa83501b3923ce7bd",
+    "scripts/smoke_table_impact.py": "7cb574df1b1c477e0b7917cea917f2480f3525b4c07cfcf2c5b101066e42c4bd",
+    "scripts/smoke_phpunit_entrypoints.py": "00f3beca27a325290aa9874af9296b2e36e7dc7791743d726332b18dc0595c04"
+  },
+  "source_hashes_after": {
+    "src/code_index.rs": "4fd4a26fbc333511f4565c9fedeff99e42285089bd3728fe6c038a350d2d39f5",
+    "src/code_index/analysis.rs": "66038ad181dfd2277b1a5e4e3fb6d3a216d46d711090a995c770dbcfd76119a1",
+    "src/code_index/history.rs": "db33d385090ab3a7ca830c57624e8ab0a729fa12e1d89fb12da15270940a9b12",
+    "src/code_index/impact.rs": "24cefaf6b4020de2b33902837b1cceafc9b85801fbd6268ffda75f29d1310e3d",
+    "src/code_index/impact/context_walk.rs": "9bc170e5a0653e9c1f4aba9af671c0bccd666f6e25d25e391bde34efb0301518",
+    "src/code_index/php_names.rs": "fd0702beb0ab912b2a3d9d91ad56f171e17779e49c174c7253aba84ef45e3e7d",
+    "src/code_index/php_names/capture.rs": "417b2d430f5064aa7ba71750550be7ad81d6dad4162c0cf6811d1a4a5bb4644b",
+    "src/code_index/php_names/phpunit.rs": "e450d9c638a686ea94a3c3326051bbc520edddeecd7218f197db5021c57010ea",
+    "src/code_index/php_names/tests.rs": "238c347324d1048333ec70c436442112c535ca5c1a1366ffa83501b3923ce7bd",
+    "scripts/smoke_table_impact.py": "7cb574df1b1c477e0b7917cea917f2480f3525b4c07cfcf2c5b101066e42c4bd",
+    "scripts/smoke_phpunit_entrypoints.py": "00f3beca27a325290aa9874af9296b2e36e7dc7791743d726332b18dc0595c04"
+  },
+  "shared_checkout": true,
+  "frozen_source_checkout": false,
+  "PHP_or_SQL_executed": false,
+  "production_database_touched": false,
+  "full_RAGRAF_parity_proven": false
+}

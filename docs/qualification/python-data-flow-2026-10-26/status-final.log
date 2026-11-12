@@ -1,0 +1,15 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 33.44s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 7 tests
+test code_index::status::tests::markup_endpoint_evidence_without_definitions_is_not_empty ... ok
+test code_index::status::tests::sql_read_evidence_without_definitions_is_not_an_empty_structural_index ... ok
+test code_index::status::tests::oversized_sample_cells_are_reported_as_unmeasured ... ok
+test code_index::status::tests::absent_empty_and_uninspected_are_never_healthy ... ok
+test code_index::status::tests::stale_windows_unsupported_sources_and_corrupt_cache_are_explicit ... ok
+test code_index::status::tests::measured_vectors_and_tokens_are_scoped_bounded_and_do_not_repair ... ok
+test code_index::status::tests::sampling_budget_stops_inspection_and_nonunit_vectors_are_not_invalid ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1367 filtered out; finished in 0.43s
+

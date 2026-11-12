@@ -1,10 +1,10 @@
 //! Graph + document HTTP handlers (`/v1/graph`, neighbors, find, document).
 
+use axum::Router;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::Router;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -12,8 +12,8 @@ use crate::app::NeighborsCommand;
 use crate::db::Store;
 use crate::error::AppError;
 
-use super::error::{api_err, api_ok};
 use super::HttpState;
+use super::error::{api_err, api_ok};
 
 /// Node cap for a whole-graph export when `max_nodes` is absent.
 const DEFAULT_GRAPH_MAX_NODES: u32 = 500;

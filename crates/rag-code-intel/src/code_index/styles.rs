@@ -732,8 +732,18 @@ mod tests {
     }
     #[test]
     fn css_ast_html_unicode_entities_escapes_media_and_false_tokens() {
-        let s=snapshot(&[("main.css", "/* .fake {} */\n@media (width > 500px) {\n .real:hover, .sm\\:wide, .café { content: '.fake2'; }\n}\n[data-x='.fake3'] {color:red}\n.orphan{}",Some("app")),
-        ("page.html","<!-- class='fake4' -->\n<div class=\"real sm:wide caf&#233; missing&#32;second\"></div>",Some("app"))]);
+        let s = snapshot(&[
+            (
+                "main.css",
+                "/* .fake {} */\n@media (width > 500px) {\n .real:hover, .sm\\:wide, .café { content: '.fake2'; }\n}\n[data-x='.fake3'] {color:red}\n.orphan{}",
+                Some("app"),
+            ),
+            (
+                "page.html",
+                "<!-- class='fake4' -->\n<div class=\"real sm:wide caf&#233; missing&#32;second\"></div>",
+                Some("app"),
+            ),
+        ]);
         let r = s.class_usage(&query(None, "all")).unwrap();
         assert_eq!(r["total"], 6, "{r}");
         for fake in ["fake", "fake2", "fake3", "fake4"] {
@@ -746,10 +756,12 @@ mod tests {
         assert_eq!(real["items"][0]["status"], "defined_and_used");
         assert_eq!(real["items"][0]["defined"][0]["line"], 3);
         assert_eq!(real["items"][0]["used"][0]["line"], 2);
-        assert!(real["items"][0]["defined"][0]["conditions"][0]
-            .as_str()
-            .unwrap()
-            .contains("@media"));
+        assert!(
+            real["items"][0]["defined"][0]["conditions"][0]
+                .as_str()
+                .unwrap()
+                .contains("@media")
+        );
         assert_eq!(s.class_usage(&query(None, "missing")).unwrap()["total"], 2);
         assert_eq!(
             s.class_usage(&query(None, "unused")).unwrap()["items"][0]["name"],
@@ -758,30 +770,44 @@ mod tests {
     }
     #[test]
     fn jsx_and_dom_static_classes_dynamic_values_and_embedded_source_lines() {
-        let s=snapshot(&[("app.tsx",r#"const x = <div className="alpha beta"/>;
+        let s = snapshot(&[
+            (
+                "app.tsx",
+                r#"const x = <div className="alpha beta"/>;
 const y = <div className={'gamma'} />;
 const z = <div className={styles.dynamic} />;
 el.classList.add('delta','epsilon'); el.classList.toggle('zeta', enabled);
 el.setAttribute('class','eta theta'); el.className = `iota`;
 el.classList.add('invalid token'); el.className = `prefix-${value}`;
 const noise = "className='fake'"; // el.className='comment'
-"#,None),
-        ("page.html","<html>\n<style>\n.inline{}\n</style>\n<script>\nel.classList.add('inline');\n</script>\n<div class='{dynamic}'></div></html>",None)]);
+"#,
+                None,
+            ),
+            (
+                "page.html",
+                "<html>\n<style>\n.inline{}\n</style>\n<script>\nel.classList.add('inline');\n</script>\n<div class='{dynamic}'></div></html>",
+                None,
+            ),
+        ]);
         let r = s.class_usage(&query(None, "all")).unwrap();
         assert_eq!(r["total"], 10, "{r}");
         let inline = s.class_usage(&query(Some("inline"), "all")).unwrap();
         assert_eq!(inline["items"][0]["defined"][0]["line"], 3);
         assert_eq!(inline["items"][0]["used"][0]["line"], 6);
-        assert!(r["diagnostics"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|d| d["code"] == "DYNAMIC_CLASS_EXPRESSION"));
-        assert!(r["diagnostics"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|d| d["code"] == "INVALID_DOM_CLASS_TOKEN"));
+        assert!(
+            r["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d["code"] == "DYNAMIC_CLASS_EXPRESSION")
+        );
+        assert!(
+            r["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d["code"] == "INVALID_DOM_CLASS_TOKEN")
+        );
         for n in ["fake", "comment", "enabled", "prefix-", "dynamic"] {
             assert_eq!(
                 s.class_usage(&query(Some(n), "all")).unwrap()["found"],
@@ -867,7 +893,7 @@ const noise = "className='fake'"; // el.className='comment'
 #[cfg(test)]
 mod persistence_tests {
     use super::*;
-    use rag_mcp::source_sync::{SourceSyncCommand, SourceSyncService};
+    use crate::source_sync::{SourceSyncCommand, SourceSyncService};
     #[tokio::test]
     async fn markup_policy_sync_reuses_persists_and_omits_stale_facts() {
         let root = tempfile::tempdir().unwrap();
@@ -887,9 +913,9 @@ mod persistence_tests {
             embedding_dims: 16,
             ..crate::Config::for_tests()
         };
-        let store = crate::testkit::open_test_store(&config.db_path).unwrap();
-        let embedder: std::sync::Arc<dyn rag_mcp::embeddings::EmbeddingProvider> =
-            std::sync::Arc::new(rag_mcp::embeddings::MockEmbedder::new(16));
+        let store = Store::open(&config.db_path).unwrap();
+        let embedder: std::sync::Arc<dyn crate::embeddings::EmbeddingProvider> =
+            std::sync::Arc::new(crate::embeddings::MockEmbedder::new(16));
         let service = SourceSyncService::new(&store, &embedder, &config);
         let command = SourceSyncCommand::new(root.path().into());
         let report = service.sync(command.clone()).await.unwrap();
@@ -903,9 +929,7 @@ mod persistence_tests {
             symbol: "policy".into(),
             ..Default::default()
         };
-        let snap = crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap();
+        let snap = store.code_snapshot().unwrap();
         assert_eq!(
             snap.class_usage(&q).unwrap()["items"][0]["status"],
             "defined_and_used"
@@ -933,26 +957,19 @@ mod persistence_tests {
         .unwrap();
         let report = service.sync(command).await.unwrap();
         assert!(report.errors.is_empty(), "{report:?}");
-        let snap = crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap();
+        let snap = store.code_snapshot().unwrap();
         assert_eq!(
             snap.class_usage(&q).unwrap()["items"][0]["status"],
             "unused_in_indexed_scope"
         );
         assert_eq!(snap.policy_trace(&p).unwrap()["default_behavior"], "allow");
         drop(store);
-        let store = crate::testkit::open_test_store(&config.db_path).unwrap();
+        let store = Store::open(&config.db_path).unwrap();
         assert_eq!(
-            crate::code_index::CodeIndex::new(&store)
-                .code_snapshot()
-                .unwrap()
-                .policy_trace(&p)
-                .unwrap()["default_behavior"],
+            store.code_snapshot().unwrap().policy_trace(&p).unwrap()["default_behavior"],
             "allow"
         );
         let mut doc = store
-            .documents()
             .list_documents()
             .unwrap()
             .into_iter()
@@ -963,12 +980,8 @@ mod persistence_tests {
             })
             .unwrap();
         doc.content = "<?php function policy() {return false;}".into();
-        store.documents().upsert_document(&doc).unwrap();
-        let r = crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap()
-            .policy_trace(&p)
-            .unwrap();
+        store.upsert_document(&doc).unwrap();
+        let r = store.code_snapshot().unwrap().policy_trace(&p).unwrap();
         assert_eq!(r["found"], false);
         assert!(!r["stale_documents"].as_array().unwrap().is_empty());
     }

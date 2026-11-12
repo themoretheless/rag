@@ -1,7 +1,7 @@
 use super::*;
 use crate::embeddings::MockEmbedder;
 use crate::models::{Chunk, SearchMode};
-use crate::testkit::{test_config, SeedDoc};
+use crate::testkit::{SeedDoc, test_config};
 use crate::wiki::write_wiki_page;
 use async_trait::async_trait;
 use chrono::Utc;
@@ -125,11 +125,13 @@ fn rebuild_graph_dirty_then_all() {
     let r1 = rebuild_graph_for_all_or_dirty(&store, true, 50).unwrap();
     assert_eq!(r1.candidate_count, 2);
     assert_eq!(r1.succeeded, 2);
-    assert!(store
-        .graph()
-        .find_node_by_document_id("d1")
-        .unwrap()
-        .is_some());
+    assert!(
+        store
+            .graph()
+            .find_node_by_document_id("d1")
+            .unwrap()
+            .is_some()
+    );
 
     // Dirty again: none left.
     let r2 = rebuild_graph_for_all_or_dirty(&store, true, 50).unwrap();
@@ -195,11 +197,13 @@ async fn maintain_refresh_dry_run_and_apply() {
     assert!(dry.reindex_fts.as_ref().unwrap().dry_run);
     assert_eq!(dry.rebuild_graph.as_ref().unwrap().candidate_count, 2);
     // dry_run does not create nodes
-    assert!(store
-        .graph()
-        .find_node_by_document_id("d1")
-        .unwrap()
-        .is_none());
+    assert!(
+        store
+            .graph()
+            .find_node_by_document_id("d1")
+            .unwrap()
+            .is_none()
+    );
     assert!(dry.ops_log_id.is_some());
 
     let apply_flags = MaintainRefreshFlags {
@@ -217,19 +221,23 @@ async fn maintain_refresh_dry_run_and_apply() {
     assert!(!applied.dry_run);
     assert_eq!(applied.rebuild_graph.as_ref().unwrap().succeeded, 2);
     assert_eq!(applied.rebuild_wiki_index.as_ref().unwrap().entry_count, 1);
-    assert!(applied
-        .reembed_all
-        .as_ref()
-        .is_some_and(|report| report.chunks_reembedded > 0));
-    assert!(store
-        .graph()
-        .find_node_by_document_id("d1")
-        .unwrap()
-        .is_some());
+    assert!(
+        applied
+            .reembed_all
+            .as_ref()
+            .is_some_and(|report| report.chunks_reembedded > 0)
+    );
+    assert!(
+        store
+            .graph()
+            .find_node_by_document_id("d1")
+            .unwrap()
+            .is_some()
+    );
     assert_eq!(store.wiki_index().list_wiki_index().unwrap().len(), 1);
     let generation_after_refresh = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert!(!generation_after_refresh.dirty);
     let _hits = crate::db::search::search(
@@ -244,8 +252,8 @@ async fn maintain_refresh_dry_run_and_apply() {
     )
     .unwrap();
     let generation_after_search = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert_eq!(generation_after_search, generation_after_refresh);
 
@@ -427,11 +435,13 @@ async fn reembed_all_refuses_orphan_chunk_without_publishing_manifest() {
     assert!(report.errors[0].starts_with(REEMBED_ALL_INCOMPLETE_CODE));
     assert!(report.errors[0].contains("no target embedding manifest was published"));
     assert!(report.manifest.is_none());
-    assert!(store
-        .embedding_manifest()
-        .get_embedding_manifest()
-        .unwrap()
-        .is_none());
+    assert!(
+        store
+            .embedding_manifest()
+            .get_embedding_manifest()
+            .unwrap()
+            .is_none()
+    );
 
     let summary = store
         .ops_log()
@@ -470,14 +480,18 @@ async fn capped_same_dimension_identity_migration_remains_closed_until_resumed()
     assert_eq!(first.documents_processed, 1);
     assert_eq!(first.pending_documents, 1);
     assert!(first.resumable);
-    assert!(store
-        .embedding_manifest()
-        .require_embedding_manifest_match(&old_config)
-        .is_err());
-    assert!(store
-        .embedding_manifest()
-        .require_embedding_manifest_match(&target_config)
-        .is_err());
+    assert!(
+        store
+            .embedding_manifest()
+            .require_embedding_manifest_match(&old_config)
+            .is_err()
+    );
+    assert!(
+        store
+            .embedding_manifest()
+            .require_embedding_manifest_match(&target_config)
+            .is_err()
+    );
     let resumed = reembed_all(&store, &embedder, &target_config, 1)
         .await
         .unwrap();
@@ -488,10 +502,12 @@ async fn capped_same_dimension_identity_migration_remains_closed_until_resumed()
         .embedding_manifest()
         .require_embedding_manifest_match(&target_config)
         .unwrap();
-    assert!(store
-        .embedding_manifest()
-        .require_embedding_manifest_match(&old_config)
-        .is_err());
+    assert!(
+        store
+            .embedding_manifest()
+            .require_embedding_manifest_match(&old_config)
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -556,24 +572,30 @@ async fn partial_migration_marker_refuses_old_and_target_until_full_retry() {
         .get_embedding_manifest()
         .unwrap()
         .unwrap();
-    assert!(marker
-        .content_fingerprint
-        .as_deref()
-        .is_some_and(|fingerprint| fingerprint.starts_with("migration-incomplete:")));
+    assert!(
+        marker
+            .content_fingerprint
+            .as_deref()
+            .is_some_and(|fingerprint| fingerprint.starts_with("migration-incomplete:"))
+    );
     let target_error = store
         .embedding_manifest()
         .require_embedding_manifest_match(&target_config)
         .expect_err("target identity must remain refused");
-    assert!(target_error
-        .to_string()
-        .contains("incomplete corpus migration"));
+    assert!(
+        target_error
+            .to_string()
+            .contains("incomplete corpus migration")
+    );
     let old_error = store
         .embedding_manifest()
         .require_embedding_manifest_match(&old_config)
         .expect_err("old identity must remain refused for mixed vectors");
-    assert!(old_error
-        .to_string()
-        .contains("incomplete corpus migration"));
+    assert!(
+        old_error
+            .to_string()
+            .contains("incomplete corpus migration")
+    );
 
     let mut dimensions = store
         .chunks()
@@ -599,12 +621,14 @@ async fn partial_migration_marker_refuses_old_and_target_until_full_retry() {
         .embedding_manifest()
         .require_embedding_manifest_match(&target_config)
         .expect("target identity is published after complete retry");
-    assert!(store
-        .chunks()
-        .all_chunks_with_embeddings()
-        .unwrap()
-        .iter()
-        .all(|chunk| chunk.embedding.len() == 16));
+    assert!(
+        store
+            .chunks()
+            .all_chunks_with_embeddings()
+            .unwrap()
+            .iter()
+            .all(|chunk| chunk.embedding.len() == 16)
+    );
     // Completion cleared the resume state and logged a complete marker.
     let fingerprint = crate::db::store::embedding_manifest_from_config(&target_config)
         .content_fingerprint
@@ -616,13 +640,15 @@ async fn partial_migration_marker_refuses_old_and_target_until_full_retry() {
             .unwrap(),
         0
     );
-    assert!(store
-        .ops_log()
-        .list_ops_log(10)
-        .unwrap()
-        .iter()
-        .any(|entry| entry.op == "reembed_progress"
-            && entry.payload_json.contains("\"complete\":true")));
+    assert!(
+        store
+            .ops_log()
+            .list_ops_log(10)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.op == "reembed_progress"
+                && entry.payload_json.contains("\"complete\":true"))
+    );
 }
 
 #[tokio::test]
@@ -712,13 +738,15 @@ async fn refresh_final_fts_failure_returns_report_and_terminal_ops_log() {
 
     assert_eq!(report.errors.len(), 1);
     assert!(report.errors[0].contains("FTS_FINALIZATION_FAILED"));
-    assert!(report
-        .reembed_all
-        .as_ref()
-        .is_some_and(|result| result.chunks_reembedded > 0));
+    assert!(
+        report
+            .reembed_all
+            .as_ref()
+            .is_some_and(|result| result.chunks_reembedded > 0)
+    );
     let generation = {
-        let conn = store.lock().unwrap();
-        crate::db::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts_generation_state(&*r).unwrap()
     };
     assert!(generation.dirty, "next lexical read must retry FTS");
     let summary_id = report.ops_log_id.as_deref().expect("terminal summary id");
@@ -731,12 +759,14 @@ async fn refresh_final_fts_failure_returns_report_and_terminal_ops_log() {
         .expect("terminal summary ops_log row");
     let payload: serde_json::Value = serde_json::from_str(&summary.payload_json).unwrap();
     assert_eq!(payload["errors"].as_array().unwrap().len(), 1);
-    assert!(store
-        .ops_log()
-        .list_ops_log(10)
-        .unwrap()
-        .iter()
-        .any(|entry| entry.op == "fts_finalization_failed"));
+    assert!(
+        store
+            .ops_log()
+            .list_ops_log(10)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.op == "fts_finalization_failed")
+    );
 }
 
 #[tokio::test]
@@ -771,8 +801,9 @@ async fn write_wiki_then_refresh_index() {
 
     // Wipe index and rebuild via refresh.
     {
-        let conn = store.lock().unwrap();
-        conn.execute("DELETE FROM wiki_index", []).unwrap();
+        use crate::db::lin_engine::{LinWriter, pred_all};
+        let mut w = store.write().unwrap();
+        w.delete_where("wiki_index", pred_all()).unwrap();
     }
     assert!(store.wiki_index().list_wiki_index().unwrap().is_empty());
 
@@ -911,12 +942,14 @@ async fn reembed_status_reports_match_pending_and_completion() {
         .embedding_manifest()
         .require_embedding_manifest_match(&target_config)
         .expect("manifest flipped after final batch");
-    assert!(store
-        .chunks()
-        .all_chunks_with_embeddings()
-        .unwrap()
-        .iter()
-        .all(|chunk| chunk.embedding.len() == 16));
+    assert!(
+        store
+            .chunks()
+            .all_chunks_with_embeddings()
+            .unwrap()
+            .iter()
+            .all(|chunk| chunk.embedding.len() == 16)
+    );
     let status = reembed_status(&store, &target_config).unwrap();
     assert!(status.identity_match);
     assert!(status.vector_search_open);

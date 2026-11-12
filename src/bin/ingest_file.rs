@@ -12,7 +12,7 @@
 //!   --wing projects --room notes
 //! ```
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use rag_mcp::ingest::{IngestFileCommand, IngestService};
 use std::path::PathBuf;
 

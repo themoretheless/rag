@@ -13,9 +13,9 @@ use crate::config::Config;
 use crate::db::Store;
 use crate::embeddings::cosine_similarity;
 use crate::error::{AppError, Result};
-use crate::llm::json::{parse_model_object, ERROR_EXCERPT_CHARS};
 use crate::llm::ChatMessage;
-use crate::maintain::plan::{validate_action, MaintenanceAction, MaintenancePlanItem};
+use crate::llm::json::{ERROR_EXCERPT_CHARS, parse_model_object};
+use crate::maintain::plan::{MaintenanceAction, MaintenancePlanItem, validate_action};
 use crate::maintain::prompts::ORGANIZE_SYSTEM;
 use crate::models::{Document, DocumentMetaUpdate, Taxonomy};
 use crate::util::excerpt_chars as truncate_chars;
@@ -1055,7 +1055,7 @@ fn parse_organize_json(raw: &str) -> Result<LlmOrganizePayload> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testkit::{test_config, SeedDoc};
+    use crate::testkit::{SeedDoc, test_config};
 
     /// Seed one document; `scope` is `(wing, room, source_file)`.
     fn seed_doc(
@@ -1139,10 +1139,12 @@ mod tests {
         assert_eq!(s.suggested_wing, "research");
         assert_eq!(s.suggested_room.as_deref(), Some("rag"));
         assert!(s.confidence >= 0.5);
-        assert!(report
-            .actions
-            .iter()
-            .all(|a| a.action == MaintenanceAction::Refile));
+        assert!(
+            report
+                .actions
+                .iter()
+                .all(|a| a.action == MaintenanceAction::Refile)
+        );
         assert_eq!(report.applied_ok, report.actions.len());
         // dry_run: wing still empty
         let doc = store.documents().get_document("loose").unwrap().unwrap();
@@ -1225,18 +1227,22 @@ mod tests {
 
         assert!(!report.embedding_heuristics_enabled);
         assert!(report.suggestions.is_empty());
-        assert!(report
-            .notes
-            .as_deref()
-            .unwrap_or_default()
-            .contains("embedding_heuristics_enabled=false"));
-        assert!(store
-            .documents()
-            .get_document("loose")
-            .unwrap()
-            .unwrap()
-            .wing
-            .is_none());
+        assert!(
+            report
+                .notes
+                .as_deref()
+                .unwrap_or_default()
+                .contains("embedding_heuristics_enabled=false")
+        );
+        assert!(
+            store
+                .documents()
+                .get_document("loose")
+                .unwrap()
+                .unwrap()
+                .wing
+                .is_none()
+        );
     }
 
     #[tokio::test]

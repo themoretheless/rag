@@ -268,9 +268,11 @@ mod tests {
             ),
         ]);
         let edges = edges(&docs);
-        assert!(edges
-            .iter()
-            .any(|e| e.document_id == "1" && e.candidates == ["0"]));
+        assert!(
+            edges
+                .iter()
+                .any(|e| e.document_id == "1" && e.candidates == ["0"])
+        );
         assert_eq!(
             edges
                 .iter()
@@ -278,15 +280,17 @@ mod tests {
                 .count(),
             2
         );
-        assert!(resolve::references(
-            &docs
-                .values()
-                .flat_map(|d| d.symbols.clone())
-                .collect::<Vec<_>>(),
-            &docs
-        )
-        .iter()
-        .all(|e| !e.reference.is_call || e.candidates.is_empty()));
+        assert!(
+            resolve::references(
+                &docs
+                    .values()
+                    .flat_map(|d| d.symbols.clone())
+                    .collect::<Vec<_>>(),
+                &docs
+            )
+            .iter()
+            .all(|e| !e.reference.is_call || e.candidates.is_empty())
+        );
     }
     #[test]
     fn python_packages_relative_submodules_and_cross_project_guards() {
@@ -301,12 +305,16 @@ mod tests {
             ("/p/pkg/child.py", "other", ""),
         ]);
         let edges = edges(&docs);
-        assert!(edges
-            .iter()
-            .any(|e| e.kind == "python_from_submodule_candidate" && e.candidates == ["1"]));
-        assert!(edges
-            .iter()
-            .any(|e| e.kind == "python_package_initializer_candidate" && e.candidates == ["0"]));
+        assert!(
+            edges
+                .iter()
+                .any(|e| e.kind == "python_from_submodule_candidate" && e.candidates == ["1"])
+        );
+        assert!(
+            edges
+                .iter()
+                .any(|e| e.kind == "python_package_initializer_candidate" && e.candidates == ["0"])
+        );
         assert!(edges.iter().all(|e| !e.candidates.contains(&"3".into())));
     }
     #[test]
@@ -324,10 +332,10 @@ mod tests {
         assert_eq!(got.len(), 3);
         assert_eq!(got[0].resolution, "ambiguous");
         assert_eq!(got[0].candidates, ["0", "1"]);
-        assert!(got[1..]
-            .iter()
-            .all(|e| e.candidates.is_empty()
-                && e.resolution_basis == "unsupported_loader_or_specifier"));
+        assert!(
+            got[1..].iter().all(|e| e.candidates.is_empty()
+                && e.resolution_basis == "unsupported_loader_or_specifier")
+        );
         docs.get_mut("0").unwrap().parse_errors = true;
         assert_eq!(edges(&docs)[0].candidates, ["1"]);
     }
@@ -335,7 +343,7 @@ mod tests {
     fn file_imports_survive_missing_symbols_and_refresh_with_frozen_history() {
         use crate::models::Document;
         let root = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&root.path().join("imports.duckdb")).unwrap();
+        let store = Store::open(&root.path().join("imports.duckdb")).unwrap();
         let doc = |id: &str, path: &str, body: &str| Document {
             id: id.into(),
             uri: format!("file://{path}"),
@@ -345,38 +353,33 @@ mod tests {
             ..Default::default()
         };
         store
-            .documents()
             .upsert_document(&doc("api", "/p/api.py", "VALUE = 1\n"))
             .unwrap();
         let mut client = doc("client", "/p/client.py", "from api import absent\n");
-        store.documents().upsert_document(&client).unwrap();
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        store.upsert_document(&client).unwrap();
+        store.index_code().unwrap();
         let q = CodeQuery {
             impact_file: Some("/p/api.py".into()),
             ..Default::default()
         };
-        let snapshot = crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap();
+        let snapshot = store.code_snapshot().unwrap();
         let result = snapshot.query("impact", &q);
         assert_eq!(result["items"][0]["path"], "/p/client.py", "{result}");
         assert_eq!(result["items"][0]["via_kind"], "file_import_candidate");
-        assert!(snapshot.query(
-            "impact",
-            &CodeQuery {
-                impact_relations: Some("calls".into()),
-                impact_file: q.impact_file.clone(),
-                ..Default::default()
-            }
-        )["items"]
-            .as_array()
-            .unwrap()
-            .is_empty());
-        let dead = crate::code_index::CodeIndex::new(&store)
-            .code_dead_files(&CodeQuery::default())
-            .unwrap();
+        assert!(
+            snapshot.query(
+                "impact",
+                &CodeQuery {
+                    impact_relations: Some("calls".into()),
+                    impact_file: q.impact_file.clone(),
+                    ..Default::default()
+                }
+            )["items"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        let dead = store.code_dead_files(&CodeQuery::default()).unwrap();
         assert!(
             !dead["items"]
                 .as_array()
@@ -386,33 +389,27 @@ mod tests {
             "{dead}"
         );
         client.content = "x = 1\n".into();
-        store.documents().upsert_document(&client).unwrap();
-        assert!(crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap()
-            .query("impact", &q)["items"]
-            .as_array()
-            .unwrap()
-            .is_empty());
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        assert!(crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap()
-            .query("impact", &q)["items"]
-            .as_array()
-            .unwrap()
-            .is_empty());
+        store.upsert_document(&client).unwrap();
+        assert!(
+            store.code_snapshot().unwrap().query("impact", &q)["items"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        store.index_code().unwrap();
+        assert!(
+            store.code_snapshot().unwrap().query("impact", &q)["items"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
         let diffq = history::DiffQuery {
             before: 1,
             after: Some(2),
             project: None,
             limit: None,
         };
-        let diff = crate::code_index::CodeIndex::new(&store)
-            .code_index_diff(&diffq)
-            .unwrap();
+        let diff = store.code_index_diff(&diffq).unwrap();
         assert_eq!(diff["file_import_relations_available"], true);
         assert!(
             diff["relations_removed"]
@@ -423,40 +420,21 @@ mod tests {
             "{diff}"
         );
         client.content = "from api import absent\n".into();
-        store.documents().upsert_document(&client).unwrap();
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        assert_eq!(
-            crate::code_index::CodeIndex::new(&store)
-                .code_index_diff(&diffq)
-                .unwrap(),
-            diff
-        );
-        let conn = store.lock().unwrap();
-        let raw: String = conn
-            .query_row(
-                "SELECT graph_json FROM code_index_revisions WHERE id=1",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        store.upsert_document(&client).unwrap();
+        store.index_code().unwrap();
+        assert_eq!(store.code_index_diff(&diffq).unwrap(), diff);
+        let raw = crate::code_index::test_get_rev_graph_json(&store, 1);
         let mut graph: serde_json::Value = serde_json::from_str(&raw).unwrap();
         graph.as_object_mut().unwrap().remove("file_imports");
-        conn.execute(
-            "UPDATE code_index_revisions SET graph_json=? WHERE id=1",
-            [graph.to_string()],
-        )
-        .unwrap();
-        drop(conn);
-        let legacy = crate::code_index::CodeIndex::new(&store)
-            .code_index_diff(&diffq)
-            .unwrap();
+        crate::code_index::test_set_rev_graph_json(&store, 1, &graph.to_string());
+        let legacy = store.code_index_diff(&diffq).unwrap();
         assert_eq!(legacy["file_import_relations_available"], false);
-        assert!(!legacy["relations_removed"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|r| r["kind"] == "file_import_candidate"));
+        assert!(
+            !legacy["relations_removed"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["kind"] == "file_import_candidate")
+        );
     }
 }

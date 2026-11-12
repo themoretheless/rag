@@ -36,7 +36,7 @@ fn resolve<'a>(name: &str, tables: &'a [LiveTable]) -> Vec<&'a LiveTable> {
         })
         .collect()
 }
-impl<'a> ExternalDb<'a> {
+impl<'a> super::ExternalDb<'a> {
     pub(super) fn external_db_drift(&self, s: &Snapshot, q: &Query) -> Result<Value> {
         let baseline = if let Some(id) = &q.base_snapshot_id {
             Some(self.external_snapshot(&Query {
@@ -45,16 +45,30 @@ impl<'a> ExternalDb<'a> {
                 ..Default::default()
             })?)
         } else {
-            self.store.with_conn(|conn| {
-                let mut stmt=conn.prepare("SELECT payload FROM external_db_snapshots WHERE connection_alias=? AND seq < (SELECT seq FROM external_db_snapshots WHERE id=?) ORDER BY seq DESC LIMIT 1")?;
-                let mut rows = stmt.query(duckdb::params![s.connection, s.id])?;
-                let body: Option<String> = rows.next()?.map(|r| r.get(0)).transpose()?;
-                body.map(|body| {
-                    serde_json::from_str::<Snapshot>(&body)
-                        .map_err(|_| AppError::config("invalid baseline snapshot"))
-                })
-                .transpose()
-            })?
+            let r = self.store.read()?;
+            let cur_seq = r
+                .get_by_id("external_db_snapshots", &s.id)?
+                .map(|row| cell_i64(&row, "seq", 0));
+            let body: Option<String> = if let Some(cur_seq) = cur_seq {
+                let mut best: Option<(i64, String)> = None;
+                r.scan_each("external_db_snapshots", |row| {
+                    if cell_str(row, "connection_alias") == Some(s.connection.as_str()) {
+                        let seq = cell_i64(row, "seq", 0);
+                        if seq < cur_seq && best.as_ref().is_none_or(|(prev, _)| seq > *prev) {
+                            best = Some((seq, cell_string(row, "payload")));
+                        }
+                    }
+                    Ok(true)
+                })?;
+                best.map(|(_, p)| p)
+            } else {
+                None
+            };
+            body.map(|body| {
+                serde_json::from_str::<Snapshot>(&body)
+                    .map_err(|_| AppError::config("invalid baseline snapshot"))
+            })
+            .transpose()?
         };
         let Some(base) = baseline else {
             return Ok(

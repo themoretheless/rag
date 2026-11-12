@@ -39,3 +39,6 @@ clap = { version = "4", features = ["derive"] }
 
 # Logging to stderr only (never stdout)
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[lints]
+workspace = true

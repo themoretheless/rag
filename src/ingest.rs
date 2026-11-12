@@ -8,7 +8,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::config::Config;
-use crate::db::store::{embedding_manifest_from_config, DocumentDerivedWrite};
+use crate::db::store::{DocumentDerivedWrite, embedding_manifest_from_config};
 use crate::db::{SourceManifestWrite, Store};
 use crate::document_indexer::{DocumentIndexer, PreparedDocumentChunks};
 use crate::embeddings::EmbeddingProvider;
@@ -264,7 +264,7 @@ impl<'a> IngestService<'a> {
         fetcher: &dyn crate::web_ingest::UrlFetcher,
         command: IngestUrlCommand,
     ) -> Result<IngestUrlResult, AppError> {
-        use crate::web_ingest::{check_final_url, check_url, classify_content_type, PageKind};
+        use crate::web_ingest::{PageKind, check_final_url, check_url, classify_content_type};
 
         let checked = check_url(&command.url, &self.config.ingest_url_allow)?;
         let page = fetcher
@@ -674,9 +674,9 @@ impl<'a> IngestService<'a> {
                     }));
                 }
                 return Err(AppError::conflict(format!(
-                        "raw source uri '{}' is immutable; content differs from registered source (document_id={})",
-                        command.uri, existing.id
-                    )));
+                    "raw source uri '{}' is immutable; content differs from registered source (document_id={})",
+                    command.uri, existing.id
+                )));
             }
             (
                 existing.id.clone(),

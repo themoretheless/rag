@@ -1,18 +1,21 @@
 [package]
 name = "rag-store-duckdb"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 rust-version = "1.95"
-description = "DuckDB store of rag-mcp: schema, repositories, vector/FTS search, and the domain types they persist"
+description = "Lin store of rag-mcp: schema, repositories, vector/FTS search, and the domain types they persist"
 license = "MIT"
 publish = false
+
+[lints]
+workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
 blake3 = { workspace = true }
 chrono = { workspace = true }
-duckdb = { workspace = true }
 encoding_rs = { workspace = true }
+lin = { workspace = true }
 rag-mcp-core = { workspace = true }
 rag-mcp-markup = { workspace = true }
 ring = { workspace = true }

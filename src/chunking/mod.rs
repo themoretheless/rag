@@ -3,7 +3,7 @@
 pub mod code_structure;
 pub mod fixed;
 
-pub use code_structure::{is_structural_language, structural_code_chunks, StructuralChunk};
+pub use code_structure::{StructuralChunk, is_structural_language, structural_code_chunks};
 pub use fixed::FixedChunker;
 
 /// Splits document text into content windows with character offsets.

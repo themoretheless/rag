@@ -519,7 +519,7 @@ fn evaluate_constraints(
         }
     }
 }
-impl<'a> ExternalDb<'a> {
+impl<'a> super::ExternalDb<'a> {
     pub fn check_write_plan(&self, q: Request) -> Result<Value> {
         q.validate()?;
         let count = q.count()?;
@@ -571,7 +571,7 @@ impl<'a> ExternalDb<'a> {
             Err(AppError::NotFound(_)) => {
                 return Ok(
                     json!({"status":"indeterminate","valid":null,"source":"captured_external_metadata","issues":[],"unverified":[{"code":"EXTERNAL_SCHEMA_NOT_CAPTURED"}],"executed":false,"live_query":false}),
-                )
+                );
             }
             Err(e) => return Err(e),
         };
@@ -773,14 +773,16 @@ mod tests {
     use super::*;
     fn store() -> (tempfile::TempDir, Store) {
         let dir = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&dir.path().join("check.duckdb")).unwrap();
+        let store = Store::open(&dir.path().join("check.lin")).unwrap();
         let payload = json!({"capture_format":2,"id":"frozen","connection":"offline","project":"p","dialect":"postgresql","schemas":["public"],"captured_ms":1,"code_index_revision":null,"target_fingerprint":"h","complete_within_visible_scope":true,"diagnostics":[],"tables":[{"schema":"public","name":"t","kind":"BASE TABLE","complete":true,"sample":null,"foreign_keys":[],"columns":[
             {"name":"id","data_type":"integer","nullable":"NO","default_sql":null},
             {"name":"computed","data_type":"integer","nullable":"YES","generation_metadata":"ALWAYS"},
             {"name":"serial","data_type":"integer","nullable":"NO","identity":"YES","identity_kind":"ALWAYS"},
             {"name":"optional","data_type":"text","nullable":"YES"}
         ],"metadata":{"indexes":[],"constraints":[{"name":"positive","kind":"CHECK","definition":"CHECK (id > 0)"}],"view":null,"complete":true,"diagnostics":[]}}]});
-        store.lock().unwrap().execute("INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",duckdb::params!["frozen","offline",1,payload.to_string()]).unwrap();
+        store
+            .insert_external_db_snapshot("frozen", "offline", 1, &payload.to_string())
+            .unwrap();
         (dir, store)
     }
     fn run(store: &Store, fields: Value) -> Value {
@@ -788,7 +790,7 @@ mod tests {
         q.as_object_mut()
             .unwrap()
             .extend(fields.as_object().unwrap().clone());
-        crate::external_db::ExternalDb::new(store)
+        store
             .check_write_plan(serde_json::from_value(q).unwrap())
             .unwrap()
     }
@@ -842,12 +844,14 @@ mod tests {
             )["status"],
             "indeterminate"
         );
-        assert!(!run(
-            &store,
-            json!({"values":{"id":1,"optional":"PRIVATE_LITERAL_MARKER"}})
-        )
-        .to_string()
-        .contains("PRIVATE_LITERAL_MARKER"));
+        assert!(
+            !run(
+                &store,
+                json!({"values":{"id":1,"optional":"PRIVATE_LITERAL_MARKER"}})
+            )
+            .to_string()
+            .contains("PRIVATE_LITERAL_MARKER")
+        );
         assert_eq!(run(&store, json!({"values":2}))["status"], "indeterminate");
         assert_eq!(
             run(&store, json!({"connection":"missing"}))["status"],
@@ -874,25 +878,24 @@ mod tests {
     #[test]
     fn explicit_or_omitted_null_default_cannot_satisfy_not_null() {
         let (_dir, store) = store();
-        let mut payload: Value = serde_json::from_str(
-            &store
-                .lock()
-                .unwrap()
-                .query_row(
-                    "SELECT payload FROM external_db_snapshots WHERE id='frozen'",
-                    [],
-                    |r| r.get::<_, String>(0),
-                )
-                .unwrap(),
-        )
-        .unwrap();
+        let raw_payload = store
+            .read()
+            .unwrap()
+            .get_by_id("external_db_snapshots", "frozen")
+            .unwrap()
+            .map(|r| crate::db::lin_engine::cell_string(&r, "payload"))
+            .unwrap();
+        let mut payload: Value = serde_json::from_str(&raw_payload).unwrap();
         payload["tables"][0]["columns"][0]["default_sql"] = json!("NULL");
         store
-            .lock()
+            .write()
             .unwrap()
-            .execute(
-                "UPDATE external_db_snapshots SET payload=? WHERE id='frozen'",
-                duckdb::params![payload.to_string()],
+            .update_where(
+                "external_db_snapshots",
+                lin::query::pred::eq("id", "frozen"),
+                crate::db::lin_engine::RecBuilder::new()
+                    .str("payload", payload.to_string())
+                    .build(),
             )
             .unwrap();
         for q in [json!({"values":{}}), json!({"default_columns":["id"]})] {

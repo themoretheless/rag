@@ -254,7 +254,7 @@ pub fn export_graph_snapshot(args: &ExportArgs) -> Result<ExportResult, String> 
     if args.envelope {
         let env = SnapshotEnvelopeOut {
             version: 1,
-            source: "duckdb",
+            source: "lin",
             db_path: args.db.display().to_string(),
             graph: &view,
         };

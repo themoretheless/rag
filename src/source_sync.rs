@@ -20,7 +20,7 @@ use crate::error::AppError;
 use crate::file_ingest::{extract_file, is_supported_source, merge_metadata};
 use crate::ingest::{IngestCommand, IngestService, PreparedIngest, SourceManifestStamp};
 use crate::source_scan::{
-    collect_source_files_while, is_explicitly_excluded_source_path, SourceScanPolicy,
+    SourceScanPolicy, collect_source_files_while, is_explicitly_excluded_source_path,
 };
 use crate::util::{check_path_allowlist, content_hash};
 
@@ -591,13 +591,11 @@ impl<'a> SourceSyncService<'a> {
         seen.insert(source_file.clone());
         let stamp = source_stamp(&canonical, run.scan_policy)?;
         let existing = run.preloaded.get(&source_file);
-        let preserved_source_ok = self.store.with_conn(|conn| {
-            Ok(crate::code_index::source::is_preserved_html(
-                conn,
-                &canonical,
-                existing.and_then(|entry| entry.document_metadata_json.as_deref()),
-            ))
-        })?;
+        let preserved_source_ok = crate::code_index::source::is_preserved_html(
+            &*self.store.read()?,
+            &canonical,
+            existing.and_then(|entry| entry.document_metadata_json.as_deref()),
+        );
         if existing.is_some_and(|entry| {
             manifest_preflight_matches(entry, stamp, &canonical_root)
                 && preserved_source_ok

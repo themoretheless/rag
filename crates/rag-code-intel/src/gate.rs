@@ -1,34 +1,33 @@
 //! A bounded index-first usage gate, shared by MCP and the opt-in hook executable.
 //! This is not a sandbox, an authorization engine or a command executor.
+#[cfg(test)]
+pub(crate) use crate::testkit::StoreCodeIntelTestExt;
 use crate::{
     analysis_tasks,
-    db::Store,
+    db::{
+        Store,
+        lin_engine::{
+            LinReader, LinWriter, RecBuilder, cell_bool_opt, cell_i64, cell_i64_opt, cell_str,
+            cell_string,
+        },
+    },
     error::{AppError, Result},
     util::content_hash,
 };
-use duckdb::{params, Connection, OptionalExt};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use tree_sitter::{Node, Parser};
+pub const SCHEMA: crate::db::schema::SchemaExtension = crate::db::schema::SchemaExtension {
+    name: "gate",
+    ddl: "",
+};
+
 const WINDOW_MS: i64 = 900_000;
 const MAX_FILES: usize = 256;
 const MAX_BYTES: usize = 16 * 1024 * 1024;
-/// This module's tables, registered at composition and ensured by its repository.
-pub const SCHEMA: crate::db::schema::SchemaExtension = crate::db::schema::SchemaExtension {
-    name: "gate",
-    ddl: DDL,
-};
-pub(crate) const DDL: &str = r#"
-CREATE TABLE IF NOT EXISTS analysis_gate_decisions (
- seq BIGINT PRIMARY KEY, id VARCHAR UNIQUE NOT NULL, session_id VARCHAR NOT NULL,
- task VARCHAR NOT NULL, index_rev BIGINT, created_ms BIGINT NOT NULL,
- mode VARCHAR NOT NULL, kind VARCHAR NOT NULL, verdict VARCHAR NOT NULL,
- rule VARCHAR NOT NULL, facts_json VARCHAR NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_analysis_gate_task ON analysis_gate_decisions(task,seq);
-CREATE INDEX IF NOT EXISTS idx_analysis_gate_session ON analysis_gate_decisions(session_id,seq);
-"#;
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GateQuery {
     /// Hook object or JSON string: tool_name, tool_input, cwd, session_id, hook_event_name.
@@ -381,15 +380,69 @@ struct Facts {
     bytes: usize,
     reasons: Vec<&'static str>,
 }
-fn stored_changes(conn: &Connection, rev: i64, root: &str) -> Result<i64> {
+fn stored_changes(r: &impl LinReader, rev: i64, root: &str) -> Result<i64> {
     let prefix = format!(
         "{}{}",
         root.trim_end_matches(std::path::MAIN_SEPARATOR),
         std::path::MAIN_SEPARATOR
     );
-    let changed:i64=conn.query_row("SELECT COUNT(*) FROM code_index_revision_files f LEFT JOIN documents d ON d.id=f.document_id WHERE f.index_revision=? AND (f.path=? OR starts_with(f.path,?)) AND (d.id IS NULL OR COALESCE(d.status,'active') IN ('archived','tombstone','consolidated') OR COALESCE(d.revision,1)<>f.document_revision OR COALESCE(d.source_file,d.uri)<>f.path)",params![rev,root,prefix],|r|r.get(0))?;
-    let new:i64=conn.query_row("SELECT COUNT(*) FROM documents d WHERE COALESCE(d.status,'active') NOT IN ('archived','tombstone','consolidated') AND (COALESCE(d.source_file,d.uri)=? OR starts_with(COALESCE(d.source_file,d.uri),?)) AND NOT EXISTS(SELECT 1 FROM code_index_revision_files f WHERE f.index_revision=? AND f.document_id=d.id)",params![root,prefix,rev],|r|r.get(0))?;
+    let rev_rows = r.find_by_eq("code_index_revision_files", "index_revision", rev)?;
+    let mut rev_doc_ids = HashSet::with_capacity(rev_rows.len());
+    let mut changed = 0i64;
+    for row in &rev_rows {
+        let doc_id = cell_string(row, "document_id");
+        rev_doc_ids.insert(doc_id.clone());
+        let path = cell_str(row, "path").unwrap_or_default();
+        if path != root && !path.starts_with(&prefix) {
+            continue;
+        }
+        let doc_rev = cell_i64(row, "document_revision", 1);
+        let stale = match r.get_by_id("documents", &doc_id)? {
+            None => true,
+            Some(d) => {
+                let status = cell_str(&d, "status").unwrap_or("active");
+                let d_rev = cell_i64(&d, "revision", 1);
+                let d_path = cell_str(&d, "source_file")
+                    .or_else(|| cell_str(&d, "uri"))
+                    .unwrap_or_default();
+                matches!(status, "archived" | "tombstone" | "consolidated")
+                    || d_rev != doc_rev
+                    || d_path != path
+            }
+        };
+        if stale {
+            changed += 1;
+        }
+    }
+    let mut new = 0i64;
+    r.scan_each("documents", |d| {
+        let status = cell_str(d, "status").unwrap_or("active");
+        if matches!(status, "archived" | "tombstone" | "consolidated") {
+            return Ok(true);
+        }
+        let d_path = cell_str(d, "source_file")
+            .or_else(|| cell_str(d, "uri"))
+            .unwrap_or_default();
+        if (d_path == root || d_path.starts_with(&prefix))
+            && !rev_doc_ids.contains(cell_str(d, "id").unwrap_or_default())
+        {
+            new += 1;
+        }
+        Ok(true)
+    })?;
     Ok(changed + new)
+}
+fn latest_revision_with_graph(r: &impl LinReader) -> Result<Option<(i64, String)>> {
+    let mut latest: Option<(i64, String)> = None;
+    r.scan_each("code_index_revisions", |row| {
+        if let Some(rev) = cell_i64_opt(row, "rev_id")
+            && latest.as_ref().is_none_or(|(prev, _)| rev > *prev)
+        {
+            latest = Some((rev, cell_string(row, "graph_json")));
+        }
+        Ok(true)
+    })?;
+    Ok(latest)
 }
 fn freshness(store: &Store, cwd: &str, roots: &[PathBuf]) -> Result<Facts> {
     let mut f = Facts {
@@ -409,26 +462,33 @@ fn freshness(store: &Store, cwd: &str, roots: &[PathBuf]) -> Result<Facts> {
         f.reasons.push("CWD_UNAVAILABLE");
         return Ok(f);
     };
-    let stored = store.with_conn(|conn| {
-        let mut stmt=conn.prepare("SELECT DISTINCT canonical_root FROM source_manifest ORDER BY length(canonical_root) DESC,canonical_root")?;
-        let all = stmt
-            .query_map([], |r| r.get::<_, String>(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        f.corpus = all.into_iter().find(|r| cwd.starts_with(Path::new(r)));
+    let (files, changed, format_matches) = {
+        let r = store.read()?;
+        let mut distinct_roots: HashSet<String> = HashSet::new();
+        r.scan_each("source_manifest", |row| {
+            let cr = cell_string(row, "canonical_root");
+            if !cr.is_empty() {
+                distinct_roots.insert(cr);
+            }
+            Ok(true)
+        })?;
+        let mut all: Vec<String> = distinct_roots.into_iter().collect();
+        all.sort_by(|a, b| {
+            b.chars()
+                .count()
+                .cmp(&a.chars().count())
+                .then_with(|| a.cmp(b))
+        });
+        f.corpus = all
+            .into_iter()
+            .find(|root| cwd.starts_with(Path::new(root)));
         let Some(root) = f.corpus.as_ref() else {
-            return Ok(None);
+            return Ok(f);
         };
-        let latest: Option<(i64, String)> = conn
-            .query_row(
-                "SELECT id,graph_json FROM code_index_revisions ORDER BY id DESC LIMIT 1",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()?;
-        let Some((rev, graph)) = latest else {
+        let Some((rev, graph)) = latest_revision_with_graph(&*r)? else {
             f.fresh = Some(false);
             f.reasons.push("INDEX_MISSING");
-            return Ok(None);
+            return Ok(f);
         };
         f.rev = Some(rev);
         let format_matches = serde_json::from_str::<Value>(&graph)?
@@ -440,17 +500,22 @@ fn freshness(store: &Store, cwd: &str, roots: &[PathBuf]) -> Result<Facts> {
             root.trim_end_matches(std::path::MAIN_SEPARATOR),
             std::path::MAIN_SEPARATOR
         );
-        let mut stmt=conn.prepare("SELECT f.path,f.content_hash FROM code_index_revision_files f WHERE f.index_revision=? AND (f.path=? OR starts_with(f.path,?)) ORDER BY f.path LIMIT ?")?;
-        let files = stmt
-            .query_map(params![rev, root, prefix, MAX_FILES as i64 + 1], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        let changed = stored_changes(conn, rev, root)?;
-        Ok(Some((files, changed, format_matches)))
-    })?;
-    let Some((files, changed, format_matches)) = stored else {
-        return Ok(f);
+        let mut files: Vec<(String, String)> = r
+            .find_by_eq("code_index_revision_files", "index_revision", rev)?
+            .into_iter()
+            .filter_map(|row| {
+                let p = cell_string(&row, "path");
+                if p == *root || p.starts_with(&prefix) {
+                    Some((p, cell_string(&row, "content_hash")))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        files.sort_by(|a, b| a.0.cmp(&b.0));
+        files.truncate(MAX_FILES + 1);
+        let changed = stored_changes(&*r, rev, root)?;
+        (files, changed, format_matches)
     };
     if !format_matches || changed > 0 {
         f.fresh = Some(false);
@@ -495,9 +560,7 @@ fn freshness(store: &Store, cwd: &str, roots: &[PathBuf]) -> Result<Facts> {
         f.fresh = Some(true);
     }
     // Do not certify a revision that changed during the unlocked bounded live reads.
-    let current: Option<i64> = store.with_conn(|conn| {
-        Ok(conn.query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| r.get(0))?)
-    })?;
+    let current = analysis_tasks::latest_code_index_rev(&*store.read()?)?;
     if current != f.rev {
         f.fresh = None;
         f.reasons.push("INDEX_REVISION_CHANGED_DURING_CHECK");
@@ -563,9 +626,8 @@ fn decide(c: &Classification, f: &Facts, mode: Mode, used: bool, first: bool) ->
     }
     d
 }
-/// Gate decisions repository over the store connection.
 pub struct Gate<'a> {
-    store: &'a Store,
+    pub(crate) store: &'a Store,
 }
 
 impl<'a> Gate<'a> {
@@ -576,7 +638,6 @@ impl<'a> Gate<'a> {
         }
         Self { store }
     }
-
     pub fn analysis_gate(
         &self,
         session_id: &str,
@@ -586,10 +647,7 @@ impl<'a> Gate<'a> {
     ) -> Result<Value> {
         let session = analysis_tasks::session(session_id)?;
         let at = chrono::Utc::now().timestamp_millis();
-        let task = self
-            .store
-            .with_conn(|conn| analysis_tasks::active(conn, &session, at))?
-            .0;
+        let task = analysis_tasks::active(&*self.store.read()?, &session, at)?.0;
         let c = if mode == Mode::Off {
             Classification {
                 kind: "off",
@@ -616,23 +674,33 @@ impl<'a> Gate<'a> {
                     reasons: vec![],
                 }
             };
-        self.store.with_conn(|conn| {
-            let tx = conn.transaction()?;
-            let rev: Option<i64> =
-                tx.query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| r.get(0))?;
+
+        let (id, seq, rev, d, counters) = self.store.with_tx(|tx| {
+            let rev = analysis_tasks::latest_code_index_rev(tx)?;
             if f.rev.is_some() && f.rev != rev {
                 f.fresh = None;
                 f.reasons.push("INDEX_REVISION_CHANGED_BEFORE_DECISION");
             }
             if f.rev == rev {
                 if let (Some(rev), Some(root)) = (rev, f.corpus.as_deref()) {
-                    if stored_changes(&tx, rev, root)? > 0 {
+                    if stored_changes(tx, rev, root)? > 0 {
                         f.fresh = Some(false);
                         f.reasons.push("STORED_INPUTS_CHANGED_BEFORE_DECISION");
                     }
                 }
             }
-            let epoch:Option<(i64,String)>=tx.query_row("SELECT seq,facts_json FROM analysis_gate_decisions WHERE session_id=? AND kind='session_start' ORDER BY seq DESC LIMIT 1",[&session],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+            let mut epoch: Option<(i64, String)> = None;
+            tx.scan_each("analysis_gate_decisions", |row| {
+                if cell_str(row, "session_id") == Some(session.as_str())
+                    && cell_str(row, "kind") == Some("session_start")
+                {
+                    let row_seq = cell_i64(row, "seq", 0);
+                    if epoch.as_ref().is_none_or(|(prev, _)| row_seq > *prev) {
+                        epoch = Some((row_seq, cell_string(row, "facts_json")));
+                    }
+                }
+                Ok(true)
+            })?;
             let epoch_gate = epoch.as_ref().map_or(0, |e| e.0);
             let epoch_call = epoch
                 .as_ref()
@@ -640,66 +708,466 @@ impl<'a> Gate<'a> {
                 .transpose()?
                 .and_then(|v| v["index_use_barrier_seq"].as_i64())
                 .unwrap_or(0);
-            let used:i64=tx.query_row("SELECT COUNT(*) FROM analysis_calls WHERE session_id=? AND task=? AND ok=true AND finished_ms>=? AND started_ms<=? AND index_rev IS NOT DISTINCT FROM ? AND evidence_count>0 AND seq>?",params![session,task,at-WINDOW_MS,at,rev,epoch_call],|r|r.get(0))?;
-            let prev:i64=tx.query_row("SELECT COUNT(*) FROM analysis_gate_decisions WHERE session_id=? AND task=? AND index_rev IS NOT DISTINCT FROM ? AND created_ms>=? AND mode='ask' AND verdict IN ('ask','deny') AND seq>?",params![session,task,rev,at-WINDOW_MS,epoch_gate],|r|r.get(0))?;
+
+            let mut used = 0i64;
+            let mut max_call_seq = 0i64;
+            tx.scan_each("analysis_calls", |row| {
+                let row_seq = cell_i64(row, "seq", 0);
+                if row_seq > max_call_seq {
+                    max_call_seq = row_seq;
+                }
+                if cell_str(row, "session_id") == Some(session.as_str())
+                    && cell_str(row, "task") == Some(task.as_str())
+                    && cell_bool_opt(row, "ok") == Some(true)
+                    && cell_i64_opt(row, "finished_ms").is_some_and(|fin| fin >= at - WINDOW_MS)
+                    && cell_i64(row, "started_ms", i64::MAX) <= at
+                    && cell_i64_opt(row, "index_rev") == rev
+                    && cell_i64_opt(row, "evidence_count").is_some_and(|ev| ev > 0)
+                    && row_seq > epoch_call
+                {
+                    used += 1;
+                }
+                Ok(true)
+            })?;
+
+            let mut prev = 0i64;
+            tx.scan_each("analysis_gate_decisions", |row| {
+                let row_seq = cell_i64(row, "seq", 0);
+                let verdict = cell_str(row, "verdict").unwrap_or_default();
+                if cell_str(row, "session_id") == Some(session.as_str())
+                    && cell_str(row, "task") == Some(task.as_str())
+                    && cell_i64_opt(row, "index_rev") == rev
+                    && cell_i64(row, "created_ms", 0) >= at - WINDOW_MS
+                    && cell_str(row, "mode") == Some("ask")
+                    && matches!(verdict, "ask" | "deny")
+                    && row_seq > epoch_gate
+                {
+                    prev += 1;
+                }
+                Ok(true)
+            })?;
+
             let mut d = decide(&c, &f, mode, used > 0, prev == 0);
             d.facts = json!({"kind":c.kind,"classification_uncertain":c.uncertain,"corpus_root":f.corpus,"fresh":f.fresh,"index_rev":f.rev.or(rev),"freshness_scope":"indexed_manifest_inputs_only_no_new_file_discovery","checked_files":f.checked,"checked_bytes":f.bytes,"checked_bytes_basis":"original_file_bytes","checksum_scope":"decoded_source_utf8","freshness_reasons":f.reasons,"index_used":used>0,"index_use_scope":"same_database_task_session_revision_at_call_start_successful_nonempty","first_offence":prev==0,"mode":mode,"budgets":{"files":MAX_FILES,"total_bytes":MAX_BYTES,"per_file_bytes":4*1024*1024}});
             if c.kind == "session_start" {
-                let barrier: i64 =
-                    tx.query_row("SELECT COALESCE(MAX(seq),0) FROM analysis_calls", [], |r| {
-                        r.get(0)
-                    })?;
-                d.facts["index_use_barrier_seq"] = json!(barrier);
+                d.facts["index_use_barrier_seq"] = json!(max_call_seq);
             }
-            let seq: i64 = tx.query_row(
-                "SELECT COALESCE(MAX(seq),0)+1 FROM analysis_gate_decisions",
-                [],
-                |r| r.get(0),
-            )?;
+            let seq = analysis_tasks::next_seq(tx, "analysis_gate_decisions")?;
             let id = uuid::Uuid::new_v4().to_string();
-            tx.execute(
-                "INSERT INTO analysis_gate_decisions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                params![
-                    seq,
-                    id,
-                    session,
-                    task,
-                    rev,
-                    at,
-                    mode.as_str(),
-                    c.kind,
-                    d.verdict,
-                    d.rule,
-                    serde_json::to_string(&d.facts)?
-                ],
+            tx.insert_one(
+                "analysis_gate_decisions",
+                RecBuilder::new()
+                    .id(seq.to_string())
+                    .i64("seq", seq)
+                    .str("decision_id", &id)
+                    .str("session_id", &session)
+                    .str("task", &task)
+                    .opt_i64("index_rev", rev)
+                    .i64("created_ms", at)
+                    .str("mode", mode.as_str())
+                    .str("kind", c.kind)
+                    .str("verdict", &d.verdict)
+                    .str("rule", &d.rule)
+                    .str("facts_json", serde_json::to_string(&d.facts)?)
+                    .build(),
             )?;
-            let counters = summary(&tx, Some(&task), 5)?;
-            tx.commit()?;
-            Ok(
-                json!({"decision_id":id,"seq":seq,"session_id":session,"task":task,"index_rev":rev,"verdict":d.verdict,"rule":d.rule,"reason":d.reason,"context":d.context,"facts":d.facts,"hook":d.hook(),"counters":counters,"command_executed":false,"client_hook_installed":false,"not_checked":["command_safety","runtime_authorization","unindexed_new_files","whether_prior_queries_covered_target_project"]}),
-            )
-        })
+            let counters = summary(tx, Some(&task), 5)?;
+            Ok((id, seq, rev, d, counters))
+        })?;
+        Ok(
+            json!({"decision_id":id,"seq":seq,"session_id":session,"task":task,"index_rev":rev,"verdict":d.verdict,"rule":d.rule,"reason":d.reason,"context":d.context,"facts":d.facts,"hook":d.hook(),"counters":counters,"command_executed":false,"client_hook_installed":false,"not_checked":["command_safety","runtime_authorization","unindexed_new_files","whether_prior_queries_covered_target_project"]}),
+        )
     }
 }
-pub(crate) fn summary(conn: &Connection, task: Option<&str>, limit: usize) -> Result<Value> {
-    let mut stmt=conn.prepare("SELECT verdict,COUNT(*) FROM analysis_gate_decisions WHERE (? IS NULL OR task=?) GROUP BY verdict ORDER BY verdict")?;
-    let rows = stmt.query_map(params![task, task], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+pub(crate) fn summary(r: &impl LinReader, task: Option<&str>, limit: usize) -> Result<Value> {
+    let mut by_verdict: BTreeMap<String, i64> = BTreeMap::new();
+    let mut recent_rows: Vec<(i64, Value)> = Vec::new();
+    r.scan_each("analysis_gate_decisions", |row| {
+        if let Some(t) = task
+            && cell_str(row, "task") != Some(t)
+        {
+            return Ok(true);
+        }
+        let verdict = cell_string(row, "verdict");
+        *by_verdict.entry(verdict.clone()).or_insert(0) += 1;
+        let seq = cell_i64(row, "seq", 0);
+        recent_rows.push((
+            seq,
+            json!({
+                "seq": seq,
+                "session_id": cell_string(row, "session_id"),
+                "index_rev": cell_i64_opt(row, "index_rev"),
+                "created_ms": cell_i64(row, "created_ms", 0),
+                "mode": cell_string(row, "mode"),
+                "kind": cell_string(row, "kind"),
+                "verdict": verdict,
+                "rule": cell_string(row, "rule"),
+            }),
+        ));
+        Ok(true)
     })?;
     let mut counters = json!({"allow":0,"ask":0,"deny":0,"off":0});
-    let mut total = 0;
-    for row in rows {
-        let (k, n) = row?;
+    let mut total = 0i64;
+    for (k, n) in by_verdict {
         counters[k] = json!(n);
         total += n;
     }
-    let mut stmt=conn.prepare("SELECT seq,session_id,index_rev,created_ms,mode,kind,verdict,rule FROM analysis_gate_decisions WHERE (? IS NULL OR task=?) ORDER BY seq DESC LIMIT ?")?;
-    let rows=stmt.query_map(params![task,task,limit.min(50) as i64],|r|Ok(json!({"seq":r.get::<_,i64>(0)?,"session_id":r.get::<_,String>(1)?,"index_rev":r.get::<_,Option<i64>>(2)?,"created_ms":r.get::<_,i64>(3)?,"mode":r.get::<_,String>(4)?,"kind":r.get::<_,String>(5)?,"verdict":r.get::<_,String>(6)?,"rule":r.get::<_,String>(7)?})))?;
-    let recent = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+    let cap = limit.min(50);
+    recent_rows.sort_by_key(|a| std::cmp::Reverse(a.0));
+    recent_rows.truncate(cap);
+    let recent: Vec<Value> = recent_rows.into_iter().map(|(_, v)| v).collect();
     Ok(
-        json!({"decisions":total,"counters":counters,"recent":recent,"recent_truncated":total>limit.min(50) as i64,"effectiveness_measured":false}),
+        json!({"decisions":total,"counters":counters,"recent":recent,"recent_truncated":total>cap as i64,"effectiveness_measured":false}),
     )
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+    use crate::{analysis_tasks::TaskSet, db::SourceManifestWrite, models::Document};
+    struct Fixture {
+        _root: tempfile::TempDir,
+        _db: tempfile::TempDir,
+        root: PathBuf,
+        path: PathBuf,
+        store: Store,
+    }
+    impl Fixture {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path().canonicalize().unwrap();
+            let path = root.join("main.rs");
+            std::fs::write(&path, "fn main() {}\n").unwrap();
+            let db = tempfile::tempdir().unwrap();
+            let store = Store::open(&db.path().join("gate.lin")).unwrap();
+            store
+                .upsert_document(&Document {
+                    id: "file".into(),
+                    uri: format!("file://{}", path.display()),
+                    source_file: Some(path.display().to_string()),
+                    content: "fn main() {}\n".into(),
+                    ..Default::default()
+                })
+                .unwrap();
+            let path_s = path.display().to_string();
+            let root_s = root.display().to_string();
+            let hash_s = content_hash("fn main() {}\n");
+            store
+                .upsert_source_manifest(SourceManifestWrite {
+                    canonical_path: &path_s,
+                    canonical_root: &root_s,
+                    size_bytes: 13,
+                    mtime_ns: 0,
+                    content_hash: &hash_s,
+                    document_id: "file",
+                })
+                .unwrap();
+            store.index_code().unwrap();
+            store
+                .analysis_task_set(
+                    "s",
+                    &TaskSet {
+                        name: Some("audit".into()),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            Self {
+                _root: dir,
+                _db: db,
+                root,
+                path,
+                store,
+            }
+        }
+        fn call(&self, mode: Mode) -> Value {
+            self.store
+                .analysis_gate(
+                    "s",
+                    &Payload {
+                        tool_name: "Bash".into(),
+                        tool_input: json!({"command":"rg SECRET_COMMAND_INPUT main.rs"}),
+                        cwd: self.root.display().to_string(),
+                        ..Default::default()
+                    },
+                    mode,
+                    std::slice::from_ref(&self.root),
+                )
+                .unwrap()
+        }
+        fn use_index(&self, ok: bool, records: Option<i64>) {
+            let id = self.store.analysis_call_start("s", "symbol").unwrap();
+            self.store.analysis_call_finish(id, ok, records).unwrap();
+        }
+    }
+    #[test]
+    fn shell_ast_ignores_strings_comments_and_recognizes_real_commands() {
+        for (cmd, kind) in [
+            ("echo 'rg foo'", "other"),
+            ("printf grep", "other"),
+            ("git status", "other"),
+            ("git grep foo", "file_search"),
+            ("git -C /repo grep foo", "file_search"),
+            ("Get-ChildItem -Recurse -Filter *.rs", "file_search"),
+            ("# rg foo\ncargo test", "other"),
+            ("ls README.md", "other"),
+            ("rg foo | sort", "file_search"),
+            ("grep x file", "file_search"),
+            ("env FOO=bar rg x", "file_search"),
+            ("bash -c 'rg foo'", "file_search"),
+            ("ls -laR", "file_search"),
+            ("echo $(rg foo)", "file_search"),
+            ("$PROGRAM foo", "unknown_shell"),
+            ("sudo -u someone rg x", "unknown_shell"),
+        ] {
+            let c = classify(&Payload {
+                tool_name: "Bash".into(),
+                tool_input: json!({"command":cmd}),
+                ..Default::default()
+            })
+            .unwrap();
+            assert_eq!(c.kind, kind, "{cmd}");
+        }
+        let c = classify(&Payload {
+            tool_name: "Read".into(),
+            tool_input: json!({"file_path":"main.rs"}),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(c.is_code);
+        assert_eq!(
+            classify(&Payload {
+                tool_name: "ragraf_fake".into(),
+                ..Default::default()
+            })
+            .unwrap()
+            .kind,
+            "other"
+        );
+    }
+    #[test]
+    fn real_completed_nonempty_calls_required_and_ask_escalates_per_task() {
+        let f = Fixture::new();
+        let r = f.call(Mode::Warn);
+        assert_eq!(r["verdict"], "allow");
+        assert_eq!(r["facts"]["fresh"], true);
+        assert_eq!(r["rule"], "index_unused");
+        let fake = Payload {
+            tool_name: "ragraf_symbol".into(),
+            ..Default::default()
+        };
+        f.store
+            .analysis_gate("s", &fake, Mode::Warn, std::slice::from_ref(&f.root))
+            .unwrap();
+        f.use_index(false, Some(10));
+        f.use_index(true, Some(0));
+        f.store.analysis_call_start("s", "symbol").unwrap();
+        assert_eq!(f.call(Mode::Ask)["verdict"], "ask");
+        assert_eq!(f.call(Mode::Ask)["verdict"], "deny");
+        f.store
+            .analysis_task_set(
+                "s",
+                &TaskSet {
+                    name: Some("new".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(f.call(Mode::Ask)["verdict"], "ask");
+        f.use_index(true, Some(1));
+        let r = f.call(Mode::Ask);
+        assert_eq!(r["verdict"], "allow");
+        assert_eq!(r["rule"], "index_used");
+        let stats = f
+            .store
+            .analysis_task_stats("s", &Default::default())
+            .unwrap();
+        assert_eq!(stats["gate"]["decisions"], 2);
+        assert_eq!(stats["gate"]["counters"]["ask"], 1);
+        let text: String = {
+            let r_guard = f.store.read().unwrap();
+            let mut latest: Option<(i64, String)> = None;
+            r_guard
+                .scan_each("analysis_gate_decisions", |row| {
+                    let s = cell_i64(row, "seq", 0);
+                    if latest.as_ref().is_none_or(|(prev, _)| s > *prev) {
+                        latest = Some((s, cell_string(row, "facts_json")));
+                    }
+                    Ok(true)
+                })
+                .unwrap();
+            latest.unwrap().1
+        };
+        assert!(!text.contains("SECRET_COMMAND_INPUT"));
+        f.store
+            .analysis_gate(
+                "s",
+                &Payload {
+                    hook_event_name: "SessionStart".into(),
+                    ..Default::default()
+                },
+                Mode::Warn,
+                std::slice::from_ref(&f.root),
+            )
+            .unwrap();
+        let reset = f.call(Mode::Ask);
+        assert_eq!(reset["verdict"], "ask");
+        assert_eq!(reset["facts"]["index_used"], false);
+    }
+    #[test]
+    fn changed_bytes_even_same_length_and_old_revision_never_qualify() {
+        let f = Fixture::new();
+        f.use_index(true, Some(1));
+        assert_eq!(f.call(Mode::Deny)["verdict"], "allow");
+        std::fs::write(&f.path, "fn next() {}\n").unwrap();
+        let r = f.call(Mode::Deny);
+        assert_eq!(r["verdict"], "deny");
+        assert_eq!(r["rule"], "stale_index");
+        let mut doc = f.store.get_document("file").unwrap().unwrap();
+        doc.content = "fn next() {}\n".into();
+        f.store.upsert_document(&doc).unwrap();
+        f.store.index_code().unwrap();
+        let r = f.call(Mode::Deny);
+        assert_eq!(r["facts"]["fresh"], true);
+        assert_eq!(r["rule"], "index_unused");
+        assert_eq!(r["verdict"], "deny");
+    }
+    #[test]
+    fn bom_sources_use_decoded_checksums_but_charge_original_byte_budget() {
+        let f = Fixture::new();
+        let bytes = [
+            vec![0xff, 0xfe],
+            "fn main() {}\n"
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect(),
+        ]
+        .concat();
+        std::fs::write(&f.path, &bytes).unwrap();
+        f.use_index(true, Some(1));
+        let result = f.call(Mode::Deny);
+        assert_eq!(result["facts"]["fresh"], true, "{result}");
+        assert_eq!(result["verdict"], "allow");
+        assert_eq!(result["facts"]["checked_bytes"], bytes.len());
+        assert_eq!(
+            result["facts"]["checked_bytes_basis"],
+            "original_file_bytes"
+        );
+        std::fs::write(&f.path, [0xff, 0xfe, 0]).unwrap();
+        let result = f.call(Mode::Deny);
+        assert_eq!(result["rule"], "freshness_unknown");
+        assert!(result["facts"]["fresh"].is_null());
+    }
+
+    #[test]
+    fn unavailable_sources_do_not_claim_fresh_and_reads_remain_allowed() {
+        let f = Fixture::new();
+        std::fs::write(&f.path, vec![b'a'; 4 * 1024 * 1024 + 1]).unwrap();
+        let r = f.call(Mode::Deny);
+        assert!(r["facts"]["fresh"].is_null());
+        assert_eq!(r["rule"], "freshness_unknown");
+        assert_eq!(r["verdict"], "deny");
+        let p = Payload {
+            tool_name: "Read".into(),
+            cwd: f.root.display().to_string(),
+            tool_input: json!({"path":"main.rs"}),
+            ..Default::default()
+        };
+        let r = f
+            .store
+            .analysis_gate("s", &p, Mode::Deny, std::slice::from_ref(&f.root))
+            .unwrap();
+        assert_eq!(r["verdict"], "allow");
+        let r = f.store.analysis_gate("s", &p, Mode::Off, &[]).unwrap();
+        assert_eq!(r["verdict"], "off");
+        assert_eq!(r["facts"]["checked_bytes"], 0);
+    }
+    #[test]
+    fn sessions_time_windows_and_missing_files_are_explicit() {
+        let f = Fixture::new();
+        f.use_index(true, Some(1));
+        f.store
+            .write()
+            .unwrap()
+            .update_where(
+                "analysis_calls",
+                lin::query::pred::gt("seq", 0i64),
+                RecBuilder::new().i64("finished_ms", 0).build(),
+            )
+            .unwrap();
+        assert_eq!(f.call(Mode::Deny)["rule"], "index_unused");
+        std::fs::remove_file(&f.path).unwrap();
+        assert_eq!(f.call(Mode::Deny)["facts"]["fresh"], false);
+        let r = f
+            .store
+            .analysis_gate(
+                "different",
+                &Payload {
+                    tool_name: "Bash".into(),
+                    cwd: f.root.display().to_string(),
+                    tool_input: json!({"command":"rg x"}),
+                    ..Default::default()
+                },
+                Mode::Ask,
+                std::slice::from_ref(&f.root),
+            )
+            .unwrap();
+        assert_eq!(r["verdict"], "ask");
+    }
+    #[test]
+    fn oversized_manifest_is_unknown_after_bounded_live_reads() {
+        let f = Fixture::new();
+        for i in 0..MAX_FILES {
+            let path = f.root.join(format!("{i:03}.txt"));
+            std::fs::write(&path, "small").unwrap();
+            f.store
+                .upsert_document(&Document {
+                    id: format!("extra-{i}"),
+                    uri: format!("file://{}", path.display()),
+                    source_file: Some(path.display().to_string()),
+                    content: "small".into(),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+        f.store.index_code().unwrap();
+        let r = f.call(Mode::Deny);
+        assert!(r["facts"]["fresh"].is_null(), "{r}");
+        assert_eq!(r["facts"]["checked_files"], MAX_FILES);
+        assert_eq!(r["verdict"], "deny");
+        assert!(
+            r["facts"]["freshness_reasons"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c == "LIVE_FILE_BUDGET_EXCEEDED")
+        );
+    }
+
+    #[test]
+    fn hook_contract_does_not_execute_or_rewrite_calls_and_input_is_bounded() {
+        let d = Decision {
+            verdict: "deny".into(),
+            rule: "test".into(),
+            reason: "denied".into(),
+            context: "context".into(),
+            facts: json!({}),
+        };
+        assert_eq!(d.hook()["exit_code"], 2);
+        assert_eq!(d.hook()["stderr"], "denied");
+        assert_eq!(d.hook()["stdout"], "");
+        let ask = Decision {
+            verdict: "ask".into(),
+            ..d
+        };
+        let hook = ask.hook();
+        let out: Value = serde_json::from_str(hook["stdout"].as_str().unwrap()).unwrap();
+        assert_eq!(out["hookSpecificOutput"]["permissionDecision"], "ask");
+        assert!(out["hookSpecificOutput"].get("updatedInput").is_none());
+        assert!(Mode::parse("silent_fallback").is_err());
+        assert!(parse_payload(&json!({})).is_err());
+        assert!(
+            parse_payload(&json!({"tool_name":"Bash","tool_input":"x".repeat(65536)})).is_err()
+        );
+    }
+}

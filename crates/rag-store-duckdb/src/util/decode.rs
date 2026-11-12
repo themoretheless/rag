@@ -22,7 +22,7 @@ pub fn decode_text(
     bytes: &[u8],
     path: &Path,
 ) -> Result<(String, &'static str, &'static str), DecodeError> {
-    use encoding_rs::{UTF_16BE, UTF_16LE, UTF_8, WINDOWS_1251, WINDOWS_1252};
+    use encoding_rs::{UTF_8, UTF_16BE, UTF_16LE, WINDOWS_1251, WINDOWS_1252};
     let fail = || DecodeError::Encoding {
         path: path.display().to_string(),
         message: "malformed declared encoding; replacement characters are not inserted".into(),

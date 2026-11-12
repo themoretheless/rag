@@ -1,0 +1,133 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 35.09s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 47 tests
+test code_index::data_flow::diff::tests::exhausted_normalization_work_is_explicit ... ok
+test code_index::data_flow::finally_tests::finally_break_overrides_a_function_return ... ok
+test code_index::data_flow::finally_tests::caller_module_binding_guards_are_honored_at_value_boundaries ... ok
+test code_index::data_flow::finally_tests::conditional_finally_return_retains_the_non_overridden_completion ... ok
+test code_index::data_flow::finally_tests::finally_assignment_does_not_rewrite_an_already_selected_return_value ... ok
+test code_index::data_flow::diff::tests::omitted_function_inventory_cannot_look_like_a_source_deletion ... ok
+test code_index::data_flow::diff::tests::formatting_comments_and_nfkc_spelling_do_not_change_normalized_values ... ok
+test code_index::data_flow::finally_tests::finally_constant_is_not_controlled_by_an_ignored_pending_exception ... ok
+test code_index::data_flow::finally_tests::explicit_raise_can_be_overridden_by_finally_return ... ok
+test code_index::data_flow::diff::tests::literal_and_operator_changes_keep_topology_but_change_node_fingerprints ... FAILED
+test code_index::data_flow::diff::tests::function_addition_removal_and_output_limits_remain_visible ... FAILED
+test code_index::data_flow::diff::tests::reassignment_and_import_redirect_change_actual_candidate_edges ... FAILED
+test code_index::data_flow::diff::tests::frozen_finally_contexts_normalize_without_position_churn ... FAILED
+test code_index::data_flow::diff::tests::frozen_call_provenance_mismatch_is_unavailable_not_an_edge_deletion ... FAILED
+test code_index::data_flow::diff::tests::unsupported_function_transitions_are_coverage_gaps_not_deleted_value_edges ... FAILED
+test code_index::data_flow::diff::tests::legacy_plain_capture_five_compares_with_six_without_fabricated_changes ... ok
+test code_index::data_flow::finally_tests::handlers_bare_raise_and_uninitialized_finally_reads_remain_explicit ... FAILED
+test code_index::data_flow::diff::tests::legacy_partial_corrupt_and_foreign_captures_cannot_prove_deletions ... ok
+test code_index::data_flow::finally_tests::nested_finally_reads_updated_locals_but_keeps_pending_returns_distinct ... ok
+test code_index::data_flow::finally_tests::variable_selection_accepts_multiple_contexts_of_one_finally_occurrence ... ok
+test code_index::data_flow::finally_tests::unconditional_finally_return_overrides_saved_values_and_exception_inputs ... ok
+test code_index::data_flow::tests::branch_merges_include_both_reaching_values_and_predicates ... ok
+test code_index::data_flow::finally_tests::possible_rhs_failure_preserves_the_pre_assignment_value_for_finally ... ok
+test code_index::data_flow::tests::loop_cycles_are_visible_with_checked_transition_contexts ... ok
+test code_index::data_flow::finally_tests::finally_updates_break_and_continue_states_before_loop_merging ... ok
+test code_index::data_flow::tests::branch_initialization_and_unrelated_controls_are_not_invented ... ok
+test code_index::data_flow::tests::loop_else_skips_breaks_but_captures_normal_exits ... ok
+test code_index::data_flow::finally_tests::repeated_finally_calls_have_distinct_frames_for_their_completion_contexts ... ok
+test code_index::data_flow::tests::for_iteration_values_are_abstract_and_iterables_are_evaluated_once ... ok
+test code_index::data_flow::tests::loop_return_paths_cannot_supply_backedge_definitions ... ok
+test code_index::data_flow::tests::python_rebound_export_does_not_supply_an_interprocedural_value_target ... ok
+test code_index::data_flow::tests::python_argument_return_frames_do_not_leak_other_call_sites ... ok
+test code_index::data_flow::tests::python_constant_return_does_not_invent_argument_influence ... ok
+test code_index::data_flow::tests::python_unimported_foreign_module_does_not_supply_a_value_target ... ok
+test code_index::data_flow::tests::python_data_slice_budgets_are_independent_and_stale_sources_are_excluded ... ok
+test code_index::data_flow::tests::elif_and_returning_arms_keep_only_live_definitions ... ok
+test code_index::data_flow::tests::nested_branch_merges_and_all_returning_paths_preserve_reaching_values ... ok
+test code_index::data_flow::tests::python_value_slice_uses_latest_definitions_and_exact_unicode_spans ... ok
+test code_index::data_flow::tests::loop_break_and_continue_keep_their_local_states ... ok
+test code_index::data_flow::tests::nested_loops_keep_jumps_in_the_innermost_body ... ok
+test code_index::data_flow::tests::python_nfkc_binding_identity_preserves_source_spelling_and_latest_write ... ok
+test code_index::data_flow::tests::while_headers_preserve_entry_backedge_and_zero_iterations ... ok
+test code_index::data_flow::tests::python_imported_functions_keep_project_boundaries_and_unresolved_guards ... FAILED
+test code_index::data_flow::tests::deeply_nested_branches_fail_with_a_bounded_capture ... ok
+test code_index::data_flow::finally_tests::exception_state_and_finally_depth_budgets_are_explicit ... ok
+test code_index::data_flow::tests::dense_control_edges_have_an_explicit_independent_response_cap ... ok
+test code_index::data_flow::tests::python_value_facts_persist_repair_and_freeze_with_explicit_diff_availability ... FAILED
+
+failures:
+
+---- code_index::data_flow::diff::tests::literal_and_operator_changes_keep_topology_but_change_node_fingerprints stdout ----
+
+thread 'code_index::data_flow::diff::tests::literal_and_operator_changes_keep_topology_but_change_node_fingerprints' (74489314) panicked at src/code_index/data_flow/diff/tests.rs:58:9:
+{"absence_proven":false,"after_capture_available":true,"after_capture_format":6,"available":true,"before_capture_available":true,"before_capture_format":6,"bodies_included":false,"capture_format":6,"complete_for_captured_scope":false,"edges_added":[],"edges_added_total":0,"edges_removed":[],"edges_removed_total":0,"eligible_functions":0,"excluded_documents":[{"after_reason":"incomplete_or_mismatched_frozen_capture","before_reason":"incomplete_or_mismatched_frozen_capture","source":{"content_hash":"afd317a945228ee011118e80b093be3db7eb30e4555d264bf41c593efd33d235","document_id":"0","path":"/p/a.py","project":"p","revision":1}}],"excluded_documents_total":1,"excluded_functions":[],"excluded_functions_total":0,"limits":{"items_per_collection":20,"normalization_work":200000},"nodes_changed":[],"nodes_changed_total":0,"normalization_format":2,"normalization_work":2,"runtime_path_proven":false,"scope":"frozen_python_syntax_value_and_unique_positional_call_candidates","source_semantic_change_proven":false,"supported_capture_formats":[5,6],"truncated":false,"unverified_call_boundaries":{"after":0,"before":0}}
+
+---- code_index::data_flow::diff::tests::function_addition_removal_and_output_limits_remain_visible stdout ----
+
+thread 'code_index::data_flow::diff::tests::function_addition_removal_and_output_limits_remain_visible' (74489311) panicked at src/code_index/data_flow/diff/tests.rs:157:5:
+{"absence_proven":false,"after_capture_available":true,"after_capture_format":6,"available":true,"before_capture_available":true,"before_capture_format":6,"bodies_included":false,"capture_format":6,"complete_for_captured_scope":false,"edges_added":[],"edges_added_total":0,"edges_removed":[],"edges_removed_total":0,"eligible_functions":0,"excluded_documents":[{"after_reason":"incomplete_or_mismatched_frozen_capture","before_reason":"incomplete_or_mismatched_frozen_capture","source":{"content_hash":"c0ac68e97b0cbb8e642b645733873e922a0edb28011d0897ed54857cba3fd8f6","document_id":"0","path":"/p/a.py","project":"p","revision":1}}],"excluded_documents_total":1,"excluded_functions":[],"excluded_functions_total":0,"limits":{"items_per_collection":1,"normalization_work":200000},"nodes_changed":[],"nodes_changed_total":0,"normalization_format":2,"normalization_work":2,"runtime_path_proven":false,"scope":"frozen_python_syntax_value_and_unique_positional_call_candidates","source_semantic_change_proven":false,"supported_capture_formats":[5,6],"truncated":false,"unverified_call_boundaries":{"after":0,"before":0}}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- code_index::data_flow::diff::tests::reassignment_and_import_redirect_change_actual_candidate_edges stdout ----
+
+thread 'code_index::data_flow::diff::tests::reassignment_and_import_redirect_change_actual_candidate_edges' (74489316) panicked at src/code_index/data_flow/diff/tests.rs:77:5:
+{"absence_proven":false,"after_capture_available":true,"after_capture_format":6,"available":true,"before_capture_available":true,"before_capture_format":6,"bodies_included":false,"capture_format":6,"complete_for_captured_scope":false,"edges_added":[],"edges_added_total":0,"edges_removed":[],"edges_removed_total":0,"eligible_functions":0,"excluded_documents":[{"after_reason":"incomplete_or_mismatched_frozen_capture","before_reason":"incomplete_or_mismatched_frozen_capture","source":{"content_hash":"80d666f02e564f4016401e69ca29125b255233b9f6aaf8ee999872f076ad1cc8","document_id":"0","path":"/p/a.py","project":"p","revision":1}}],"excluded_documents_total":1,"excluded_functions":[],"excluded_functions_total":0,"limits":{"items_per_collection":20,"normalization_work":200000},"nodes_changed":[],"nodes_changed_total":0,"normalization_format":2,"normalization_work":2,"runtime_path_proven":false,"scope":"frozen_python_syntax_value_and_unique_positional_call_candidates","source_semantic_change_proven":false,"supported_capture_formats":[5,6],"truncated":false,"unverified_call_boundaries":{"after":0,"before":0}}
+
+---- code_index::data_flow::diff::tests::frozen_finally_contexts_normalize_without_position_churn stdout ----
+
+thread 'code_index::data_flow::diff::tests::frozen_finally_contexts_normalize_without_position_churn' (74489310) panicked at src/code_index/data_flow/diff/tests.rs:218:5:
+assertion `left == right` failed: {"absence_proven":false,"after_capture_available":true,"after_capture_format":6,"available":true,"before_capture_available":true,"before_capture_format":6,"bodies_included":false,"capture_format":6,"complete_for_captured_scope":false,"edges_added":[],"edges_added_total":0,"edges_removed":[],"edges_removed_total":0,"eligible_functions":0,"excluded_documents":[{"after_reason":"incomplete_or_mismatched_frozen_capture","before_reason":"incomplete_or_mismatched_frozen_capture","source":{"content_hash":"b879d0e815b947315ba03ff630166cf81e0393c3f53c02fe254ccafd54d9799f","document_id":"0","path":"/p/a.py","project":"p","revision":1}}],"excluded_documents_total":1,"excluded_functions":[],"excluded_functions_total":0,"limits":{"items_per_collection":100,"normalization_work":200000},"nodes_changed":[],"nodes_changed_total":0,"normalization_format":2,"normalization_work":2,"runtime_path_proven":false,"scope":"frozen_python_syntax_value_and_unique_positional_call_candidates","source_semantic_change_proven":false,"supported_capture_formats":[5,6],"truncated":false,"unverified_call_boundaries":{"after":0,"before":0}}
+  left: Number(1)
+ right: 0
+
+---- code_index::data_flow::diff::tests::frozen_call_provenance_mismatch_is_unavailable_not_an_edge_deletion stdout ----
+
+thread 'code_index::data_flow::diff::tests::frozen_call_provenance_mismatch_is_unavailable_not_an_edge_deletion' (74489309) panicked at src/code_index/data_flow/diff/tests.rs:184:5:
+assertion `left == right` failed: {"absence_proven":false,"after_capture_available":true,"after_capture_format":6,"available":true,"before_capture_available":true,"before_capture_format":6,"bodies_included":false,"capture_format":6,"complete_for_captured_scope":false,"edges_added":[],"edges_added_total":0,"edges_removed":[],"edges_removed_total":0,"eligible_functions":0,"excluded_documents":[{"after_reason":"incomplete_or_mismatched_frozen_capture","before_reason":"incomplete_or_mismatched_frozen_capture","source":{"content_hash":"3b1775f899ad5517a980f38cf5c61d3a0da24cfc8dc12e1a333f8e3d6c2a7265","document_id":"0","path":"/p/a.py","project":"p","revision":1}}],"excluded_documents_total":1,"excluded_functions":[],"excluded_functions_total":0,"limits":{"items_per_collection":20,"normalization_work":200000},"nodes_changed":[],"nodes_changed_total":0,"normalization_format":2,"normalization_work":2,"runtime_path_proven":false,"scope":"frozen_python_syntax_value_and_unique_positional_call_candidates","source_semantic_change_proven":false,"supported_capture_formats":[5,6],"truncated":false,"unverified_call_boundaries":{"after":0,"before":0}}
+  left: Bool(true)
+ right: false
+
+---- code_index::data_flow::diff::tests::unsupported_function_transitions_are_coverage_gaps_not_deleted_value_edges stdout ----
+
+thread 'code_index::data_flow::diff::tests::unsupported_function_transitions_are_coverage_gaps_not_deleted_value_edges' (74489317) panicked at src/code_index/data_flow/diff/tests.rs:116:5:
+assertion `left == right` failed
+  left: Number(0)
+ right: 1
+
+---- code_index::data_flow::finally_tests::handlers_bare_raise_and_uninitialized_finally_reads_remain_explicit stdout ----
+
+thread 'code_index::data_flow::finally_tests::handlers_bare_raise_and_uninitialized_finally_reads_remain_explicit' (74489330) panicked at src/code_index/data_flow/finally_tests.rs:114:9:
+assertion `left == right` failed: {"absence_proven":false,"alias_analysis_complete":false,"branch_control_dependencies":true,"branch_path_feasibility_proven":false,"call_boundary_diagnostics":[],"call_boundary_diagnostics_total":0,"call_context_limit_reached":false,"capture_format":7,"capture_truncated":false,"control_flow_modeled":false,"depth_limit_reached":false,"direction":"back","edge_limit_reached":false,"edge_scope":"one_checked_reachable_context_per_physical_edge","edge_union_is_single_path":false,"edges":[{"call_context":null,"evidence":{"content_hash":"df13026ff82444ed1203c76d62b5105ed92f0f961eb585340ac5f997e930fb4c","document_id":"0","path":"/p/a.py","project":"p","revision":1},"relation":"def_use","source":"0:10:11:parameter","target":"0:38:39:read","transition":{"from_stack":[],"reversed":true,"runtime_path_proven":false,"source_state_reachable":true,"to_stack":[]}},{"call_context":null,"evidence":{"content_hash":"df13026ff82444ed1203c76d62b5105ed92f0f961eb585340ac5f997e930fb4c","document_id":"0","path":"/p/a.py","project":"p","revision":1},"relation":"return_value","source":"0:38:39:read","target":"0:31:39:return","transition":{"from_stack":[],"reversed":true,"runtime_path_proven":false,"source_state_reachable":true,"to_stack":[]}}],"exception_filter_evaluation_proven":false,"exception_handler_paths":true,"exception_type_matching_proven":false,"filesystem_freshness_checked":false,"finally_completion_paths":true,"full_exception_semantics":false,"full_program_slice":false,"function_coverage":{"captured":1,"exhaustive":false,"qualified":1,"unsupported":0},"graph_edges_examined":2,"graph_nodes_examined":3,"index_rev":null,"items":[{"call_stack":[],"node":{"binding_name":"x","end_byte":11,"end_line":1,"function":"0:0:entry","id":"0:10:11:parameter","kind":"parameter","line":1,"name":"x","start_byte":10},"source":{"content_hash":"df13026ff82444ed1203c76d62b5105ed92f0f961eb585340ac5f997e930fb4c","document_id":"0","path":"/p/a.py","project":"p","revision":1},"witness":{"call_contexts_matched":true,"complete_to_seed":true,"runtime_path_proven":false,"seed_node_id":"0:31:39:return","steps":[{"call_context":null,"evidence":{"content_hash":"df13026ff82444ed1203c76d62b5105ed92f0f961eb585340ac5f997e930fb4c","document_id":"0","path":"/p/a.py","project":"p","revision":1},"from_stack":[],"relation":"return_value","reversed":true,"source":"0:38:39:read","target":"0:31:39:return","to_stack":[]},{"call_context":null,"evidence":{"content_hash":"df13026ff82444ed1203c76d62b5105ed92f0f961eb585340ac5f997e930fb4c","document_id":"0","path":"/p/a.py","project":"p","revision":1},"from_stack":[],"relation":"def_use","reversed":true,"source":"0:10:11:parameter","target":"0:38:39:read","to_stack":[]}]}},{"call_stack":[],"node":{"binding_name":null,"end_byte":39,"end_line":3,"function":"0:0:entry","id":"0:31:39:return","kind":"return","line":3,"name":null,"start_byte":31},"source":{"content_hash":"df13026ff82444ed1203c76d62b5105ed92f0f961eb585340ac5f997e930fb4c","document_id":"0","path":"/p/a.py","project":"p","revision":1},"witness":{"call_contexts_matched":true,"complete_to_seed":true,"runtime_path_proven":false,"seed_node_id":"0:31:39:return","steps":[]}},{"call_stack":[],"node":{"binding_name":"x","end_byte":39,"end_line":3,"function":"0:0:entry","id":"0:38:39:read","kind":"read","line":3,"name":"x","start_byte":38},"source":{"content_hash":"df13026ff82444ed1203c76d62b5105ed92f0f961eb585340ac5f997e930fb4c","document_id":"0","path":"/p/a.py","project":"p","revision":1},"witness":{"call_contexts_matched":true,"complete_to_seed":true,"runtime_path_proven":false,"seed_node_id":"0:31:39:return","steps":[{"call_context":null,"evidence":{"content_hash":"df13026ff82444ed1203c76d62b5105ed92f0f961eb585340ac5f997e930fb4c","document_id":"0","path":"/p/a.py","project":"p","revision":1},"from_stack":[],"relation":"return_value","reversed":true,"source":"0:38:39:read","target":"0:31:39:return","to_stack":[]}]}}],"limits":{"call_stack":16,"depth":12,"edges":2000,"nodes":200,"states":65536,"work":50000},"loop_carried_dependencies":true,"loop_iteration_feasibility_proven":false,"parse_errors":[],"protected_expression_error_prefixes":true,"qualified_subset_traversal_complete":true,"result_limit_reached":false,"runtime_path_proven":false,"seed_name_binding_qualified":true,"seeds":["0:31:39:return"],"selector_total":1,"selectors":[{"content_hash":"df13026ff82444ed1203c76d62b5105ed92f0f961eb585340ac5f997e930fb4c","document_id":"0","documentation_examined":true,"end_byte":78,"end_line":5,"id":"0:0:entry","kind":"function_definition","name":"entry","path":"/p/a.py","qualified_name":"entry","revision":1,"signature":"def entry(x):","start_byte":0,"start_line":1}],"semantics":"python_branching_loop_value_dependency_candidates","stale_documents":[],"state_limit_reached":false,"states_visited":3,"status":"data_slice","structural_call_slice":false,"termination_proven":false,"unindexed_documents":[],"work":7,"work_exhausted":false}
+  left: String("data_slice")
+ right: "unsupported_function"
+
+---- code_index::data_flow::tests::python_imported_functions_keep_project_boundaries_and_unresolved_guards stdout ----
+
+thread 'code_index::data_flow::tests::python_imported_functions_keep_project_boundaries_and_unresolved_guards' (74489352) panicked at src/code_index/data_flow/tests.rs:155:9:
+assertion `left == right` failed: def entry(x):
+    try:
+        return x
+    except Exception:
+        return 0
+
+  left: String("data_slice")
+ right: "unsupported_function"
+
+---- code_index::data_flow::tests::python_value_facts_persist_repair_and_freeze_with_explicit_diff_availability stdout ----
+
+thread 'code_index::data_flow::tests::python_value_facts_persist_repair_and_freeze_with_explicit_diff_availability' (74489356) panicked at src/code_index/data_flow/tests.rs:283:5:
+assertion `left == right` failed
+  left: Bool(false)
+ right: true
+
+
+failures:
+    code_index::data_flow::diff::tests::frozen_call_provenance_mismatch_is_unavailable_not_an_edge_deletion
+    code_index::data_flow::diff::tests::frozen_finally_contexts_normalize_without_position_churn
+    code_index::data_flow::diff::tests::function_addition_removal_and_output_limits_remain_visible
+    code_index::data_flow::diff::tests::literal_and_operator_changes_keep_topology_but_change_node_fingerprints
+    code_index::data_flow::diff::tests::reassignment_and_import_redirect_change_actual_candidate_edges
+    code_index::data_flow::diff::tests::unsupported_function_transitions_are_coverage_gaps_not_deleted_value_edges
+    code_index::data_flow::finally_tests::handlers_bare_raise_and_uninitialized_finally_reads_remain_explicit
+    code_index::data_flow::tests::python_imported_functions_keep_project_boundaries_and_unresolved_guards
+    code_index::data_flow::tests::python_value_facts_persist_repair_and_freeze_with_explicit_diff_availability
+
+test result: FAILED. 38 passed; 9 failed; 0 ignored; 0 measured; 1375 filtered out; finished in 0.41s
+
+error: test failed, to rerun pass `--lib`

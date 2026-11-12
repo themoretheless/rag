@@ -1,7 +1,7 @@
 use super::*;
 use crate::embeddings::build_provider;
 use axum::{
-    body::{to_bytes, Body},
+    body::{Body, to_bytes},
     http::Request,
 };
 use tower::ServiceExt;
@@ -30,9 +30,11 @@ fn mcp_host_allowlist_is_secure_for_wildcard_and_extensible() {
         http_bind: Some("192.168.50.205:7432".into()),
         ..Config::default()
     };
-    assert!(configured_http_allowed_hosts(&concrete, None)
-        .iter()
-        .any(|host| host == "192.168.50.205"));
+    assert!(
+        configured_http_allowed_hosts(&concrete, None)
+            .iter()
+            .any(|host| host == "192.168.50.205")
+    );
 }
 
 fn app() -> Router {
@@ -190,11 +192,13 @@ async fn caller_request_id_is_returned_but_never_persisted_in_activity() {
     let activity = to_bytes(activity.into_body(), 256 * 1024).await.unwrap();
     let activity_json: serde_json::Value = serde_json::from_slice(&activity).unwrap();
     assert!(!String::from_utf8_lossy(&activity).contains(malicious));
-    assert!(activity_json["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|event| event["action"] == "GET /v1/status" && event["request_id"].is_null()));
+    assert!(
+        activity_json["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["action"] == "GET /v1/status" && event["request_id"].is_null())
+    );
 }
 
 #[test]

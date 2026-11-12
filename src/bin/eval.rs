@@ -1,12 +1,12 @@
 //! Versioned retrieval evaluation for the existing lex / vec / hybrid paths.
 
-use anyhow::{bail, Context, Result};
-use rag_mcp::db::search::{search, SearchQuery};
+use anyhow::{Context, Result, bail};
+use rag_mcp::db::search::{SearchQuery, search};
 use rag_mcp::embeddings::EmbeddingProvider;
 use rag_mcp::eval::{
+    Checkpoint, QueryErrorLabel, QuerySideMetrics, SearchSettingsProfile, TriadModeInput,
     apply_settings_profile, compare_query_metrics, dataset_content_hash, load_checkpoint,
-    load_export_bundle, replay_bundle, save_checkpoint, triad_report, Checkpoint, QueryErrorLabel,
-    QuerySideMetrics, SearchSettingsProfile, TriadModeInput,
+    load_export_bundle, replay_bundle, save_checkpoint, triad_report,
 };
 use rag_mcp::models::{SearchHit, SearchMode};
 use rag_mcp::wiki;
@@ -346,12 +346,13 @@ async fn run(args: Args) -> Result<()> {
     }
     let dataset = load_dataset(&args.dataset)?;
     let dataset_hash = dataset_content_hash(&args.dataset).map_err(|e| anyhow::anyhow!(e))?;
-    let db_path = std::env::temp_dir().join(format!("rag-eval-{}.duckdb", std::process::id()));
+    let db_path = std::env::temp_dir().join(format!("rag-eval-{}.lin", std::process::id()));
+    let _ = std::fs::remove_dir_all(&db_path);
     let _ = std::fs::remove_file(&db_path);
     if args.settings_a.is_some() {
         let result = evaluate_compare(&args, dataset, &dataset_hash, &db_path).await;
+        let _ = std::fs::remove_dir_all(&db_path);
         let _ = std::fs::remove_file(&db_path);
-        let _ = std::fs::remove_file(db_path.with_extension("duckdb.wal"));
         let report = result?;
         if let Some(path) = &args.compare_out {
             std::fs::write(path, serde_json::to_string_pretty(&report)?)
@@ -380,8 +381,8 @@ async fn run(args: Args) -> Result<()> {
         return Ok(());
     }
     let result = evaluate(&args, dataset, &dataset_hash, &db_path).await;
+    let _ = std::fs::remove_dir_all(&db_path);
     let _ = std::fs::remove_file(&db_path);
-    let _ = std::fs::remove_file(db_path.with_extension("duckdb.wal"));
     let report = result?;
     if let Some(path) = &args.triad_out {
         write_triad_report(path, &report)?;
@@ -1200,8 +1201,11 @@ fn ms(started: Instant) -> f64 {
 }
 
 fn measured_throughput_qps(samples: usize, total_search_ms: f64) -> Option<f64> {
-    (samples > 0 && total_search_ms.is_finite() && total_search_ms > 0.0)
-        .then(|| samples as f64 * 1_000.0 / total_search_ms)
+    if samples > 0 && total_search_ms.is_finite() && total_search_ms > 0.0 {
+        Some(samples as f64 * 1_000.0 / total_search_ms)
+    } else {
+        None
+    }
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -1397,7 +1401,7 @@ fn print_report(r: &Report) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rag_mcp::chunking::{from_config, Chunker};
+    use rag_mcp::chunking::{Chunker, from_config};
 
     #[test]
     fn dataset_labels_must_reference_unique_corpus_filenames() {
@@ -1501,9 +1505,11 @@ mod tests {
         assert_eq!(first.len(), 3);
         assert_eq!(actual_chunks, 513);
         assert_eq!(first[0].title, "synthetic-000000.txt");
-        assert!(first
-            .iter()
-            .all(|document| !document.content.chars().any(char::is_whitespace)));
+        assert!(
+            first
+                .iter()
+                .all(|document| !document.content.chars().any(char::is_whitespace))
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Stored non-code resource identities, validated against the published corpus.
 use super::*;
-use duckdb::Connection;
+use crate::db::lin_engine::{LinReader, cell_str};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -47,7 +47,7 @@ impl ResourceTarget {
     }
 }
 pub(super) fn inventory(
-    conn: &Connection,
+    r: &impl LinReader,
     revision: Option<i64>,
 ) -> Result<Option<HashMap<String, ResourceTarget>>> {
     let Some(revision) = revision else {
@@ -55,9 +55,19 @@ pub(super) fn inventory(
     };
     // Old revisions did not record attachment identity for non-code documents.
     // Neither missing/invalid inventories nor duplicate IDs qualify freshness.
-    let value:Option<String>=conn.query_row("SELECT CAST(json_extract(try_cast(graph_json AS JSON),'$.file_resource_targets') AS VARCHAR) FROM code_index_revisions WHERE id=?",[revision],|r|r.get(0))?;
-    let Some(value) = value else { return Ok(None) };
-    let Ok(values) = serde_json::from_str::<Vec<ResourceTarget>>(&value) else {
+    let Some(row) = r.get_by_id("code_index_revisions", &revision.to_string())? else {
+        return Ok(None);
+    };
+    let Some(graph_raw) = cell_str(&row, "graph_json") else {
+        return Ok(None);
+    };
+    let Ok(graph) = serde_json::from_str::<serde_json::Value>(graph_raw) else {
+        return Ok(None);
+    };
+    let Some(targets_val) = graph.get("file_resource_targets") else {
+        return Ok(None);
+    };
+    let Ok(values) = serde_json::from_value::<Vec<ResourceTarget>>(targets_val.clone()) else {
         return Ok(None);
     };
     let mut out = HashMap::new();
@@ -131,4 +141,333 @@ pub(super) fn diagnostics(targets: &[ResourceTarget], limit: usize) -> serde_jso
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+    use crate::models::Document;
+    fn doc(id: &str, path: &str, project: &str, source: &str) -> Document {
+        Document {
+            id: id.into(),
+            uri: format!("file://{project}/{id}"),
+            source_file: Some(path.into()),
+            wing: Some(project.into()),
+            title: path.into(),
+            content: source.into(),
+            ..Default::default()
+        }
+    }
+    fn corpus() -> (tempfile::TempDir, Store) {
+        crate::code_index::source::install_document_write_hook();
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(&temp.path().join("resources.duckdb")).unwrap();
+        for d in [
+            doc(
+                "svg",
+                "/p/icon.svg",
+                "p",
+                "<svg><!-- PRIVATE_ASSET --></svg>",
+            ),
+            doc("json", "/p/data.json", "p", "{\"ok\":true}"),
+            doc("css", "/p/main.css", "p", ".a{background:url('icon.svg')}"),
+            doc(
+                "html",
+                "/p/page.html",
+                "p",
+                "<link href='main.css'><object data='data.json'></object>",
+            ),
+            doc("unused", "/p/spare.py", "p", "def spare(): pass\n"),
+        ] {
+            store.upsert_document(&d).unwrap();
+        }
+        store.index_code().unwrap();
+        (temp, store)
+    }
+    fn impact(store: &Store, path: &str) -> serde_json::Value {
+        store.code_snapshot().unwrap().query(
+            "impact",
+            &CodeQuery {
+                impact_file: Some(path.into()),
+                impact_project: Some("p".into()),
+                ..Default::default()
+            },
+        )
+    }
+    #[test]
+    fn nonparsed_resources_join_file_graph_without_becoming_indexed_code() {
+        let (_temp, store) = corpus();
+        let snapshot = store.code_snapshot().unwrap();
+        assert_eq!(snapshot.file_resource_targets.len(), 2);
+        assert!(snapshot.file_resource_targets.iter().all(|t| t.fresh()));
+        assert_eq!(snapshot.document_scopes.len(), 3);
+        assert!(snapshot.unindexed_documents.is_empty() && snapshot.parse_errors.is_empty());
+        assert!(
+            snapshot
+                .symbols
+                .iter()
+                .all(|s| s.document_id != "svg" && s.document_id != "json")
+        );
+        let svg = impact(&store, "/p/icon.svg");
+        assert_eq!(svg["items"][0]["path"], "/p/main.css", "{svg}");
+        assert_eq!(svg["items"][1]["path"], "/p/page.html");
+        assert_eq!(svg["items"][1]["depth"], 2);
+        assert_eq!(svg["target"]["captured_resource_target"]["state"], "fresh");
+        assert!(svg["target"]["captured_resource_target"]["content_hash"].is_string());
+        assert!(!svg.to_string().contains("PRIVATE_ASSET"));
+        assert_eq!(
+            impact(&store, "/p/data.json")["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        let dead = store
+            .code_dead_files(&CodeQuery {
+                dead_code_project: Some("p".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        for id in ["svg", "json"] {
+            assert!(
+                dead["protected"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|e| e["file"]["document_id"] == id),
+                "{dead}"
+            );
+        }
+    }
+    #[test]
+    fn changed_resource_is_unavailable_until_publication_and_blocks_negative_liveness() {
+        let (_temp, store) = corpus();
+        let mut svg = store.get_document("svg").unwrap().unwrap();
+        svg.content = "<svg>changed</svg>".into();
+        store.upsert_document(&svg).unwrap();
+        let result = impact(&store, "/p/icon.svg");
+        assert_eq!(result["target_found"], true);
+        assert_eq!(result["target_available"], false);
+        assert_eq!(result["traversal_complete"], false);
+        assert!(result["items"].as_array().unwrap().is_empty());
+        assert_eq!(
+            result["target"]["captured_resource_target"]["state"],
+            "stale"
+        );
+        assert_eq!(result["resource_target_diagnostics"]["total"], 1);
+        // Code parser coverage retains its original semantics.
+        assert!(result["stale_documents"].as_array().unwrap().is_empty());
+        let dead = store
+            .code_dead_files(&CodeQuery {
+                dead_code_project: Some("p".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(
+            dead["not_checked"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["file"]["document_id"] == "unused"),
+            "{dead}"
+        );
+        store.index_code().unwrap();
+        assert_eq!(
+            impact(&store, "/p/icon.svg")["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(!store.index_code().unwrap().revision_created);
+    }
+    #[test]
+    fn source_attachment_identity_is_required_and_part_of_revision_fingerprint() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(&temp.path().join("attachment.duckdb")).unwrap();
+        let mut data = doc("data", "/p/data.json", "p", "{}");
+        data.uri = "/p/data.json".into();
+        data.source_file = None;
+        store.upsert_document(&data).unwrap();
+        store
+            .upsert_document(&doc(
+                "html",
+                "/p/page.html",
+                "p",
+                "<object data='data.json'></object>",
+            ))
+            .unwrap();
+        store.index_code().unwrap();
+        assert_eq!(impact(&store, "/p/data.json")["target_found"], false);
+        // Simulate an attachment-only metadata update with unchanged revision/hash.
+        store
+            .write()
+            .unwrap()
+            .update_where(
+                "documents",
+                lin::query::pred::eq("id", "data"),
+                crate::db::lin_engine::RecBuilder::new()
+                    .str("source_file", "/p/data.json")
+                    .build(),
+            )
+            .unwrap();
+        assert_eq!(
+            impact(&store, "/p/data.json")["target"]["captured_resource_target"]["state"],
+            "unpublished"
+        );
+        assert!(store.index_code().unwrap().revision_created);
+        assert_eq!(
+            impact(&store, "/p/data.json")["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        store
+            .write()
+            .unwrap()
+            .update_where(
+                "documents",
+                lin::query::pred::eq("id", "data"),
+                crate::db::lin_engine::RecBuilder::new()
+                    .str("status", "archived")
+                    .build(),
+            )
+            .unwrap();
+        assert_eq!(impact(&store, "/p/data.json")["target_found"], false);
+    }
+    #[test]
+    fn corrupt_source_and_inventory_or_table_disagreement_never_qualify_freshness() {
+        let (_temp, store) = corpus();
+        store
+            .write()
+            .unwrap()
+            .update_where(
+                "code_index_revision_files",
+                lin::query::pred::eq("document_id", "svg"),
+                crate::db::lin_engine::RecBuilder::new()
+                    .str("content_hash", "wrong")
+                    .build(),
+            )
+            .unwrap();
+        assert_eq!(
+            impact(&store, "/p/icon.svg")["target"]["captured_resource_target"]["state"],
+            "stale"
+        );
+        {
+            let mut w = store.write().unwrap();
+            let row = w.get_by_id("code_index_revisions", "1").unwrap().unwrap();
+            let raw = crate::db::lin_engine::cell_string(&row, "graph_json");
+            let mut graph: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            graph
+                .as_object_mut()
+                .unwrap()
+                .remove("file_resource_targets");
+            w.update_where(
+                "code_index_revisions",
+                lin::query::pred::eq("id", "1"),
+                crate::db::lin_engine::RecBuilder::new()
+                    .str("graph_json", graph.to_string())
+                    .build(),
+            )
+            .unwrap();
+        }
+        let r = impact(&store, "/p/icon.svg");
+        assert_eq!(r["resource_target_inventory_available"], false);
+        assert_eq!(r["target_available"], false);
+        store
+            .write()
+            .unwrap()
+            .update_where(
+                "code_index_revision_files",
+                lin::query::pred::eq("document_id", "svg"),
+                crate::db::lin_engine::RecBuilder::new()
+                    .str(
+                        "content_hash",
+                        content_hash("<svg><!-- PRIVATE_ASSET --></svg>"),
+                    )
+                    .build(),
+            )
+            .unwrap();
+        let mut data = doc("blob", "/p/blob.svg", "p", "readable");
+        data.metadata_json =
+            serde_json::json!({"code_source_text":"<svg>private</svg>"}).to_string();
+        store.upsert_document(&data).unwrap();
+        store.index_code().unwrap();
+        let hash = content_hash("<svg>private</svg>");
+        store
+            .write()
+            .unwrap()
+            .delete_by_id("code_index_source_blobs", &hash)
+            .unwrap();
+        let r = impact(&store, "/p/blob.svg");
+        assert_eq!(
+            r["target"]["captured_resource_target"]["state"],
+            "unavailable"
+        );
+        assert_eq!(r["target_available"], false);
+    }
+    #[test]
+    fn resource_identity_stays_project_scoped_and_legacy_diffs_skip_unqualified_family() {
+        let (_temp, store) = corpus();
+        store
+            .upsert_document(&doc("foreign", "/p/icon.svg", "other", "<svg/>"))
+            .unwrap();
+        store.index_code().unwrap();
+        assert_eq!(
+            impact(&store, "/p/icon.svg")["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        let foreign = store.code_snapshot().unwrap().query(
+            "impact",
+            &CodeQuery {
+                impact_file: Some("/p/icon.svg".into()),
+                impact_project: Some("other".into()),
+                ..Default::default()
+            },
+        );
+        assert!(foreign["items"].as_array().unwrap().is_empty());
+        let mut page = store.get_document("html").unwrap().unwrap();
+        page.content = "<p>removed</p>".into();
+        store.upsert_document(&page).unwrap();
+        store.index_code().unwrap();
+        let q = history::DiffQuery {
+            before: 2,
+            after: Some(3),
+            project: Some("p".into()),
+            limit: None,
+        };
+        let diff = store.code_index_diff(&q).unwrap();
+        assert_eq!(diff["resource_target_relations_available"], true);
+        let removed = diff["relations_removed"].as_array().unwrap();
+        assert!(removed.iter().any(|e| e["target"] == "json"), "{diff}");
+        assert!(removed.iter().any(|e| e["target"] == "css"));
+        page.content = "<link href='main.css'>".into();
+        store.upsert_document(&page).unwrap();
+        store.index_code().unwrap();
+        assert_eq!(store.code_index_diff(&q).unwrap(), diff);
+        {
+            let mut w = store.write().unwrap();
+            let row = w.get_by_id("code_index_revisions", "2").unwrap().unwrap();
+            let raw = crate::db::lin_engine::cell_string(&row, "graph_json");
+            let mut graph: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            graph
+                .as_object_mut()
+                .unwrap()
+                .remove("file_resource_targets");
+            w.update_where(
+                "code_index_revisions",
+                lin::query::pred::eq("id", "2"),
+                crate::db::lin_engine::RecBuilder::new()
+                    .str("graph_json", graph.to_string())
+                    .build(),
+            )
+            .unwrap();
+        }
+        let legacy = store.code_index_diff(&q).unwrap();
+        assert_eq!(legacy["resource_target_relations_available"], false);
+        let removed = legacy["relations_removed"].as_array().unwrap();
+        assert!(!removed.iter().any(|e| e["target"] == "json"), "{legacy}");
+        assert!(removed.iter().any(|e| e["target"] == "css"));
+    }
+}

@@ -1,20 +1,20 @@
 //! Typed wiki properties and dynamic saved views over the same document authority.
 use super::{
-    error::{api_err, api_ok},
     HttpState,
+    error::{api_err, api_ok},
 };
 use crate::{
-    db::{store::DocumentDerivedWrite, Store},
+    db::{Store, store::DocumentDerivedWrite},
     error::{AppError, Result},
 };
 use axum::{
+    Json, Router,
     extract::{Query, State},
     response::Response,
     routing::get,
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 pub(super) fn routes() -> Router<HttpState> {
     Router::new()
         .route("/v1/knowledge", get(list).put(update))
@@ -309,12 +309,14 @@ mod tests {
             0
         );
         assert!(date("2026-02-30").is_err());
-        assert!(Properties {
-            review_status: "bogus".into(),
-            ..Default::default()
-        }
-        .validate()
-        .is_err());
+        assert!(
+            Properties {
+                review_status: "bogus".into(),
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
     }
     #[test]
     fn saved_views_are_dynamic_and_updates_use_revision() {

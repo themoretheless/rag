@@ -321,7 +321,10 @@ mod tests {
     }
     #[test]
     fn php_contract_nested_quoted_generic_and_source() {
-        let (source, c) = contracts("/**\n * @param array{foo:int, opt?:array{'a,b':list<string>, '*':callable(int, string):bool}, ...<string,mixed>} $data don't parse { description\n */", "$data");
+        let (source, c) = contracts(
+            "/**\n * @param array{foo:int, opt?:array{'a,b':list<string>, '*':callable(int, string):bool}, ...<string,mixed>} $data don't parse { description\n */",
+            "$data",
+        );
         assert!(c.complete, "{c:?}");
         let p = &c.parameters[0];
         assert_eq!(p.declaration_match, "matched");
@@ -338,7 +341,10 @@ mod tests {
     }
     #[test]
     fn php_contract_binding_and_dialect_evidence() {
-        let (_, c) = contracts("/**\n * @param array{x:int} $missing\n * @param array{x:int} $data\n * @phpstan-param array{x?:int} $data\n */", "$data, $undocumented");
+        let (_, c) = contracts(
+            "/**\n * @param array{x:int} $missing\n * @param array{x:int} $data\n * @phpstan-param array{x?:int} $data\n */",
+            "$data, $undocumented",
+        );
         assert!(!c.complete);
         assert_eq!(
             c.parameters[0].declaration_match,
@@ -418,7 +424,7 @@ mod tests {
     }
     #[test]
     fn php_contract_adjacent_only_and_cache_guard() {
-        let source="<?php /** @param array{x:int} $data */ function previous($data) {} function bare($data) {}";
+        let source = "<?php /** @param array{x:int} $data */ function previous($data) {} function bare($data) {}";
         let mut parsed = parse("fixture", "fixture.php", source, 1).unwrap();
         let bare = parsed.symbols.iter().find(|s| s.name == "bare").unwrap();
         assert_eq!(
@@ -455,7 +461,7 @@ mod tests {
     }
     #[test]
     fn php_contract_methods_promotion_and_parse_errors() {
-        let source="<?php class Example { /** @param array{x:int} $data */ public function __construct(public array $data) {} /** @param array{x?:int} ...$args */ public function run(...$args) {} }";
+        let source = "<?php class Example { /** @param array{x:int} $data */ public function __construct(public array $data) {} /** @param array{x?:int} ...$args */ public function run(...$args) {} }";
         let parsed = parse("fixture", "fixture.php", source, 1).unwrap();
         assert!(!parsed.parse_errors);
         let callables = parsed
@@ -464,9 +470,11 @@ mod tests {
             .filter_map(|s| s.parameter_contracts.as_ref())
             .collect::<Vec<_>>();
         assert_eq!(callables.len(), 2);
-        assert!(callables
-            .iter()
-            .all(|c| c.complete && c.parameters[0].declaration_match == "matched"));
+        assert!(
+            callables
+                .iter()
+                .all(|c| c.complete && c.parameters[0].declaration_match == "matched")
+        );
         assert!(callables.iter().any(|c| c.parameters[0].variadic));
         let broken = parse(
             "fixture",
@@ -476,10 +484,12 @@ mod tests {
         )
         .unwrap();
         assert!(broken.parse_errors);
-        assert!(broken
-            .symbols
-            .iter()
-            .filter_map(|s| s.parameter_contracts.as_ref())
-            .all(|c| !c.complete && c.tags_total.is_none()));
+        assert!(
+            broken
+                .symbols
+                .iter()
+                .filter_map(|s| s.parameter_contracts.as_ref())
+                .all(|c| !c.complete && c.tags_total.is_none())
+        );
     }
 }

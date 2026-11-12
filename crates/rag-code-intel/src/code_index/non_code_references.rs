@@ -61,7 +61,9 @@ impl ReferenceQuery {
             .as_ref()
             .is_some_and(|r| r.is_empty() || r.len() > 4096 || r.chars().any(char::is_control))
         {
-            return Err(AppError::config("route must be a nonempty literal URL of at most 4096 bytes without control characters"));
+            return Err(AppError::config(
+                "route must be a nonempty literal URL of at most 4096 bytes without control characters",
+            ));
         }
         Ok(())
     }
@@ -163,11 +165,13 @@ fn table_references(
             identities.insert((usage.evidence.project.clone(), usage.table.clone()));
         }
     }
-    result["target_candidates"] = serde_json::json!(identities
-        .iter()
-        .take(limit)
-        .map(|(project, table)| serde_json::json!({"project":project,"table":table}))
-        .collect::<Vec<_>>());
+    result["target_candidates"] = serde_json::json!(
+        identities
+            .iter()
+            .take(limit)
+            .map(|(project, table)| serde_json::json!({"project":project,"table":table}))
+            .collect::<Vec<_>>()
+    );
     result["target_candidates_total"] = identities.len().into();
     result["target_candidates_truncated"] = (identities.len() > limit).into();
     result["target_observed"] = (!identities.is_empty()).into();
@@ -212,11 +216,13 @@ fn route_references(
         .filter(|e| e.route.as_deref() == Some(target))
         .collect();
     let identities: BTreeSet<_> = entries.iter().map(|e| &e.project).collect();
-    result["target_candidates"] = serde_json::json!(identities
-        .iter()
-        .take(limit)
-        .map(|p| serde_json::json!({"project":p,"route":target}))
-        .collect::<Vec<_>>());
+    result["target_candidates"] = serde_json::json!(
+        identities
+            .iter()
+            .take(limit)
+            .map(|p| serde_json::json!({"project":p,"route":target}))
+            .collect::<Vec<_>>()
+    );
     result["target_candidates_total"] = identities.len().into();
     result["target_candidates_truncated"] = (identities.len() > limit).into();
     result["target_observed"] = (!identities.is_empty()).into();
@@ -264,11 +270,13 @@ fn key_references(snapshot: &CodeSnapshot, q: &ReferenceQuery, limit: usize) -> 
     let matching: Vec<_> = facts.items.iter().filter(|o| o.key == key).collect();
     let projects: BTreeSet<_> = matching.iter().map(|o| &o.project).collect();
     result["target_observed"] = (!matching.is_empty()).into();
-    result["target_candidates"] = serde_json::json!(projects
-        .iter()
-        .take(limit)
-        .map(|p| serde_json::json!({"project":p,"key":key}))
-        .collect::<Vec<_>>());
+    result["target_candidates"] = serde_json::json!(
+        projects
+            .iter()
+            .take(limit)
+            .map(|p| serde_json::json!({"project":p,"key":key}))
+            .collect::<Vec<_>>()
+    );
     result["target_candidates_total"] = projects.len().into();
     result["target_candidates_truncated"] = (projects.len() > limit).into();
     result["translation_definition_proven"] = false.into();
@@ -322,7 +330,6 @@ mod tests {
     use crate::models::Document;
     fn put(store: &Store, id: &str, path: &str, project: &str, content: &str) {
         store
-            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("doc://{id}"),
@@ -343,8 +350,14 @@ mod tests {
     #[test]
     fn sql_target_retains_owners_ownerless_uses_and_independent_counts() {
         let dir = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&dir.path().join("table.duckdb")).unwrap();
-        put(&store,"code","/p/api.py","p","def load():\n q='SELECT * FROM users'\ndef save():\n q='INSERT INTO users(id) VALUES(1)'\n");
+        let store = Store::open(&dir.path().join("table.duckdb")).unwrap();
+        put(
+            &store,
+            "code",
+            "/p/api.py",
+            "p",
+            "def load():\n q='SELECT * FROM users'\ndef save():\n q='INSERT INTO users(id) VALUES(1)'\n",
+        );
         put(&store, "raw", "/p/raw.sql", "p", "SELECT * FROM users;");
         put(
             &store,
@@ -353,13 +366,9 @@ mod tests {
             "p",
             "CREATE TABLE empty_table(id INT);",
         );
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        store.index_code().unwrap();
         let q = table("users", Some("p"));
-        let r = crate::code_index::CodeIndex::new(&store)
-            .code_references(&q)
-            .unwrap();
+        let r = store.code_references(&q).unwrap();
         assert_eq!(r["total"], 3, "{r}");
         assert_eq!(r["ownerless_total"], 1);
         assert_eq!(r["counts_by_kind"]["queries"], 3);
@@ -375,13 +384,8 @@ mod tests {
         assert!(r["items"].as_array().unwrap().iter().all(
             |i| i["evidence"]["revision"].is_i64() && i["evidence"]["content_hash"].is_string()
         ));
-        assert_eq!(
-            r,
-            crate::code_index::CodeIndex::new(&store)
-                .code_references(&q)
-                .unwrap()
-        );
-        let read = crate::code_index::CodeIndex::new(&store)
+        assert_eq!(r, store.code_references(&q).unwrap());
+        let read = store
             .code_references(&ReferenceQuery {
                 table_mode: Some("read".into()),
                 selection: CodeQuery {
@@ -394,7 +398,7 @@ mod tests {
         assert_eq!(read["total"], 2);
         assert_eq!(read["items"].as_array().unwrap().len(), 1);
         assert_eq!(read["truncated"], true);
-        let empty = crate::code_index::CodeIndex::new(&store)
+        let empty = store
             .code_references(&table("empty_table", Some("p")))
             .unwrap();
         assert_eq!(empty["target_observed"], true);
@@ -404,7 +408,7 @@ mod tests {
     #[test]
     fn table_identity_disambiguation_precedes_access_and_source_filters() {
         let dir = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&dir.path().join("identity.duckdb")).unwrap();
+        let store = Store::open(&dir.path().join("identity.duckdb")).unwrap();
         put(
             &store,
             "public",
@@ -426,42 +430,40 @@ mod tests {
             "q",
             "SELECT * FROM public.logs;",
         );
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        store.index_code().unwrap();
         let mut q = table("logs", Some("p"));
         q.table_mode = Some("write".into());
         q.selection.path = Some("/p/read.sql".into());
-        let r = crate::code_index::CodeIndex::new(&store)
-            .code_references(&q)
-            .unwrap();
+        let r = store.code_references(&q).unwrap();
         assert_eq!(r["needs_disambiguation"], true);
         assert_eq!(r["target_candidates_total"], 2);
         assert_eq!(r["total"], 0);
-        let r = crate::code_index::CodeIndex::new(&store)
-            .code_references(&table("public.logs", None))
-            .unwrap();
+        let r = store.code_references(&table("public.logs", None)).unwrap();
         assert_eq!(r["needs_disambiguation"], true);
         assert_eq!(r["target_candidates_total"], 2);
-        let r = crate::code_index::CodeIndex::new(&store)
+        let r = store
             .code_references(&table("public.logs", Some("p")))
             .unwrap();
         assert_eq!(r["total"], 1);
         assert_eq!(r["needs_disambiguation"], false);
-        assert!(crate::code_index::CodeIndex::new(&store)
-            .code_references(&table("users; DROP TABLE users", Some("p")))
-            .is_err());
-        assert!(crate::code_index::CodeIndex::new(&store)
-            .code_references(&ReferenceQuery {
-                route: Some("/x".into()),
-                ..table("users", Some("p"))
-            })
-            .is_err());
+        assert!(
+            store
+                .code_references(&table("users; DROP TABLE users", Some("p")))
+                .is_err()
+        );
+        assert!(
+            store
+                .code_references(&ReferenceQuery {
+                    route: Some("/x".into()),
+                    ..table("users", Some("p"))
+                })
+                .is_err()
+        );
     }
     #[test]
     fn route_literals_keep_registrations_separate_from_client_mentions_and_projects() {
         let dir = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&dir.path().join("route.duckdb")).unwrap();
+        let store = Store::open(&dir.path().join("route.duckdb")).unwrap();
         put(
             &store,
             "api",
@@ -484,17 +486,13 @@ mod tests {
             "<a href='/items'>Link</a>",
         );
         put(&store, "foreign", "/q/client.js", "q", "fetch('/items');");
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        store.index_code().unwrap();
         let q = ReferenceQuery {
             route: Some("/items".into()),
             project: Some("p".into()),
             ..Default::default()
         };
-        let r = crate::code_index::CodeIndex::new(&store)
-            .code_references(&q)
-            .unwrap();
+        let r = store.code_references(&q).unwrap();
         assert_eq!(r["total"], 3, "{r}");
         assert_eq!(r["counts_by_kind"]["routes"], 1);
         assert_eq!(r["counts_by_kind"]["endpoint_reference"], 2);
@@ -506,7 +504,7 @@ mod tests {
             && i["request_method"] == "POST"
             && i["registration_method"].is_null()));
         assert!(!r.to_string().contains("PRIVATE_BODY"));
-        let scoped = crate::code_index::CodeIndex::new(&store)
+        let scoped = store
             .code_references(&ReferenceQuery {
                 selection: CodeQuery {
                     path: Some("/p/client.js".into()),
@@ -516,7 +514,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(scoped["total"], 1);
-        let ambiguous = crate::code_index::CodeIndex::new(&store)
+        let ambiguous = store
             .code_references(&ReferenceQuery {
                 route: Some("/items".into()),
                 ..Default::default()
@@ -528,7 +526,7 @@ mod tests {
     #[test]
     fn ambiguous_handlers_are_alternatives_at_one_registration_not_source_owners() {
         let dir = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&dir.path().join("handlers.duckdb")).unwrap();
+        let store = Store::open(&dir.path().join("handlers.duckdb")).unwrap();
         put(
             &store,
             "js",
@@ -536,10 +534,8 @@ mod tests {
             "p",
             "function handle() {}\nfunction handle() {}\napp.get('/items', handle);\n",
         );
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        let r = crate::code_index::CodeIndex::new(&store)
+        store.index_code().unwrap();
+        let r = store
             .code_references(&ReferenceQuery {
                 route: Some("/items".into()),
                 project: Some("p".into()),
@@ -555,7 +551,7 @@ mod tests {
     #[test]
     fn symbol_compatibility_project_scope_and_stale_noncode_exclusion() {
         let dir = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&dir.path().join("stale.duckdb")).unwrap();
+        let store = Store::open(&dir.path().join("stale.duckdb")).unwrap();
         put(
             &store,
             "code",
@@ -563,9 +559,7 @@ mod tests {
             "p",
             "def work():\n pass\ndef use():\n work()\n q='SELECT * FROM users'\n",
         );
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        store.index_code().unwrap();
         let q = ReferenceQuery {
             selection: CodeQuery {
                 symbol: Some("work".into()),
@@ -574,23 +568,15 @@ mod tests {
             project: Some("p".into()),
             ..Default::default()
         };
-        let r = crate::code_index::CodeIndex::new(&store)
-            .code_references(&q)
-            .unwrap();
+        let r = store.code_references(&q).unwrap();
         assert_eq!(r["total"], 1);
         assert_eq!(r["reference_mode"], "bound");
         put(&store, "code", "/p/api.py", "p", "def work():\n pass\n");
-        let stale = crate::code_index::CodeIndex::new(&store)
-            .code_references(&table("users", Some("p")))
-            .unwrap();
+        let stale = store.code_references(&table("users", Some("p"))).unwrap();
         assert_eq!(stale["total"], 0);
         assert_eq!(stale["stale_documents"].as_array().unwrap().len(), 1);
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        let fresh = crate::code_index::CodeIndex::new(&store)
-            .code_references(&table("users", Some("p")))
-            .unwrap();
+        store.index_code().unwrap();
+        let fresh = store.code_references(&table("users", Some("p"))).unwrap();
         assert_eq!(fresh["target_observed"], false);
         assert!(fresh["stale_documents"].as_array().unwrap().is_empty());
     }

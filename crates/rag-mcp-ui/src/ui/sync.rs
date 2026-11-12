@@ -345,7 +345,7 @@ fn primary_card(p: &egui::Painter, rect: Rect, snapshot: &OperationsSnapshot) {
             .db_path
             .rsplit('/')
             .next()
-            .unwrap_or("rag.duckdb"),
+            .unwrap_or("rag.lin"),
         FontId::monospace(15.0),
         theme::TEXT,
     );

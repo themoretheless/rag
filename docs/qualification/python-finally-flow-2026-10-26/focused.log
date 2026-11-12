@@ -1,0 +1,101 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 39.41s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 31 tests
+test code_index::data_flow::diff::tests::exhausted_normalization_work_is_explicit ... ok
+test code_index::data_flow::tests::loop_cycles_are_visible_with_checked_transition_contexts ... ok
+test code_index::data_flow::diff::tests::omitted_function_inventory_cannot_look_like_a_source_deletion ... ok
+test code_index::data_flow::diff::tests::formatting_comments_and_nfkc_spelling_do_not_change_normalized_values ... ok
+test code_index::data_flow::tests::branch_merges_include_both_reaching_values_and_predicates ... ok
+test code_index::data_flow::diff::tests::literal_and_operator_changes_keep_topology_but_change_node_fingerprints ... FAILED
+test code_index::data_flow::diff::tests::unsupported_function_transitions_are_coverage_gaps_not_deleted_value_edges ... FAILED
+test code_index::data_flow::diff::tests::frozen_call_provenance_mismatch_is_unavailable_not_an_edge_deletion ... FAILED
+test code_index::data_flow::diff::tests::function_addition_removal_and_output_limits_remain_visible ... FAILED
+test code_index::data_flow::diff::tests::reassignment_and_import_redirect_change_actual_candidate_edges ... FAILED
+test code_index::data_flow::tests::branch_initialization_and_unrelated_controls_are_not_invented ... ok
+test code_index::data_flow::tests::for_iteration_values_are_abstract_and_iterables_are_evaluated_once ... ok
+test code_index::data_flow::tests::elif_and_returning_arms_keep_only_live_definitions ... ok
+test code_index::data_flow::diff::tests::legacy_partial_corrupt_and_foreign_captures_cannot_prove_deletions ... ok
+test code_index::data_flow::tests::python_unimported_foreign_module_does_not_supply_a_value_target ... ok
+test code_index::data_flow::tests::python_nfkc_binding_identity_preserves_source_spelling_and_latest_write ... ok
+test code_index::data_flow::tests::nested_loops_keep_jumps_in_the_innermost_body ... ok
+test code_index::data_flow::tests::loop_return_paths_cannot_supply_backedge_definitions ... ok
+test code_index::data_flow::tests::python_constant_return_does_not_invent_argument_influence ... ok
+test code_index::data_flow::tests::python_rebound_export_does_not_supply_an_interprocedural_value_target ... ok
+test code_index::data_flow::tests::loop_break_and_continue_keep_their_local_states ... ok
+test code_index::data_flow::tests::nested_branch_merges_and_all_returning_paths_preserve_reaching_values ... ok
+test code_index::data_flow::tests::loop_else_skips_breaks_but_captures_normal_exits ... ok
+test code_index::data_flow::tests::python_value_slice_uses_latest_definitions_and_exact_unicode_spans ... ok
+test code_index::data_flow::tests::python_argument_return_frames_do_not_leak_other_call_sites ... ok
+test code_index::data_flow::tests::python_data_slice_budgets_are_independent_and_stale_sources_are_excluded ... ok
+test code_index::data_flow::tests::python_imported_functions_keep_project_boundaries_and_unresolved_guards ... FAILED
+test code_index::data_flow::tests::while_headers_preserve_entry_backedge_and_zero_iterations ... ok
+test code_index::data_flow::tests::deeply_nested_branches_fail_with_a_bounded_capture ... ok
+test code_index::data_flow::tests::dense_control_edges_have_an_explicit_independent_response_cap ... ok
+test code_index::data_flow::tests::python_value_facts_persist_repair_and_freeze_with_explicit_diff_availability ... FAILED
+
+failures:
+
+---- code_index::data_flow::diff::tests::literal_and_operator_changes_keep_topology_but_change_node_fingerprints stdout ----
+
+thread 'code_index::data_flow::diff::tests::literal_and_operator_changes_keep_topology_but_change_node_fingerprints' (74369444) panicked at src/code_index/data_flow/diff/tests.rs:58:9:
+{"absence_proven":false,"after_capture_available":true,"available":true,"before_capture_available":true,"bodies_included":false,"capture_format":5,"complete_for_captured_scope":false,"edges_added":[],"edges_added_total":0,"edges_removed":[],"edges_removed_total":0,"eligible_functions":0,"excluded_documents":[{"after_reason":"incomplete_or_mismatched_frozen_capture","before_reason":"incomplete_or_mismatched_frozen_capture","source":{"content_hash":"afd317a945228ee011118e80b093be3db7eb30e4555d264bf41c593efd33d235","document_id":"0","path":"/p/a.py","project":"p","revision":1}}],"excluded_documents_total":1,"excluded_functions":[],"excluded_functions_total":0,"limits":{"items_per_collection":20,"normalization_work":200000},"nodes_changed":[],"nodes_changed_total":0,"normalization_format":1,"normalization_work":2,"runtime_path_proven":false,"scope":"frozen_python_syntax_value_and_unique_positional_call_candidates","source_semantic_change_proven":false,"truncated":false,"unverified_call_boundaries":{"after":0,"before":0}}
+
+---- code_index::data_flow::diff::tests::unsupported_function_transitions_are_coverage_gaps_not_deleted_value_edges stdout ----
+
+thread 'code_index::data_flow::diff::tests::unsupported_function_transitions_are_coverage_gaps_not_deleted_value_edges' (74369447) panicked at src/code_index/data_flow/diff/tests.rs:116:5:
+assertion `left == right` failed
+  left: Number(0)
+ right: 1
+
+---- code_index::data_flow::diff::tests::frozen_call_provenance_mismatch_is_unavailable_not_an_edge_deletion stdout ----
+
+thread 'code_index::data_flow::diff::tests::frozen_call_provenance_mismatch_is_unavailable_not_an_edge_deletion' (74369441) panicked at src/code_index/data_flow/diff/tests.rs:184:5:
+assertion `left == right` failed: {"absence_proven":false,"after_capture_available":true,"available":true,"before_capture_available":true,"bodies_included":false,"capture_format":5,"complete_for_captured_scope":false,"edges_added":[],"edges_added_total":0,"edges_removed":[],"edges_removed_total":0,"eligible_functions":0,"excluded_documents":[{"after_reason":"incomplete_or_mismatched_frozen_capture","before_reason":"incomplete_or_mismatched_frozen_capture","source":{"content_hash":"3b1775f899ad5517a980f38cf5c61d3a0da24cfc8dc12e1a333f8e3d6c2a7265","document_id":"0","path":"/p/a.py","project":"p","revision":1}}],"excluded_documents_total":1,"excluded_functions":[],"excluded_functions_total":0,"limits":{"items_per_collection":20,"normalization_work":200000},"nodes_changed":[],"nodes_changed_total":0,"normalization_format":1,"normalization_work":2,"runtime_path_proven":false,"scope":"frozen_python_syntax_value_and_unique_positional_call_candidates","source_semantic_change_proven":false,"truncated":false,"unverified_call_boundaries":{"after":0,"before":0}}
+  left: Bool(true)
+ right: false
+
+---- code_index::data_flow::diff::tests::function_addition_removal_and_output_limits_remain_visible stdout ----
+
+thread 'code_index::data_flow::diff::tests::function_addition_removal_and_output_limits_remain_visible' (74369442) panicked at src/code_index/data_flow/diff/tests.rs:157:5:
+{"absence_proven":false,"after_capture_available":true,"available":true,"before_capture_available":true,"bodies_included":false,"capture_format":5,"complete_for_captured_scope":false,"edges_added":[],"edges_added_total":0,"edges_removed":[],"edges_removed_total":0,"eligible_functions":0,"excluded_documents":[{"after_reason":"incomplete_or_mismatched_frozen_capture","before_reason":"incomplete_or_mismatched_frozen_capture","source":{"content_hash":"c0ac68e97b0cbb8e642b645733873e922a0edb28011d0897ed54857cba3fd8f6","document_id":"0","path":"/p/a.py","project":"p","revision":1}}],"excluded_documents_total":1,"excluded_functions":[],"excluded_functions_total":0,"limits":{"items_per_collection":1,"normalization_work":200000},"nodes_changed":[],"nodes_changed_total":0,"normalization_format":1,"normalization_work":2,"runtime_path_proven":false,"scope":"frozen_python_syntax_value_and_unique_positional_call_candidates","source_semantic_change_proven":false,"truncated":false,"unverified_call_boundaries":{"after":0,"before":0}}
+
+---- code_index::data_flow::diff::tests::reassignment_and_import_redirect_change_actual_candidate_edges stdout ----
+
+thread 'code_index::data_flow::diff::tests::reassignment_and_import_redirect_change_actual_candidate_edges' (74369446) panicked at src/code_index/data_flow/diff/tests.rs:77:5:
+{"absence_proven":false,"after_capture_available":true,"available":true,"before_capture_available":true,"bodies_included":false,"capture_format":5,"complete_for_captured_scope":false,"edges_added":[],"edges_added_total":0,"edges_removed":[],"edges_removed_total":0,"eligible_functions":0,"excluded_documents":[{"after_reason":"incomplete_or_mismatched_frozen_capture","before_reason":"incomplete_or_mismatched_frozen_capture","source":{"content_hash":"80d666f02e564f4016401e69ca29125b255233b9f6aaf8ee999872f076ad1cc8","document_id":"0","path":"/p/a.py","project":"p","revision":1}}],"excluded_documents_total":1,"excluded_functions":[],"excluded_functions_total":0,"limits":{"items_per_collection":20,"normalization_work":200000},"nodes_changed":[],"nodes_changed_total":0,"normalization_format":1,"normalization_work":2,"runtime_path_proven":false,"scope":"frozen_python_syntax_value_and_unique_positional_call_candidates","source_semantic_change_proven":false,"truncated":false,"unverified_call_boundaries":{"after":0,"before":0}}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- code_index::data_flow::tests::python_imported_functions_keep_project_boundaries_and_unresolved_guards stdout ----
+
+thread 'code_index::data_flow::tests::python_imported_functions_keep_project_boundaries_and_unresolved_guards' (74369463) panicked at src/code_index/data_flow/tests.rs:155:9:
+assertion `left == right` failed: def entry(x):
+    try:
+        return x
+    finally:
+        pass
+
+  left: String("data_slice")
+ right: "unsupported_function"
+
+---- code_index::data_flow::tests::python_value_facts_persist_repair_and_freeze_with_explicit_diff_availability stdout ----
+
+thread 'code_index::data_flow::tests::python_value_facts_persist_repair_and_freeze_with_explicit_diff_availability' (74369467) panicked at src/code_index/data_flow/tests.rs:283:5:
+assertion `left == right` failed
+  left: Bool(false)
+ right: true
+
+
+failures:
+    code_index::data_flow::diff::tests::frozen_call_provenance_mismatch_is_unavailable_not_an_edge_deletion
+    code_index::data_flow::diff::tests::function_addition_removal_and_output_limits_remain_visible
+    code_index::data_flow::diff::tests::literal_and_operator_changes_keep_topology_but_change_node_fingerprints
+    code_index::data_flow::diff::tests::reassignment_and_import_redirect_change_actual_candidate_edges
+    code_index::data_flow::diff::tests::unsupported_function_transitions_are_coverage_gaps_not_deleted_value_edges
+    code_index::data_flow::tests::python_imported_functions_keep_project_boundaries_and_unresolved_guards
+    code_index::data_flow::tests::python_value_facts_persist_repair_and_freeze_with_explicit_diff_availability
+
+test result: FAILED. 24 passed; 7 failed; 0 ignored; 0 measured; 1375 filtered out; finished in 0.37s
+
+error: test failed, to rerun pass `--lib`

@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/Users/themoretheless/Documents/Sources/rag/scripts/smoke_phpunit_effective.py", line 78, in <module>
+    if __name__=='__main__':main()
+                            ~~~~^^
+  File "/Users/themoretheless/Documents/Sources/rag/scripts/smoke_phpunit_effective.py", line 28, in main
+    assert {e['test_context']['effective_method'] for e in entries}=={'testTrait','testAlias','testInherited'},entries
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: []

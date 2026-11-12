@@ -10,7 +10,7 @@
 pub use rag_mcp_markup::{extract, normalize};
 
 pub use extract::{
-    extract_links, extract_links_with, ExtractOptions, ExtractedLink, DEFAULT_MAX_LINKS_PER_DOC,
-    REL_TAGGED, REL_TUNNEL, REL_WIKILINK,
+    DEFAULT_MAX_LINKS_PER_DOC, ExtractOptions, ExtractedLink, REL_TAGGED, REL_TUNNEL, REL_WIKILINK,
+    extract_links, extract_links_with,
 };
 pub use normalize::{display_label, label_key, tag_key};

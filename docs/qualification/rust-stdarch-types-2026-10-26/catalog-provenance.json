@@ -1,0 +1,815 @@
+{
+  "contract_version": 1,
+  "source_root": "/Users/themoretheless/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust/library/stdarch/crates/core_arch/src",
+  "catalog": {
+    "arm": [
+      "float16x4_t",
+      "float16x4x2_t",
+      "float16x4x3_t",
+      "float16x4x4_t",
+      "float16x8_t",
+      "float16x8x2_t",
+      "float16x8x3_t",
+      "float16x8x4_t",
+      "float32x2_t",
+      "float32x2x2_t",
+      "float32x2x3_t",
+      "float32x2x4_t",
+      "float32x4_t",
+      "float32x4x2_t",
+      "float32x4x3_t",
+      "float32x4x4_t",
+      "int16x4_t",
+      "int16x4x2_t",
+      "int16x4x3_t",
+      "int16x4x4_t",
+      "int16x8_t",
+      "int16x8x2_t",
+      "int16x8x3_t",
+      "int16x8x4_t",
+      "int32x2_t",
+      "int32x2x2_t",
+      "int32x2x3_t",
+      "int32x2x4_t",
+      "int32x4_t",
+      "int32x4x2_t",
+      "int32x4x3_t",
+      "int32x4x4_t",
+      "int64x1_t",
+      "int64x1x2_t",
+      "int64x1x3_t",
+      "int64x1x4_t",
+      "int64x2_t",
+      "int64x2x2_t",
+      "int64x2x3_t",
+      "int64x2x4_t",
+      "int8x16_t",
+      "int8x16x2_t",
+      "int8x16x3_t",
+      "int8x16x4_t",
+      "int8x8_t",
+      "int8x8x2_t",
+      "int8x8x3_t",
+      "int8x8x4_t",
+      "poly16x4_t",
+      "poly16x4x2_t",
+      "poly16x4x3_t",
+      "poly16x4x4_t",
+      "poly16x8_t",
+      "poly16x8x2_t",
+      "poly16x8x3_t",
+      "poly16x8x4_t",
+      "poly64x1_t",
+      "poly64x1x2_t",
+      "poly64x1x3_t",
+      "poly64x1x4_t",
+      "poly64x2_t",
+      "poly64x2x2_t",
+      "poly64x2x3_t",
+      "poly64x2x4_t",
+      "poly8x16_t",
+      "poly8x16x2_t",
+      "poly8x16x3_t",
+      "poly8x16x4_t",
+      "poly8x8_t",
+      "poly8x8x2_t",
+      "poly8x8x3_t",
+      "poly8x8x4_t",
+      "uint16x4_t",
+      "uint16x4x2_t",
+      "uint16x4x3_t",
+      "uint16x4x4_t",
+      "uint16x8_t",
+      "uint16x8x2_t",
+      "uint16x8x3_t",
+      "uint16x8x4_t",
+      "uint32x2_t",
+      "uint32x2x2_t",
+      "uint32x2x3_t",
+      "uint32x2x4_t",
+      "uint32x4_t",
+      "uint32x4x2_t",
+      "uint32x4x3_t",
+      "uint32x4x4_t",
+      "uint64x1_t",
+      "uint64x1x2_t",
+      "uint64x1x3_t",
+      "uint64x1x4_t",
+      "uint64x2_t",
+      "uint64x2x2_t",
+      "uint64x2x3_t",
+      "uint64x2x4_t",
+      "uint8x16_t",
+      "uint8x16x2_t",
+      "uint8x16x3_t",
+      "uint8x16x4_t",
+      "uint8x8_t",
+      "uint8x8x2_t",
+      "uint8x8x3_t",
+      "uint8x8x4_t"
+    ],
+    "aarch64": [
+      "float16x4_t",
+      "float16x4x2_t",
+      "float16x4x3_t",
+      "float16x4x4_t",
+      "float16x8_t",
+      "float16x8x2_t",
+      "float16x8x3_t",
+      "float16x8x4_t",
+      "float32x2_t",
+      "float32x2x2_t",
+      "float32x2x3_t",
+      "float32x2x4_t",
+      "float32x4_t",
+      "float32x4x2_t",
+      "float32x4x3_t",
+      "float32x4x4_t",
+      "float64x1_t",
+      "float64x1x2_t",
+      "float64x1x3_t",
+      "float64x1x4_t",
+      "float64x2_t",
+      "float64x2x2_t",
+      "float64x2x3_t",
+      "float64x2x4_t",
+      "int16x4_t",
+      "int16x4x2_t",
+      "int16x4x3_t",
+      "int16x4x4_t",
+      "int16x8_t",
+      "int16x8x2_t",
+      "int16x8x3_t",
+      "int16x8x4_t",
+      "int32x2_t",
+      "int32x2x2_t",
+      "int32x2x3_t",
+      "int32x2x4_t",
+      "int32x4_t",
+      "int32x4x2_t",
+      "int32x4x3_t",
+      "int32x4x4_t",
+      "int64x1_t",
+      "int64x1x2_t",
+      "int64x1x3_t",
+      "int64x1x4_t",
+      "int64x2_t",
+      "int64x2x2_t",
+      "int64x2x3_t",
+      "int64x2x4_t",
+      "int8x16_t",
+      "int8x16x2_t",
+      "int8x16x3_t",
+      "int8x16x4_t",
+      "int8x8_t",
+      "int8x8x2_t",
+      "int8x8x3_t",
+      "int8x8x4_t",
+      "poly16x4_t",
+      "poly16x4x2_t",
+      "poly16x4x3_t",
+      "poly16x4x4_t",
+      "poly16x8_t",
+      "poly16x8x2_t",
+      "poly16x8x3_t",
+      "poly16x8x4_t",
+      "poly64x1_t",
+      "poly64x1x2_t",
+      "poly64x1x3_t",
+      "poly64x1x4_t",
+      "poly64x2_t",
+      "poly64x2x2_t",
+      "poly64x2x3_t",
+      "poly64x2x4_t",
+      "poly8x16_t",
+      "poly8x16x2_t",
+      "poly8x16x3_t",
+      "poly8x16x4_t",
+      "poly8x8_t",
+      "poly8x8x2_t",
+      "poly8x8x3_t",
+      "poly8x8x4_t",
+      "uint16x4_t",
+      "uint16x4x2_t",
+      "uint16x4x3_t",
+      "uint16x4x4_t",
+      "uint16x8_t",
+      "uint16x8x2_t",
+      "uint16x8x3_t",
+      "uint16x8x4_t",
+      "uint32x2_t",
+      "uint32x2x2_t",
+      "uint32x2x3_t",
+      "uint32x2x4_t",
+      "uint32x4_t",
+      "uint32x4x2_t",
+      "uint32x4x3_t",
+      "uint32x4x4_t",
+      "uint64x1_t",
+      "uint64x1x2_t",
+      "uint64x1x3_t",
+      "uint64x1x4_t",
+      "uint64x2_t",
+      "uint64x2x2_t",
+      "uint64x2x3_t",
+      "uint64x2x4_t",
+      "uint8x16_t",
+      "uint8x16x2_t",
+      "uint8x16x3_t",
+      "uint8x16x4_t",
+      "uint8x8_t",
+      "uint8x8x2_t",
+      "uint8x8x3_t",
+      "uint8x8x4_t"
+    ],
+    "x86": [
+      "__m128",
+      "__m128bh",
+      "__m128d",
+      "__m128h",
+      "__m128i",
+      "__m256",
+      "__m256bh",
+      "__m256d",
+      "__m256h",
+      "__m256i",
+      "__m512",
+      "__m512bh",
+      "__m512d",
+      "__m512h",
+      "__m512i",
+      "bf16"
+    ],
+    "x86_64": [
+      "__m128",
+      "__m128bh",
+      "__m128d",
+      "__m128h",
+      "__m128i",
+      "__m256",
+      "__m256bh",
+      "__m256d",
+      "__m256h",
+      "__m256i",
+      "__m512",
+      "__m512bh",
+      "__m512d",
+      "__m512h",
+      "__m512i",
+      "bf16"
+    ],
+    "wasm32": [
+      "v128"
+    ]
+  },
+  "source_sha256": {
+    "aarch64/mod.rs": "6ba7e80a4fb22990e16d8906dbd0ba1f876c04c0e4f64e4569f0f5c46284eda2",
+    "aarch64/neon/mod.rs": "46f8ec1a1c915ae06f5e2ad030ada2000aacb2689a6e29e3d362681f8d49f148",
+    "arm/mod.rs": "02f952dd31c59068b75c1919fe9ae9ba55c0f5c1fc832ce56e75971dabf50324",
+    "arm_shared/mod.rs": "79ecb8a71d327c1d2d6efe85cfdf59c13f89bd2ab1697505947e537837dbd98b",
+    "arm_shared/neon/mod.rs": "0f6af673dffa7e062ed267a3b8d8045556e9e3752db0a1e78454afff4a15c9a1",
+    "macros.rs": "1dbdf5eb7d56f5a5765aae6d616d04bdad7bbfd465d891f94b8779afe808d723",
+    "mod.rs": "3743bf8d39b94c807884e0a5cdd7117c552614e489b582dfedb3039b2eb7d97e",
+    "wasm32/mod.rs": "56be32adae6559c10e898eabf39c59887cc8467aee5e6a43ec62e8e2f492676f",
+    "wasm32/simd128.rs": "ef87d9ad4590237e2b62a7f52818591f3fa71f1800a821f03982c67fc476a8dc",
+    "x86/mod.rs": "3e27615933dc561bfba199dc508586a779ac9224759f3267e4a124907faa7827"
+  },
+  "declarations": {
+    "aarch64/mod.rs": [],
+    "aarch64/neon/mod.rs": [
+      {
+        "name": "float64x1_t",
+        "line": 25
+      },
+      {
+        "name": "float64x2_t",
+        "line": 27
+      },
+      {
+        "name": "float64x1x2_t",
+        "line": 34
+      },
+      {
+        "name": "float64x1x3_t",
+        "line": 39
+      },
+      {
+        "name": "float64x1x4_t",
+        "line": 44
+      },
+      {
+        "name": "float64x2x2_t",
+        "line": 55
+      },
+      {
+        "name": "float64x2x3_t",
+        "line": 60
+      },
+      {
+        "name": "float64x2x4_t",
+        "line": 65
+      }
+    ],
+    "arm/mod.rs": [],
+    "arm_shared/mod.rs": [],
+    "arm_shared/neon/mod.rs": [
+      {
+        "name": "int8x8_t",
+        "line": 56
+      },
+      {
+        "name": "uint8x8_t",
+        "line": 58
+      },
+      {
+        "name": "poly8x8_t",
+        "line": 60
+      },
+      {
+        "name": "int16x4_t",
+        "line": 62
+      },
+      {
+        "name": "uint16x4_t",
+        "line": 64
+      },
+      {
+        "name": "poly16x4_t",
+        "line": 66
+      },
+      {
+        "name": "int32x2_t",
+        "line": 68
+      },
+      {
+        "name": "uint32x2_t",
+        "line": 70
+      },
+      {
+        "name": "float32x2_t",
+        "line": 72
+      },
+      {
+        "name": "int64x1_t",
+        "line": 74
+      },
+      {
+        "name": "uint64x1_t",
+        "line": 76
+      },
+      {
+        "name": "poly64x1_t",
+        "line": 78
+      },
+      {
+        "name": "int8x16_t",
+        "line": 81
+      },
+      {
+        "name": "uint8x16_t",
+        "line": 83
+      },
+      {
+        "name": "poly8x16_t",
+        "line": 85
+      },
+      {
+        "name": "int16x8_t",
+        "line": 87
+      },
+      {
+        "name": "uint16x8_t",
+        "line": 89
+      },
+      {
+        "name": "poly16x8_t",
+        "line": 91
+      },
+      {
+        "name": "int32x4_t",
+        "line": 93
+      },
+      {
+        "name": "uint32x4_t",
+        "line": 95
+      },
+      {
+        "name": "float32x4_t",
+        "line": 97
+      },
+      {
+        "name": "int64x2_t",
+        "line": 99
+      },
+      {
+        "name": "uint64x2_t",
+        "line": 101
+      },
+      {
+        "name": "poly64x2_t",
+        "line": 103
+      },
+      {
+        "name": "float16x4_t",
+        "line": 111
+      },
+      {
+        "name": "float16x8_t",
+        "line": 113
+      },
+      {
+        "name": "int8x8x2_t",
+        "line": 127
+      },
+      {
+        "name": "int8x8x3_t",
+        "line": 139
+      },
+      {
+        "name": "int8x8x4_t",
+        "line": 151
+      },
+      {
+        "name": "int8x16x2_t",
+        "line": 164
+      },
+      {
+        "name": "int8x16x3_t",
+        "line": 176
+      },
+      {
+        "name": "int8x16x4_t",
+        "line": 188
+      },
+      {
+        "name": "uint8x8x2_t",
+        "line": 201
+      },
+      {
+        "name": "uint8x8x3_t",
+        "line": 213
+      },
+      {
+        "name": "uint8x8x4_t",
+        "line": 225
+      },
+      {
+        "name": "uint8x16x2_t",
+        "line": 238
+      },
+      {
+        "name": "uint8x16x3_t",
+        "line": 250
+      },
+      {
+        "name": "uint8x16x4_t",
+        "line": 262
+      },
+      {
+        "name": "poly8x8x2_t",
+        "line": 280
+      },
+      {
+        "name": "poly8x8x3_t",
+        "line": 292
+      },
+      {
+        "name": "poly8x8x4_t",
+        "line": 304
+      },
+      {
+        "name": "poly8x16x2_t",
+        "line": 317
+      },
+      {
+        "name": "poly8x16x3_t",
+        "line": 329
+      },
+      {
+        "name": "poly8x16x4_t",
+        "line": 341
+      },
+      {
+        "name": "int16x4x2_t",
+        "line": 359
+      },
+      {
+        "name": "int16x4x3_t",
+        "line": 371
+      },
+      {
+        "name": "int16x4x4_t",
+        "line": 383
+      },
+      {
+        "name": "int16x8x2_t",
+        "line": 396
+      },
+      {
+        "name": "int16x8x3_t",
+        "line": 408
+      },
+      {
+        "name": "int16x8x4_t",
+        "line": 420
+      },
+      {
+        "name": "uint16x4x2_t",
+        "line": 433
+      },
+      {
+        "name": "uint16x4x3_t",
+        "line": 445
+      },
+      {
+        "name": "uint16x4x4_t",
+        "line": 457
+      },
+      {
+        "name": "uint16x8x2_t",
+        "line": 475
+      },
+      {
+        "name": "uint16x8x3_t",
+        "line": 487
+      },
+      {
+        "name": "uint16x8x4_t",
+        "line": 499
+      },
+      {
+        "name": "poly16x4x2_t",
+        "line": 517
+      },
+      {
+        "name": "poly16x4x3_t",
+        "line": 529
+      },
+      {
+        "name": "poly16x4x4_t",
+        "line": 541
+      },
+      {
+        "name": "poly16x8x2_t",
+        "line": 559
+      },
+      {
+        "name": "poly16x8x3_t",
+        "line": 571
+      },
+      {
+        "name": "poly16x8x4_t",
+        "line": 583
+      },
+      {
+        "name": "int32x2x2_t",
+        "line": 601
+      },
+      {
+        "name": "int32x2x3_t",
+        "line": 613
+      },
+      {
+        "name": "int32x2x4_t",
+        "line": 625
+      },
+      {
+        "name": "int32x4x2_t",
+        "line": 638
+      },
+      {
+        "name": "int32x4x3_t",
+        "line": 650
+      },
+      {
+        "name": "int32x4x4_t",
+        "line": 662
+      },
+      {
+        "name": "uint32x2x2_t",
+        "line": 675
+      },
+      {
+        "name": "uint32x2x3_t",
+        "line": 687
+      },
+      {
+        "name": "uint32x2x4_t",
+        "line": 699
+      },
+      {
+        "name": "uint32x4x2_t",
+        "line": 717
+      },
+      {
+        "name": "uint32x4x3_t",
+        "line": 729
+      },
+      {
+        "name": "uint32x4x4_t",
+        "line": 741
+      },
+      {
+        "name": "float16x4x2_t",
+        "line": 759
+      },
+      {
+        "name": "float16x4x3_t",
+        "line": 772
+      },
+      {
+        "name": "float16x4x4_t",
+        "line": 785
+      },
+      {
+        "name": "float16x8x2_t",
+        "line": 803
+      },
+      {
+        "name": "float16x8x3_t",
+        "line": 816
+      },
+      {
+        "name": "float16x8x4_t",
+        "line": 829
+      },
+      {
+        "name": "float32x2x2_t",
+        "line": 847
+      },
+      {
+        "name": "float32x2x3_t",
+        "line": 859
+      },
+      {
+        "name": "float32x2x4_t",
+        "line": 871
+      },
+      {
+        "name": "float32x4x2_t",
+        "line": 889
+      },
+      {
+        "name": "float32x4x3_t",
+        "line": 901
+      },
+      {
+        "name": "float32x4x4_t",
+        "line": 913
+      },
+      {
+        "name": "int64x1x2_t",
+        "line": 931
+      },
+      {
+        "name": "int64x1x3_t",
+        "line": 943
+      },
+      {
+        "name": "int64x1x4_t",
+        "line": 955
+      },
+      {
+        "name": "int64x2x2_t",
+        "line": 968
+      },
+      {
+        "name": "int64x2x3_t",
+        "line": 980
+      },
+      {
+        "name": "int64x2x4_t",
+        "line": 992
+      },
+      {
+        "name": "uint64x1x2_t",
+        "line": 1005
+      },
+      {
+        "name": "uint64x1x3_t",
+        "line": 1017
+      },
+      {
+        "name": "uint64x1x4_t",
+        "line": 1029
+      },
+      {
+        "name": "uint64x2x2_t",
+        "line": 1047
+      },
+      {
+        "name": "uint64x2x3_t",
+        "line": 1059
+      },
+      {
+        "name": "uint64x2x4_t",
+        "line": 1071
+      },
+      {
+        "name": "poly64x1x2_t",
+        "line": 1089
+      },
+      {
+        "name": "poly64x1x3_t",
+        "line": 1101
+      },
+      {
+        "name": "poly64x1x4_t",
+        "line": 1113
+      },
+      {
+        "name": "poly64x2x2_t",
+        "line": 1131
+      },
+      {
+        "name": "poly64x2x3_t",
+        "line": 1143
+      },
+      {
+        "name": "poly64x2x4_t",
+        "line": 1155
+      }
+    ],
+    "macros.rs": [],
+    "mod.rs": [],
+    "wasm32/mod.rs": [],
+    "wasm32/simd128.rs": [
+      {
+        "name": "v128",
+        "line": 38
+      }
+    ],
+    "x86/mod.rs": [
+      {
+        "name": "__m128i",
+        "line": 60
+      },
+      {
+        "name": "__m128",
+        "line": 104
+      },
+      {
+        "name": "__m128d",
+        "line": 148
+      },
+      {
+        "name": "__m256i",
+        "line": 196
+      },
+      {
+        "name": "__m256",
+        "line": 240
+      },
+      {
+        "name": "__m256d",
+        "line": 284
+      },
+      {
+        "name": "__m512i",
+        "line": 315
+      },
+      {
+        "name": "__m512",
+        "line": 338
+      },
+      {
+        "name": "__m512d",
+        "line": 361
+      },
+      {
+        "name": "__m128bh",
+        "line": 378
+      },
+      {
+        "name": "__m256bh",
+        "line": 392
+      },
+      {
+        "name": "__m512bh",
+        "line": 406
+      },
+      {
+        "name": "__m128h",
+        "line": 424
+      },
+      {
+        "name": "__m256h",
+        "line": 438
+      },
+      {
+        "name": "__m512h",
+        "line": 452
+      },
+      {
+        "name": "bf16",
+        "line": 460
+      }
+    ]
+  },
+  "limitations": [
+    "selected public struct names, not all stdarch items or language types",
+    "feature/stability/compiler availability not established by the catalog",
+    "runtime queries never read installed rust-src"
+  ],
+  "generated_sha256": "d0b276731a705bfac72ac08fda72dfeb67666c0311a2bf3ba87e936fa4aeff45"
+}

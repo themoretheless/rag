@@ -338,10 +338,12 @@ mod tests {
         assert!(items[0]["via"]["reference"]["caller"].is_null());
         assert_eq!(r["ownerless_bound_occurrences_included"], true);
         q.impact_relations = Some("calls".into());
-        assert!(snap.query("impact", &q)["items"]
-            .as_array()
-            .unwrap()
-            .is_empty());
+        assert!(
+            snap.query("impact", &q)["items"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
     }
     #[test]
     fn file_impact_bounds_are_stable_and_stale_files_cannot_bridge_the_graph() {
@@ -359,10 +361,12 @@ mod tests {
         q.limit = Some(1);
         assert_eq!(snap.query("impact", &q)["truncated"], true);
         snap.stale_documents.push("1".into());
-        assert!(snap.query("impact", &q)["items"]
-            .as_array()
-            .unwrap()
-            .is_empty());
+        assert!(
+            snap.query("impact", &q)["items"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
         snap.stale_documents.push("0".into());
         let r = snap.query("impact", &q);
         assert_eq!(r["target_found"], true);
@@ -392,10 +396,12 @@ mod tests {
         );
         q.impact_project = None;
         q.impact_document_id = Some("1".into());
-        assert!(snap.query("impact", &q)["items"]
-            .as_array()
-            .unwrap()
-            .is_empty());
+        assert!(
+            snap.query("impact", &q)["items"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
         q.impact_table = Some("users".into());
         assert!(snap.query("impact", &q)["error"].is_string());
     }

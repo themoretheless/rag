@@ -1,4 +1,4 @@
-//! Consistent DuckDB backup and portable document bundle recovery.
+//! Consistent `lin` backup and portable document bundle recovery.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -13,11 +13,12 @@ use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
 use std::time::SystemTime;
 
 use chrono::{DateTime, Utc};
-use duckdb::params;
 use serde::{Deserialize, Serialize};
 
-use super::store::{embedding_identity_fingerprint, set_embedding_manifest_locked};
 use super::Store;
+use super::lin_engine::{LinReader, LinWriter, RecBuilder, cell_nonempty_string, cell_str};
+use super::rows;
+use super::store::{embedding_identity_fingerprint, set_embedding_manifest_locked};
 use crate::error::{AppError, Result};
 use crate::models::{Chunk, Document, EmbeddingManifest};
 use crate::util::backup_artifact_paths;
@@ -30,8 +31,7 @@ pub const BUNDLE_VERSION: u32 = 2;
 pub const PORTABLE_RECOVERY_MAX_BYTES: u64 = 64 * 1024 * 1024;
 pub const PORTABLE_RECOVERY_MAX_DOCUMENTS: u64 = 10_000;
 pub const PORTABLE_RECOVERY_MAX_CHUNKS: u64 = 50_000;
-pub const PORTABLE_RECOVERY_LIMIT_GUIDANCE: &str =
-    "use backup_db (or `recovery backup`) and its verification sidecars to create a verified DuckDB backup for this large corpus";
+pub const PORTABLE_RECOVERY_LIMIT_GUIDANCE: &str = "use backup_db (or `recovery backup`) and its verification sidecars to create a verified DuckDB backup for this large corpus";
 
 const PORTABLE_DOCUMENT_OVERHEAD_BYTES: u64 = 1_024;
 const PORTABLE_CHUNK_OVERHEAD_BYTES: u64 = 512;
@@ -93,7 +93,7 @@ pub struct BundleChunkQuarantine {
     /// The raw legacy embedding text, unchanged (may be absent in the source).
     #[serde(default)]
     pub raw_embedding_json: Option<String>,
-    /// When the chunk was quarantined, as DuckDB renders the timestamp.
+    /// When the chunk was quarantined, as stored in the database.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quarantined_at: Option<String>,
 }
@@ -252,9 +252,8 @@ pub struct BundleImportReport {
     pub documents_overwritten: u64,
     pub documents_skipped: u64,
     pub chunks_inserted: u64,
-    /// Chunks the bundle marked as quarantined (empty vector): not inserted,
-    /// recorded in `chunk_embedding_quarantine`, their document flagged for
-    /// re-embedding.
+    /// Chunks the bundle marked as quarantined (empty vector): recorded in
+    /// `chunk_embedding_quarantine` with their document flagged for re-embedding.
     #[serde(default)]
     pub chunks_quarantined: u64,
     pub conflicts: u64,
@@ -266,15 +265,10 @@ mod import;
 mod publish;
 
 pub use self::bundle::*;
-pub use self::import::Recovery;
+#[cfg(test)]
 use self::import::*;
 pub use self::publish::*;
-
-/// Bundle timestamps through the shared parser; an unreadable value falls back
-/// to now, since an import must not fail on one malformed legacy row.
-fn parse_ts(value: String) -> DateTime<Utc> {
-    crate::util::parse_db_timestamp(&value).unwrap_or_else(Utc::now)
-}
+pub use super::repos::Recovery;
 
 #[cfg(test)]
 mod tests;

@@ -1,0 +1,59 @@
+{
+  "contract_version": 1,
+  "status": "qualified_workloads",
+  "binary_sha256": "dab96adb738e01528410810122a0a7002edfa5ae1090761963be0201be3ea3fe",
+  "runner_sha256": "677409a904bde5eba6be3bfdac9cb54ee34fc5e8674ebb09f4cbb888bf7676c7",
+  "recipe_sha256": "8300a504eb8db3f7ad00fab758ed2967d13a13813b219a90228a98c9e3f4e759",
+  "modes": 2,
+  "phases_per_mode": 5,
+  "compiler_checks": 10,
+  "full_equivalence_audits": 10,
+  "identical_phase_inputs_and_mutations": true,
+  "ordinary_noop_both_modes": true,
+  "mutation_input_counts": [
+    46,
+    0,
+    1,
+    2,
+    1
+  ],
+  "commit_inclusive_ingest_and_index": true,
+  "original_source_unchanged": true,
+  "rejected_performance_report_retained": true,
+  "failed_compiler_audit_report_retained": true,
+  "release_artifact_verified": true,
+  "release_verification": {
+    "contract_version": 1,
+    "status": "verified_release_artifact",
+    "profile": {
+      "opt_level": "3",
+      "debuginfo": 0,
+      "debug_assertions": false,
+      "overflow_checks": false,
+      "test": false
+    },
+    "binary_sha256": "dab96adb738e01528410810122a0a7002edfa5ae1090761963be0201be3ea3fe",
+    "manifest_sha256": "050b2be545f406f62b4d76af8523df43676a44369ba8c52f2fc0cd1065347706",
+    "source_tree_sha256": "06d514e6540b8df962ca84333f75e5e8f6a2660904e6dc9150d7e5f25c248659",
+    "source_files": 1880,
+    "source_snapshot_currently_intact": true,
+    "raw_cargo_evidence_intact": true,
+    "compiler_output_matches_frozen_binary": true,
+    "cargo_controls_verified": true,
+    "runtime_qualified": false,
+    "performance_qualified": false,
+    "limitations": [
+      "source content identity, not a clean-commit or hermetic bit-reproducibility claim",
+      "registry dependencies use locked cached Cargo inputs; external SDK and native toolchain are not fully hashed",
+      "successful release build is not runtime/workload/performance qualification"
+    ]
+  },
+  "performance_qualified": false,
+  "release_speed_qualified": false,
+  "competitor_comparison": false,
+  "limitations": [
+    "workflow qualification includes compiler/equivalence audits; timings diagnostic only",
+    "single small real repository; no representative timing/RSS or scale conclusion",
+    "full binding audit proves cache equivalence, not independent semantic accuracy"
+  ]
+}

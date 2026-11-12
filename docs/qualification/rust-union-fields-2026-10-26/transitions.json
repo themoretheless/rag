@@ -1,0 +1,177 @@
+{
+  "itoa": {
+    "recovered_sites": 0,
+    "lost_correct_sites": 0,
+    "recovered": [],
+    "lost": []
+  },
+  "ryu": {
+    "recovered_sites": 0,
+    "lost_correct_sites": 0,
+    "recovered": [],
+    "lost": []
+  },
+  "memchr": {
+    "recovered_sites": 6,
+    "lost_correct_sites": 0,
+    "recovered": [
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          326,
+          30,
+          326,
+          34
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "searcher.kind.two_way.find",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "searcher.kind.two_way.find",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          431,
+          31,
+          431,
+          47
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "finder.min_haystack_len",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "finder.min_haystack_len",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          434,
+          15,
+          434,
+          19
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "finder.find",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "finder.find",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          786,
+          24,
+          786,
+          38
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "strat.kind.fallback.find_prefilter",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "strat.kind.fallback.find_prefilter",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          858,
+          31,
+          858,
+          47
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "finder.min_haystack_len",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "finder.min_haystack_len",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          861,
+          15,
+          861,
+          29
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "finder.find_prefilter",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "finder.find_prefilter",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      }
+    ],
+    "lost": []
+  }
+}

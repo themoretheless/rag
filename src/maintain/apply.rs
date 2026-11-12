@@ -11,15 +11,15 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::plan::{validate_action, MaintenanceAction, MaintenancePlanItem};
+use super::plan::{MaintenanceAction, MaintenancePlanItem, validate_action};
 use super::refresh::{
-    ensure_fts_nonblocking, rebuild_graph_for_all_or_dirty, rebuild_wiki_index, reembed_all,
-    reembed_all_incomplete, reembed_all_incomplete_message, reindex_fts_nonblocking,
-    REEMBED_ALL_INCOMPLETE_CODE,
+    REEMBED_ALL_INCOMPLETE_CODE, ensure_fts_nonblocking, rebuild_graph_for_all_or_dirty,
+    rebuild_wiki_index, reembed_all, reembed_all_incomplete, reembed_all_incomplete_message,
+    reindex_fts_nonblocking,
 };
 use crate::config::Config;
-use crate::db::graph::resolve::rebuild_document_graph;
 use crate::db::Store;
+use crate::db::graph::resolve::rebuild_document_graph;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
 use crate::models::{DocumentMetaUpdate, OpsLogEntry};
@@ -431,11 +431,7 @@ fn log_action(
         outcome.action,
         match outcome.outcome {
             ActionOutcomeKind::Applied => {
-                if dry_run {
-                    "dry_run"
-                } else {
-                    "applied"
-                }
+                if dry_run { "dry_run" } else { "applied" }
             }
             ActionOutcomeKind::Skipped => "skipped",
             ActionOutcomeKind::Error => "error",

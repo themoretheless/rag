@@ -9,11 +9,11 @@ use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
 use rag_mcp::models::DocumentMetaUpdate;
 use rag_mcp::testkit::open_temp_store;
 use rag_mcp::wiki::{
-    self, assert_content_mutable, FileAnswerCitation, FileAnswerRequest, WikiPageWrite,
+    self, FileAnswerCitation, FileAnswerRequest, WikiPageWrite, assert_content_mutable,
 };
 use rag_mcp::{
-    file_answer, get_wiki_page, list_wiki_pages, write_wiki_page, AppError, Config, LAYER_RAW,
-    LAYER_WIKI,
+    AppError, Config, LAYER_RAW, LAYER_WIKI, file_answer, get_wiki_page, list_wiki_pages,
+    write_wiki_page,
 };
 
 const DIMS: usize = 32;
@@ -235,11 +235,13 @@ async fn rebuild_index_from_wiki_docs_drops_orphan_catalog_rows() {
         .expect("manual index row");
 
     assert_eq!(store.wiki_index().list_wiki_index().expect("list").len(), 3);
-    assert!(store
-        .wiki_index()
-        .get_wiki_index_by_slug("orphan-note")
-        .expect("get orphan")
-        .is_some());
+    assert!(
+        store
+            .wiki_index()
+            .get_wiki_index_by_slug("orphan-note")
+            .expect("get orphan")
+            .is_some()
+    );
 
     let n = store
         .wiki_index()
@@ -252,11 +254,13 @@ async fn rebuild_index_from_wiki_docs_drops_orphan_catalog_rows() {
         .list_wiki_index()
         .expect("list after rebuild");
     assert_eq!(entries.len(), 2);
-    assert!(store
-        .wiki_index()
-        .get_wiki_index_by_slug("orphan-note")
-        .expect("orphan gone")
-        .is_none());
+    assert!(
+        store
+            .wiki_index()
+            .get_wiki_index_by_slug("orphan-note")
+            .expect("orphan gone")
+            .is_none()
+    );
 
     let alpha = store
         .wiki_index()
@@ -419,12 +423,16 @@ async fn raw_layer_immutable_content_update_refused_reingest_allowed() {
         "expected ingest_raw ops for initial+collision+reingest, got {}",
         ingest_ops.len()
     );
-    assert!(ingest_ops
-        .iter()
-        .any(|e| e.prefix.as_deref() == Some("INGEST")));
-    assert!(ingest_ops
-        .iter()
-        .any(|e| e.entity_id.as_deref() == Some(raw.document_id.as_str())));
+    assert!(
+        ingest_ops
+            .iter()
+            .any(|e| e.prefix.as_deref() == Some("INGEST"))
+    );
+    assert!(
+        ingest_ops
+            .iter()
+            .any(|e| e.entity_id.as_deref() == Some(raw.document_id.as_str()))
+    );
 }
 
 #[tokio::test]
@@ -482,11 +490,13 @@ async fn wiki_write_file_answer_and_rebuild_share_ops_log_timeline() {
         .rebuild_wiki_index_from_docs()
         .expect("rebuild_index");
     assert_eq!(rebuilt, 2);
-    assert!(store
-        .wiki_index()
-        .get_wiki_index_by_slug("ghost")
-        .expect("lookup")
-        .is_none());
+    assert!(
+        store
+            .wiki_index()
+            .get_wiki_index_by_slug("ghost")
+            .expect("lookup")
+            .is_none()
+    );
 
     // Explicit ops_log append (Karpathy log.md style) after rebuild.
     let logged = store
@@ -525,7 +535,9 @@ async fn wiki_write_file_answer_and_rebuild_share_ops_log_timeline() {
     // Newest-first: rebuild_index should appear before older wiki_write when listing recent.
     let recent = store.ops_log().list_ops_log(5).expect("recent");
     assert_eq!(recent[0].op, "rebuild_index");
-    assert!(recent
-        .iter()
-        .any(|e| e.entity_id.as_deref() == Some(page.document_id.as_str())));
+    assert!(
+        recent
+            .iter()
+            .any(|e| e.entity_id.as_deref() == Some(page.document_id.as_str()))
+    );
 }

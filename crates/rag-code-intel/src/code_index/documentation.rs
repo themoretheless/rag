@@ -260,7 +260,10 @@ mod tests {
     }
     #[test]
     fn python_literal_docstrings_exclude_bytes_fstrings_and_late_expressions() {
-        let doc=parsed("/p/a.py","class A:\n    \"\"\"class documentation\"\"\"\n    @decorator\n    def method(self):\n        (\"first \" \"second\")\n    def bytes(self):\n        b'not docs'\n    def dynamic(self):\n        f'not {self}'\n    def late(self):\n        x=1\n        'not first'\n");
+        let doc = parsed(
+            "/p/a.py",
+            "class A:\n    \"\"\"class documentation\"\"\"\n    @decorator\n    def method(self):\n        (\"first \" \"second\")\n    def bytes(self):\n        b'not docs'\n    def dynamic(self):\n        f'not {self}'\n    def late(self):\n        x=1\n        'not first'\n",
+        );
         assert_eq!(doc.symbols.len(), 5);
         assert!(doc.symbols.iter().all(|s| s.documentation_examined));
         assert_eq!(
@@ -284,7 +287,7 @@ mod tests {
     }
     #[test]
     fn rust_outer_markers_preserve_source_spans_and_skip_inner_or_unknown_attributes() {
-        let source="//! module docs\n/// function λ\n// ordinary note\n#[inline]\nfn documented(){}\nfn bare(){}\n#[ doc = \"attribute docs\"]\nfn unknown(){}";
+        let source = "//! module docs\n/// function λ\n// ordinary note\n#[inline]\nfn documented(){}\nfn bare(){}\n#[ doc = \"attribute docs\"]\nfn unknown(){}";
         let doc = parsed("/p/a.rs", source);
         let f = doc.symbols.iter().find(|s| s.name == "documented").unwrap();
         let d = f.documentation.as_ref().unwrap();
@@ -301,13 +304,14 @@ mod tests {
         assert_eq!(raw, d.text);
         assert_eq!(content_hash(&raw), d.content_hash);
         assert_eq!(d.segments[0].start_line, 2);
-        assert!(doc
-            .symbols
-            .iter()
-            .find(|s| s.name == "bare")
-            .unwrap()
-            .documentation
-            .is_none());
+        assert!(
+            doc.symbols
+                .iter()
+                .find(|s| s.name == "bare")
+                .unwrap()
+                .documentation
+                .is_none()
+        );
         assert!(
             !doc.symbols
                 .iter()
@@ -318,7 +322,10 @@ mod tests {
     }
     #[test]
     fn leading_blocks_follow_export_and_single_arrow_ownership_not_file_or_multi_decl_tags() {
-        let doc=parsed("/p/a.ts","/** named */ export function f() {}\n/** arrow */ export const arrow=()=>1;\n/** ambiguous */ const a=()=>1,b=()=>2;\n/** @file library */ function file_header(){}\nexport class C { /** method */ run(){} }\n");
+        let doc = parsed(
+            "/p/a.ts",
+            "/** named */ export function f() {}\n/** arrow */ export const arrow=()=>1;\n/** ambiguous */ const a=()=>1,b=()=>2;\n/** @file library */ function file_header(){}\nexport class C { /** method */ run(){} }\n",
+        );
         for name in ["f", "arrow", "run"] {
             assert!(
                 doc.symbols

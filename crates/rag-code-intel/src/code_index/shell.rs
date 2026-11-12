@@ -538,6 +538,7 @@ pub(super) fn resolve(
     let mut reason = "shell_not_registered_in_captured_context";
     let Some(current) = docs.get(&r.document_id) else {
         return CallEdge {
+            context_evidence: None,
             reference: r.clone(),
             candidates: vec![],
             resolution: "unresolved".into(),
@@ -673,6 +674,7 @@ pub(super) fn resolve(
     found.sort();
     found.dedup();
     CallEdge {
+        context_evidence: None,
         reference: r.clone(),
         resolution: match found.len() {
             0 => "unresolved",
@@ -800,22 +802,29 @@ mod tests {
     }
     #[test]
     fn sql_literals_do_not_apply_json_or_shell_expansion() {
-        let s = snapshot(&[("/p/main.sh", "p", "query 'SELECT * FROM users'\nquery \"UPDATE users SET name = 'Ada'\"\nquery \"SELECT * FROM $table\"\n")]);
-        assert!(s
-            .sql
-            .usages
-            .iter()
-            .any(|u| u.table == "users" && u.mode == "read"));
-        assert!(s
-            .sql
-            .usages
-            .iter()
-            .any(|u| u.table == "users" && u.mode == "write"));
+        let s = snapshot(&[(
+            "/p/main.sh",
+            "p",
+            "query 'SELECT * FROM users'\nquery \"UPDATE users SET name = 'Ada'\"\nquery \"SELECT * FROM $table\"\n",
+        )]);
+        assert!(
+            s.sql
+                .usages
+                .iter()
+                .any(|u| u.table == "users" && u.mode == "read")
+        );
+        assert!(
+            s.sql
+                .usages
+                .iter()
+                .any(|u| u.table == "users" && u.mode == "write")
+        );
         assert!(!s.sql.usages.iter().any(|u| u.table.contains("table")));
-        assert!(s
-            .sql
-            .diagnostics
-            .iter()
-            .any(|d| d["code"] == "SHELL_SQL_VALUE_UNVERIFIED"));
+        assert!(
+            s.sql
+                .diagnostics
+                .iter()
+                .any(|d| d["code"] == "SHELL_SQL_VALUE_UNVERIFIED")
+        );
     }
 }

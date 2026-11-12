@@ -327,13 +327,24 @@ pub(super) fn standard_crate_unshadowed(
     position: usize,
     name: &str,
 ) -> bool {
-    if !matches!(name, "std" | "alloc") {
+    if !matches!(name, "std" | "alloc" | "core") {
         return true;
     }
+    if resolve::unverified_standard_extern(doc, name) {
+        return false;
+    }
+    if resolve::import_target(doc, name, position)
+        .is_some_and(|target| target.strip_prefix("\0extern_crate::").unwrap_or(target) != name)
+    {
+        return false;
+    }
     if nearest(docs, doc).is_some_and(|m| {
-        m.cargo
-            .as_ref()
-            .is_none_or(|c| !c.valid || c.dependencies.contains_key(name))
+        m.cargo.as_ref().is_none_or(|c| {
+            !c.valid
+                || c.dependencies
+                    .get(name)
+                    .is_some_and(|d| !d.optional || c.selected_target.is_none())
+        })
     }) {
         return false;
     }
@@ -376,6 +387,19 @@ pub(super) fn build_input(
     doc: &IndexedDocument,
 ) -> Option<&std::result::Result<rust_cfg::Input, String>> {
     doc.cargo.as_ref()?.build.as_ref()
+}
+pub(super) fn captured_target_arch<'a>(
+    docs: &'a HashMap<String, IndexedDocument>,
+    doc: &IndexedDocument,
+) -> Option<&'a str> {
+    nearest(docs, doc)?
+        .cargo
+        .as_ref()?
+        .build
+        .as_ref()?
+        .as_ref()
+        .ok()?
+        .unique_value("target_arch")
 }
 pub(super) fn boundary_verified(doc: &IndexedDocument) -> bool {
     doc.cargo
@@ -1162,12 +1186,24 @@ mod tests {
     #[test]
     fn cargo_resolves_renamed_path_dependency_and_custom_lib_root() {
         let g = graph(&[
-            ("/w/Cargo.toml", "[workspace]\nmembers=['client','engine']\n"),
-            ("/w/client/Cargo.toml", "[package]\nname='client'\n[dependencies]\nalias={package='engine',path='../engine'}\n"),
-            ("/w/engine/Cargo.toml", "[package]\nname='engine'\n[lib]\npath='code/root.rs'\n"),
+            (
+                "/w/Cargo.toml",
+                "[workspace]\nmembers=['client','engine']\n",
+            ),
+            (
+                "/w/client/Cargo.toml",
+                "[package]\nname='client'\n[dependencies]\nalias={package='engine',path='../engine'}\n",
+            ),
+            (
+                "/w/engine/Cargo.toml",
+                "[package]\nname='engine'\n[lib]\npath='code/root.rs'\n",
+            ),
             ("/w/engine/code/root.rs", "pub mod api; pub fn work() {}"),
             ("/w/engine/code/api.rs", "pub fn work() {}"),
-            ("/w/client/src/main.rs", "fn main(){ alias::work(); alias::api::work(); engine::work(); }"),
+            (
+                "/w/client/src/main.rs",
+                "fn main(){ alias::work(); alias::api::work(); engine::work(); }",
+            ),
             ("/w/client/src/alias.rs", "pub fn work() {}"),
         ]);
         assert_eq!(
@@ -1183,8 +1219,14 @@ mod tests {
     #[test]
     fn cargo_inherited_dependency_is_relative_to_workspace() {
         let g = graph(&[
-            ("/w/Cargo.toml", "[workspace]\nmembers=['client','engine']\n[workspace.dependencies]\nrenamed={path='engine',package='engine'}\n"),
-            ("/w/client/Cargo.toml", "[package]\nname='client'\n[dependencies]\nrenamed.workspace=true\n"),
+            (
+                "/w/Cargo.toml",
+                "[workspace]\nmembers=['client','engine']\n[workspace.dependencies]\nrenamed={path='engine',package='engine'}\n",
+            ),
+            (
+                "/w/client/Cargo.toml",
+                "[package]\nname='client'\n[dependencies]\nrenamed.workspace=true\n",
+            ),
             ("/w/engine/Cargo.toml", "[package]\nname='engine'\n"),
             ("/w/engine/src/lib.rs", "pub fn work() {}"),
             ("/w/client/src/main.rs", "fn main(){ renamed::work(); }"),
@@ -1198,7 +1240,10 @@ mod tests {
     fn cargo_follows_declared_modules_and_path_attributes_only() {
         let g = graph(&[
             ("/w/Cargo.toml", "[package]\nname='app'\n"),
-            ("/w/src/lib.rs", "#[path = \"custom.rs\"] mod api; mod inline { pub fn work() {} } fn run(){ crate::api::work(); crate::inline::work(); crate::orphan::work(); }"),
+            (
+                "/w/src/lib.rs",
+                "#[path = \"custom.rs\"] mod api; mod inline { pub fn work() {} } fn run(){ crate::api::work(); crate::inline::work(); crate::orphan::work(); }",
+            ),
             ("/w/src/custom.rs", "pub fn work() {}"),
             ("/w/src/orphan.rs", "pub fn work() {}"),
         ]);
@@ -1231,7 +1276,10 @@ mod tests {
     #[test]
     fn cargo_module_ambiguity_and_required_features_are_not_resolved() {
         let g = graph(&[
-            ("/w/Cargo.toml", "[package]\nname='app'\n[[bin]]\nname='gated'\npath='gated.rs'\nrequired-features=['x']"),
+            (
+                "/w/Cargo.toml",
+                "[package]\nname='app'\n[[bin]]\nname='gated'\npath='gated.rs'\nrequired-features=['x']",
+            ),
             ("/w/src/lib.rs", "mod api; fn run(){crate::api::work();}"),
             ("/w/src/api.rs", "pub fn work() {}"),
             ("/w/src/api/mod.rs", "pub fn work() {}"),
@@ -1243,12 +1291,21 @@ mod tests {
     #[test]
     fn cargo_custom_crate_name_and_nested_workspace_boundary() {
         let g = graph(&[
-            ("/w/Cargo.toml", "[workspace]\n[workspace.dependencies]\nengine={path='engine'}"),
+            (
+                "/w/Cargo.toml",
+                "[workspace]\n[workspace.dependencies]\nengine={path='engine'}",
+            ),
             ("/w/engine/Cargo.toml", "[package]\nname='engine'"),
             ("/w/engine/src/lib.rs", "pub fn work() {}"),
             ("/w/nested/Cargo.toml", "[workspace]\nmembers=['app']"),
-            ("/w/nested/app/Cargo.toml", "[package]\nname='app'\n[lib]\nname='custom'\n[dependencies]\nengine.workspace=true"),
-            ("/w/nested/app/src/main.rs", "fn main(){custom::work(); app::work(); engine::work();}"),
+            (
+                "/w/nested/app/Cargo.toml",
+                "[package]\nname='app'\n[lib]\nname='custom'\n[dependencies]\nengine.workspace=true",
+            ),
+            (
+                "/w/nested/app/src/main.rs",
+                "fn main(){custom::work(); app::work(); engine::work();}",
+            ),
             ("/w/nested/app/src/lib.rs", "pub fn work() {}"),
         ]);
         assert_eq!(
@@ -1261,7 +1318,7 @@ mod tests {
     #[test]
     fn cargo_manifest_only_updates_rebind_and_stale_boundary_blocks_links() {
         let dir = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&dir.path().join("cargo.duckdb")).unwrap();
+        let store = Store::open(&dir.path().join("cargo.duckdb")).unwrap();
         let document =
             |id: &str, path: &str, source: &str, revision: i64| crate::models::Document {
                 id: id.into(),
@@ -1296,28 +1353,21 @@ mod tests {
             ),
             document("two-lib", "/w/two/src/lib.rs", "pub fn work(){}", 1),
         ] {
-            store.documents().upsert_document(&d).unwrap();
+            store.upsert_document(&d).unwrap();
         }
-        let first = crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        let first = store.index_code().unwrap();
         assert_eq!(
             paths(
-                &crate::code_index::CodeIndex::new(&store)
-                    .code_snapshot()
-                    .unwrap(),
+                &store.code_snapshot().unwrap(),
                 "/w/app/src/main.rs",
                 "engine::work"
             ),
             ["/w/one/src/lib.rs"]
         );
-        let noop = crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        let noop = store.index_code().unwrap();
         assert_eq!(noop.unchanged, 6);
         assert!(!noop.revision_created);
         store
-            .documents()
             .upsert_document(&document(
                 "manifest",
                 "/w/app/Cargo.toml",
@@ -1325,32 +1375,28 @@ mod tests {
                 2,
             ))
             .unwrap();
-        let stale = crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap();
+        let stale = store.code_snapshot().unwrap();
         assert!(paths(&stale, "/w/app/src/main.rs", "engine::work").is_empty());
         assert_eq!(stale.stale_documents, ["manifest"]);
-        assert!(stale
-            .binding_diagnostics
-            .iter()
-            .any(|v| v["code"] == "RUST_MANIFEST_BOUNDARY_UNVERIFIED"));
-        let changed = crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        assert!(
+            stale
+                .binding_diagnostics
+                .iter()
+                .any(|v| v["code"] == "RUST_MANIFEST_BOUNDARY_UNVERIFIED")
+        );
+        let changed = store.index_code().unwrap();
         assert_eq!(changed.indexed, 1);
         assert_eq!(changed.unchanged, 5);
         assert_ne!(changed.index_revision, first.index_revision);
         assert_eq!(
             paths(
-                &crate::code_index::CodeIndex::new(&store)
-                    .code_snapshot()
-                    .unwrap(),
+                &store.code_snapshot().unwrap(),
                 "/w/app/src/main.rs",
                 "engine::work"
             ),
             ["/w/two/src/lib.rs"]
         );
-        let diff = crate::code_index::CodeIndex::new(&store)
+        let diff = store
             .code_index_diff(&history::DiffQuery {
                 before: first.index_revision.unwrap(),
                 after: changed.index_revision,

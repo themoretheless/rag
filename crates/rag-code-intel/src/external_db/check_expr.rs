@@ -231,11 +231,7 @@ fn eval(
                         "bigint" => n >= i64::MIN.into() && n <= i64::MAX.into(),
                         _ => n >= i32::MIN.into() && n <= i32::MAX.into(),
                     };
-                    if fits {
-                        Atom::Int(n)
-                    } else {
-                        Atom::Unknown
-                    }
+                    if fits { Atom::Int(n) } else { Atom::Unknown }
                 }
                 ("integer" | "int" | "bigint" | "smallint", Atom::Text(s)) => s
                     .parse::<i128>()

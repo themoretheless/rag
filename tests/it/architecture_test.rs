@@ -215,6 +215,8 @@ fn edge_parser_reads_grouped_and_inline_paths() {
     let mut found = referenced_modules(code);
     found.sort();
     assert_eq!(found, vec!["db", "error", "gate"]);
-    let prod = production_code("use crate::a;\n#[cfg(test)]\nuse crate::b;\nfn f() {} // crate::c\n#[cfg(test)]\nmod tests {\nuse crate::d;\n}\n");
+    let prod = production_code(
+        "use crate::a;\n#[cfg(test)]\nuse crate::b;\nfn f() {} // crate::c\n#[cfg(test)]\nmod tests {\nuse crate::d;\n}\n",
+    );
     assert_eq!(referenced_modules(&prod), vec!["a"]);
 }

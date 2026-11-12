@@ -4,13 +4,13 @@ use std::time::Instant;
 use anyhow::Context;
 use rag_mcp::bootstrap::ApplyProcessLimits;
 use rag_mcp::config::Config;
+use rag_mcp::db::Store;
 use rag_mcp::db::schema::SCHEMA_VERSION;
 use rag_mcp::db::store::embedding_manifest_matches_config;
-use rag_mcp::db::Store;
-use rag_mcp::embeddings::{build_provider, EmbeddingProvider};
+use rag_mcp::embeddings::{EmbeddingProvider, build_provider};
 use rag_mcp::http_api;
 use rag_mcp::mcp::RagServer;
-use rmcp::{transport::stdio, ServiceExt};
+use rmcp::{ServiceExt, transport::stdio};
 
 fn main() -> anyhow::Result<()> {
     rag_mcp::bootstrap::init_tracing("info");

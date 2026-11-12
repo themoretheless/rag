@@ -411,7 +411,7 @@ impl Git {
                 _ => {
                     return Err(AppError::Busy(
                         "missing working source reappeared during analysis".into(),
-                    ))
+                    ));
                 }
             }
         }

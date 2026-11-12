@@ -8,11 +8,11 @@
 //! - Default-off: `rerank=true` with `RAG_RERANK_PROVIDER=off` is a no-op.
 
 use chrono::Utc;
-use rag_mcp::chunking::{from_config, Chunker};
+use rag_mcp::chunking::{Chunker, from_config};
 use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
 use rag_mcp::models::{Chunk, Document, SearchMode};
 use rag_mcp::rerank::RerankProviderKind;
-use rag_mcp::retrieval::{execute_search, SearchCommand};
+use rag_mcp::retrieval::{SearchCommand, execute_search};
 use rag_mcp::testkit::open_temp_store;
 use rag_mcp::{Config, Store};
 use uuid::Uuid;
@@ -161,12 +161,13 @@ async fn rerank_changes_order_and_stamps_score() {
     // Rerank score present, descending, and the primary score untouched.
     assert!(reranked.iter().all(|h| h.score_rerank.is_some()));
     assert!(reranked[0].score_rerank.unwrap() >= reranked[1].score_rerank.unwrap());
-    assert!(reranked.iter().all(|h| h
-        .explanation
-        .as_ref()
-        .unwrap()
-        .reasons
-        .contains(&"rerank".to_string())));
+    assert!(reranked.iter().all(|h| {
+        h.explanation
+            .as_ref()
+            .unwrap()
+            .reasons
+            .contains(&"rerank".to_string())
+    }));
     let baseline_scores: Vec<(String, f32)> = baseline
         .iter()
         .map(|h| (h.document_title.clone(), h.score))
@@ -211,12 +212,13 @@ async fn rerank_provider_failure_falls_back_to_unreranked_order() {
     let fallback_order: Vec<&str> = fallback.iter().map(|h| h.chunk_id.as_str()).collect();
     assert_eq!(baseline_order, fallback_order);
     assert!(fallback.iter().all(|h| h.score_rerank.is_none()));
-    assert!(fallback.iter().all(|h| h
-        .explanation
-        .as_ref()
-        .unwrap()
-        .reasons
-        .contains(&"rerank_fallback".to_string())));
+    assert!(fallback.iter().all(|h| {
+        h.explanation
+            .as_ref()
+            .unwrap()
+            .reasons
+            .contains(&"rerank_fallback".to_string())
+    }));
 }
 
 #[tokio::test]

@@ -24,13 +24,13 @@ impl BackendKind {
     /// Parse a backend name (as in `RAG_STORAGE_BACKEND`).
     pub fn parse(value: &str) -> Result<Self, AppError> {
         match value.trim().to_ascii_lowercase().as_str() {
-            "duckdb" | "duck_db" => Ok(Self::DuckDb),
+            "lin" | "duckdb" | "duck_db" => Ok(Self::DuckDb),
             "sqlite" => Ok(Self::Sqlite),
             "postgres" | "postgresql" => Ok(Self::Postgres),
             "markdown" | "vault" => Ok(Self::Markdown),
             "memory" => Ok(Self::Memory),
             other => Err(AppError::config(format!(
-                "unknown RAG_STORAGE_BACKEND '{other}'; expected duckdb, sqlite, postgres, markdown, or memory"
+                "unknown RAG_STORAGE_BACKEND '{other}'; expected lin, duckdb, sqlite, postgres, markdown, or memory"
             ))),
         }
     }

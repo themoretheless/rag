@@ -1,0 +1,23 @@
+{
+  "contract_version": 1,
+  "all_corpus_inputs_sha256_verified": true,
+  "all_oracle_labels_preserved": true,
+  "all_per_case_scores_recomputed": true,
+  "all_report_metrics_match": true,
+  "missed_sites": 105,
+  "groups": {
+    "macro_expansion_unverified": 38,
+    "no_observation": 18,
+    "other_resolution": 2,
+    "receiver_unresolved": 47
+  },
+  "tests_exit_code": 0,
+  "runtime_semantics_changed": false,
+  "speed_or_memory_qualified": false,
+  "files": {
+    "scripts/triage_rust_quality.py": "db432374ab27848dc2bb8277cd294e918a44a891364dee46f8c00ae553150f11",
+    "scripts/test_triage_rust_quality.py": "251932c7f02a5e032b53a17ff0b27eb7ae55018389db007d102dfbb30151ec8a",
+    "docs/qualification/rust-miss-triage-2026-10-26/triage.json": "5982699729f6f8c3e87a2454290697db8cf698a4017de909b993b005a685becb",
+    "docs/qualification/rust-miss-triage-2026-10-26/tests.log": "e73c3805f810fdcf3d0167ced7085c48306c9482a952ffb710551d230cdb3e51"
+  }
+}

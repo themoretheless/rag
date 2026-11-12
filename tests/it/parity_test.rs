@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::http::{header, Request, StatusCode};
+use axum::http::{Request, StatusCode, header};
 use chrono::Utc;
 use rag_mcp::access::AccessRole;
 use rag_mcp::context::AppContext;
@@ -25,7 +25,7 @@ use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
 use rag_mcp::http_api::{self, HttpState};
 use rag_mcp::models::{Chunk, Document};
 use rag_mcp::testkit::{open_temp_store, test_config};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 

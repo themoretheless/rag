@@ -81,6 +81,7 @@ pub const TOOL_SPECS: &[ToolSpec] = &[
     spec("class_usage", Read, "graph", false, true),
     spec("code", Read, "graph", false, true),
     spec("create_tunnel", Write, "graph", false, false),
+    spec("data_slice", Read, "graph", false, true),
     spec("db_cross", Read, "graph", false, false),
     spec("db_drift", Read, "graph", false, false),
     spec("db_refresh", Admin, "graph", false, false),

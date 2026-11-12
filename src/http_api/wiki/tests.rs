@@ -135,17 +135,21 @@ async fn wiki_http_routes_reject_mismatched_embedding_identity_on_create_and_upd
         let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["ok"], false);
         assert_eq!(body["code"], "EMBEDDINGS_ERROR");
-        assert!(body["error"]
-            .as_str()
-            .unwrap()
-            .contains("embedding manifest mismatch"));
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .contains("embedding manifest mismatch")
+        );
     }
-    assert!(state
-        .store
-        .documents()
-        .find_by_uri("wiki://new-page")
-        .unwrap()
-        .is_none());
+    assert!(
+        state
+            .store
+            .documents()
+            .find_by_uri("wiki://new-page")
+            .unwrap()
+            .is_none()
+    );
     let original = state
         .store
         .documents()

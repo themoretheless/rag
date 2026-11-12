@@ -153,13 +153,9 @@ impl<'a> CodeIndex<'a> {
                 "expected_view_token is required for nonzero routes offset".into(),
             ));
         }
-        self.store.with_conn(|connection| {
-            let transaction = connection.transaction()?;
-            let snapshot = snapshot_locked(&transaction, q.project.as_deref())?;
-            let result = render(&snapshot, q)?;
-            transaction.commit()?;
-            Ok(result)
-        })
+        let r = self.store.read()?;
+        let snapshot = snapshot_locked(&*r, q.project.as_deref())?;
+        render(&snapshot, q)
     }
 }
 
@@ -169,7 +165,6 @@ mod tests {
     use crate::models::Document;
     fn put(store: &Store, id: &str, project: &str, path: &str, content: &str) {
         store
-            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("doc://{id}"),
@@ -182,8 +177,14 @@ mod tests {
     }
     fn setup() -> (tempfile::TempDir, Store) {
         let root = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&root.path().join("routes.duckdb")).unwrap();
-        put(&store,"a","alpha","/same.py","@app.get('/same')\ndef same(): pass\n@app.route('/unknown')\ndef unknown(): pass\n@app.post('/literal_%.*')\ndef post(): pass\n");
+        let store = Store::open(&root.path().join("routes.duckdb")).unwrap();
+        put(
+            &store,
+            "a",
+            "alpha",
+            "/same.py",
+            "@app.get('/same')\ndef same(): pass\n@app.route('/unknown')\ndef unknown(): pass\n@app.post('/literal_%.*')\ndef post(): pass\n",
+        );
         put(
             &store,
             "b",
@@ -205,9 +206,7 @@ mod tests {
             "/p/view.html",
             "<form action='/same'></form>",
         );
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        store.index_code().unwrap();
         (root, store)
     }
     #[test]
@@ -218,65 +217,31 @@ mod tests {
             route: Some("/same".into()),
             ..Default::default()
         };
-        let all = crate::code_index::CodeIndex::new(&store)
-            .code_routes(&q)
-            .unwrap();
+        let all = store.code_routes(&q).unwrap();
         assert_eq!(all["total"], 4);
         assert_eq!(all["counts_by_kind"]["http_endpoint_reference"], 3);
         q.kind = RouteKind::Endpoint;
         q.request_method = Some("post".into());
         q.selection.limit = Some(1);
-        let post = crate::code_index::CodeIndex::new(&store)
-            .code_routes(&q)
-            .unwrap();
+        let post = store.code_routes(&q).unwrap();
         assert_eq!(post["total"], 1, "{post}");
         assert_eq!(post["items"][0]["request_method"], "POST");
         q.request_method = None;
         q.method = Some("get".into());
-        assert_eq!(
-            crate::code_index::CodeIndex::new(&store)
-                .code_routes(&q)
-                .unwrap()["total"],
-            0
-        );
+        assert_eq!(store.code_routes(&q).unwrap()["total"], 0);
         q.kind = RouteKind::Registration;
-        assert_eq!(
-            crate::code_index::CodeIndex::new(&store)
-                .code_routes(&q)
-                .unwrap()["total"],
-            1
-        );
+        assert_eq!(store.code_routes(&q).unwrap()["total"], 1);
         q.method = Some("ANY".into());
-        assert_eq!(
-            crate::code_index::CodeIndex::new(&store)
-                .code_routes(&q)
-                .unwrap()["total"],
-            0
-        );
+        assert_eq!(store.code_routes(&q).unwrap()["total"], 0);
         q.route = None;
-        assert_eq!(
-            crate::code_index::CodeIndex::new(&store)
-                .code_routes(&q)
-                .unwrap()["total"],
-            1
-        );
+        assert_eq!(store.code_routes(&q).unwrap()["total"], 1);
         q.method = None;
         q.route_contains = Some("_%.*".into());
-        assert_eq!(
-            crate::code_index::CodeIndex::new(&store)
-                .code_routes(&q)
-                .unwrap()["total"],
-            1
-        );
+        assert_eq!(store.code_routes(&q).unwrap()["total"], 1);
         q.route_contains = None;
         q.reference_kind = Some("html:form:action".into());
         q.kind = RouteKind::Endpoint;
-        assert_eq!(
-            crate::code_index::CodeIndex::new(&store)
-                .code_routes(&q)
-                .unwrap()["total"],
-            1
-        );
+        assert_eq!(store.code_routes(&q).unwrap()["total"], 1);
     }
     #[test]
     fn pages_require_tokens_and_reject_changed_fresh_subsets_without_new_revision() {
@@ -286,66 +251,51 @@ mod tests {
             ..Default::default()
         };
         q.selection.limit = Some(1);
-        let first = crate::code_index::CodeIndex::new(&store)
-            .code_routes(&q)
-            .unwrap();
+        let first = store.code_routes(&q).unwrap();
         assert_eq!(first["total"], 6);
         assert_eq!(first["pagination"]["has_more"], true);
         q.offset = Some(1);
-        assert!(matches!(
-            crate::code_index::CodeIndex::new(&store).code_routes(&q),
-            Err(AppError::Invalid(_))
-        ));
+        assert!(matches!(store.code_routes(&q), Err(AppError::Invalid(_))));
         q.expected_view_token = Some(first["view_token"].as_str().unwrap().into());
         q.method = Some("GET".into());
-        assert!(matches!(
-            crate::code_index::CodeIndex::new(&store).code_routes(&q),
-            Err(AppError::Conflict(_))
-        ));
+        assert!(matches!(store.code_routes(&q), Err(AppError::Conflict(_))));
         q.method = None;
-        let next = crate::code_index::CodeIndex::new(&store)
-            .code_routes(&q)
-            .unwrap();
+        let next = store.code_routes(&q).unwrap();
         assert_ne!(first["items"], next["items"]);
         q.selection.limit = Some(3);
         assert_eq!(
-            crate::code_index::CodeIndex::new(&store)
-                .code_routes(&q)
-                .unwrap()["view_token"],
+            store.code_routes(&q).unwrap()["view_token"],
             first["view_token"]
         );
         put(&store, "j", "alpha", "/p/client.js", "fetch('/changed');");
-        assert!(matches!(
-            crate::code_index::CodeIndex::new(&store).code_routes(&q),
-            Err(AppError::Conflict(_))
-        ));
+        assert!(matches!(store.code_routes(&q), Err(AppError::Conflict(_))));
         q.offset = None;
         q.expected_view_token = None;
-        let changed = crate::code_index::CodeIndex::new(&store)
-            .code_routes(&q)
-            .unwrap();
+        let changed = store.code_routes(&q).unwrap();
         assert_eq!(changed["index_rev"], first["index_rev"]);
         assert_ne!(changed["view_token"], first["view_token"]);
         assert_eq!(changed["stale_documents"].as_array().unwrap().len(), 1);
         q.expected_view_token = Some(changed["view_token"].as_str().unwrap().into());
         q.offset = Some(usize::MAX);
-        let empty = crate::code_index::CodeIndex::new(&store)
-            .code_routes(&q)
-            .unwrap();
+        let empty = store.code_routes(&q).unwrap();
         assert_eq!(empty["pagination"]["returned"], 0);
         assert_eq!(empty["pagination"]["has_more"], false);
     }
     #[test]
     fn scoped_cache_decode_excludes_foreign_corruption_and_parameter_injection() {
         let (_root, store) = setup();
-        store
-            .lock()
-            .unwrap()
-            .execute(
-                "UPDATE code_index_documents SET payload='broken' WHERE document_id='b'",
-                [],
+        {
+            let mut w = store.write().unwrap();
+            w.upsert_by_id(
+                "code_index_documents",
+                "b",
+                RecBuilder::new()
+                    .str("document_id", "b")
+                    .str("payload", "broken")
+                    .build(),
             )
             .unwrap();
+        }
         let q = RouteQuery {
             project: Some("alpha".into()),
             selection: CodeQuery {
@@ -354,15 +304,11 @@ mod tests {
             },
             ..Default::default()
         };
-        let result = crate::code_index::CodeIndex::new(&store)
-            .code_routes(&q)
-            .unwrap();
+        let result = store.code_routes(&q).unwrap();
         assert_eq!(result["total"], 3);
         assert!(result["parse_errors"].as_array().unwrap().is_empty());
-        assert!(crate::code_index::CodeIndex::new(&store)
-            .code_routes(&RouteQuery::default())
-            .is_err());
-        let injected = crate::code_index::CodeIndex::new(&store)
+        assert!(store.code_routes(&RouteQuery::default()).is_err());
+        let injected = store
             .code_routes(&RouteQuery {
                 project: Some("alpha' OR 1=1 --".into()),
                 ..Default::default()

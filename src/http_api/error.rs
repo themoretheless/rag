@@ -1,8 +1,8 @@
 //! HTTP JSON envelope helpers: success + map [`AppError`] to status/body.
 
+use axum::Json;
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde_json::json;
 
 use crate::error::AppError;

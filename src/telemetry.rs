@@ -454,9 +454,11 @@ mod tests {
         assert_eq!(summary.by_group[0].count, 1);
         let agents = agent_activity();
         assert_eq!(agents.len(), 2);
-        assert!(agents
-            .iter()
-            .all(|agent| agent.online && agent.calls_today == 1));
+        assert!(
+            agents
+                .iter()
+                .all(|agent| agent.online && agent.calls_today == 1)
+        );
         assert_eq!(recent(10, Some("ZED"), None).len(), 1);
         assert_eq!(tool_group("kg_add"), "kg");
         assert_eq!(tool_group("status"), "ops");
@@ -503,11 +505,13 @@ mod tests {
             "customer_name",
         ] {
             assert!(!record.args.contains(private));
-            assert!(!record
-                .error
-                .as_deref()
-                .unwrap_or_default()
-                .contains(private));
+            assert!(
+                !record
+                    .error
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains(private)
+            );
         }
         assert!(record.args.contains("query"));
         assert!(record.args.contains("top_k"));

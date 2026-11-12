@@ -256,10 +256,12 @@ impl<'a> CodeIndex<'a> {
                 {
                     let mut row = serde_json::to_value(s)?;
                     row["node_domain"] = serde_json::json!("code");
-                    row["project"] = serde_json::json!(snapshot
-                        .document_scopes
-                        .get(&s.document_id)
-                        .and_then(|d| d.project.as_ref()));
+                    row["project"] = serde_json::json!(
+                        snapshot
+                            .document_scopes
+                            .get(&s.document_id)
+                            .and_then(|d| d.project.as_ref())
+                    );
                     items.push(row);
                 }
             }
@@ -292,7 +294,6 @@ mod tests {
     use crate::models::Document;
     fn put(store: &Store, id: &str, path: &str, project: &str, body: &str) {
         store
-            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("doc://{id}"),
@@ -313,7 +314,7 @@ mod tests {
     #[test]
     fn shared_keys_have_stable_scoped_identity_no_fake_definition_and_bounded_proofs() {
         let root = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&root.path().join("keys.duckdb")).unwrap();
+        let store = Store::open(&root.path().join("keys.duckdb")).unwrap();
         put(&store, "a", "/p/a.html", "p", "%{key} %{key} @{key}");
         put(
             &store,
@@ -323,10 +324,8 @@ mod tests {
             "<?php function render(){Translate('key');}",
         );
         put(&store, "q", "/q/a.html", "q", "%{key}");
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        let r = crate::code_index::CodeIndex::new(&store)
+        store.index_code().unwrap();
+        let r = store
             .code_symbols(&SymbolQuery {
                 evidence_limit: Some(1),
                 ..query(SymbolKind::TranslationKey)
@@ -343,7 +342,7 @@ mod tests {
             node["reference_target"],
             serde_json::json!({"key":"key","project":"p"})
         );
-        let via_prefix = crate::code_index::CodeIndex::new(&store)
+        let via_prefix = store
             .code_symbols(&SymbolQuery {
                 name: Some("tpl:key".into()),
                 project: Some("p".into()),
@@ -352,15 +351,13 @@ mod tests {
             .unwrap();
         assert_eq!(via_prefix["items"][0]["id"], node["id"]);
         put(&store, "a", "/p/a.html", "p", "\n%{key}");
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        let changed = crate::code_index::CodeIndex::new(&store)
+        store.index_code().unwrap();
+        let changed = store
             .code_symbols(&query(SymbolKind::TranslationKey))
             .unwrap();
         assert_eq!(changed["items"][0]["id"], node["id"]);
         assert_eq!(changed["items"][0]["observed_usage_total"], 2);
-        let all = crate::code_index::CodeIndex::new(&store)
+        let all = store
             .code_symbols(&SymbolQuery {
                 symbol_kind: Some(SymbolKind::TranslationKey),
                 ..Default::default()
@@ -372,7 +369,7 @@ mod tests {
     #[test]
     fn tables_keep_schema_only_and_usage_only_identities_with_exact_scoped_filters() {
         let root = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&root.path().join("table.duckdb")).unwrap();
+        let store = Store::open(&root.path().join("table.duckdb")).unwrap();
         put(
             &store,
             "ddl",
@@ -387,10 +384,8 @@ mod tests {
             "p",
             "SELECT * FROM public.logs; SELECT * FROM users;",
         );
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        let r = crate::code_index::CodeIndex::new(&store)
+        store.index_code().unwrap();
+        let r = store
             .code_symbols(&SymbolQuery {
                 name: Some("logs".into()),
                 selection: CodeQuery {
@@ -402,7 +397,7 @@ mod tests {
             .unwrap();
         assert_eq!(r["total"], 2);
         assert_eq!(r["truncated"], true);
-        let r = crate::code_index::CodeIndex::new(&store)
+        let r = store
             .code_symbols(&SymbolQuery {
                 name: Some("@table:admin.logs".into()),
                 project: Some("p".into()),
@@ -411,7 +406,7 @@ mod tests {
             .unwrap();
         assert_eq!(r["items"][0]["observed_usage_total"], 0);
         assert_eq!(r["items"][0]["captured_schema_evidence"], true);
-        let r = crate::code_index::CodeIndex::new(&store)
+        let r = store
             .code_symbols(&SymbolQuery {
                 name: Some("users".into()),
                 ..query(SymbolKind::Table)
@@ -419,7 +414,7 @@ mod tests {
             .unwrap();
         assert_eq!(r["items"][0]["captured_schema_evidence"], false);
         assert_eq!(r["items"][0]["observed_usage_total"], 1);
-        let scoped = crate::code_index::CodeIndex::new(&store)
+        let scoped = store
             .code_symbols(&SymbolQuery {
                 selection: CodeQuery {
                     path: Some("/p/use.sql".into()),
@@ -429,16 +424,18 @@ mod tests {
             })
             .unwrap();
         assert_eq!(scoped["total"], 2);
-        assert!(scoped["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|n| n["schema_evidence_total"] == 0));
+        assert!(
+            scoped["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|n| n["schema_evidence_total"] == 0)
+        );
     }
     #[test]
     fn route_handler_alternatives_are_one_occurrence_and_reference_targets_roundtrip() {
         let root = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&root.path().join("route.duckdb")).unwrap();
+        let store = Store::open(&root.path().join("route.duckdb")).unwrap();
         put(
             &store,
             "route",
@@ -446,29 +443,20 @@ mod tests {
             "p",
             "function handler(){} function handler(){} app.get('/items',handler); fetch('/items');",
         );
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        let r = crate::code_index::CodeIndex::new(&store)
-            .code_symbols(&query(SymbolKind::Route))
-            .unwrap();
+        store.index_code().unwrap();
+        let r = store.code_symbols(&query(SymbolKind::Route)).unwrap();
         assert_eq!(r["total"], 1);
         assert_eq!(r["items"][0]["observed_usage_total"], 2);
         assert_eq!(r["items"][0]["counts_by_relation"]["routes"], 1);
         assert_eq!(r["items"][0]["counts_by_relation"]["endpoint_reference"], 1);
         let target: ReferenceQuery =
             serde_json::from_value(r["items"][0]["reference_target"].clone()).unwrap();
-        assert_eq!(
-            crate::code_index::CodeIndex::new(&store)
-                .code_references(&target)
-                .unwrap()["total"],
-            2
-        );
+        assert_eq!(store.code_references(&target).unwrap()["total"], 2);
     }
     #[test]
     fn code_defaults_alias_contains_all_and_stale_source_coverage_preserve_legacy() {
         let root = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&root.path().join("code.duckdb")).unwrap();
+        let store = Store::open(&root.path().join("code.duckdb")).unwrap();
         put(&store, "code", "/p/api.py", "p", "def Worker():\n pass\n");
         put(
             &store,
@@ -477,10 +465,8 @@ mod tests {
             "p",
             "%{Work_key} %{literal%_key}",
         );
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        let r = crate::code_index::CodeIndex::new(&store)
+        store.index_code().unwrap();
+        let r = store
             .code_symbols(&SymbolQuery {
                 project: Some("p".into()),
                 ..Default::default()
@@ -489,7 +475,7 @@ mod tests {
         assert_eq!(r["total"], 1);
         assert_eq!(r["items"][0]["name"], "Worker");
         assert!(r["items"][0]["start_line"].is_number());
-        let r = crate::code_index::CodeIndex::new(&store)
+        let r = store
             .code_symbols(&SymbolQuery {
                 name: Some("Work".into()),
                 match_mode: Some(NameMatch::Contains),
@@ -499,18 +485,20 @@ mod tests {
         assert_eq!(r["total"], 2);
         assert_eq!(r["counts_by_domain"]["code"], 1);
         assert_eq!(r["counts_by_domain"]["translation_key"], 1);
-        assert!(crate::code_index::CodeIndex::new(&store)
-            .code_symbols(&SymbolQuery {
-                name: Some("Worker".into()),
-                selection: CodeQuery {
-                    symbol: Some("Worker".into()),
+        assert!(
+            store
+                .code_symbols(&SymbolQuery {
+                    name: Some("Worker".into()),
+                    selection: CodeQuery {
+                        symbol: Some("Worker".into()),
+                        ..Default::default()
+                    },
                     ..Default::default()
-                },
-                ..Default::default()
-            })
-            .is_err());
+                })
+                .is_err()
+        );
         put(&store, "html", "/p/view.html", "p", "changed");
-        let stale = crate::code_index::CodeIndex::new(&store)
+        let stale = store
             .code_symbols(&query(SymbolKind::TranslationKey))
             .unwrap();
         assert_eq!(stale["total"], 0);
@@ -525,9 +513,8 @@ mod budget_tests {
     #[test]
     fn proof_retention_is_independent_bounded_and_uses_numeric_source_order() {
         let root = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&root.path().join("proofs.duckdb")).unwrap();
+        let store = Store::open(&root.path().join("proofs.duckdb")).unwrap();
         store
-            .documents()
             .upsert_document(&Document {
                 id: "a".into(),
                 uri: "doc://a".into(),
@@ -537,9 +524,7 @@ mod budget_tests {
                 ..Default::default()
             })
             .unwrap();
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        store.index_code().unwrap();
         let mut q = SymbolQuery {
             symbol_kind: Some(SymbolKind::TranslationKey),
             project: Some("p".into()),
@@ -550,9 +535,7 @@ mod budget_tests {
             },
             ..Default::default()
         };
-        let r = crate::code_index::CodeIndex::new(&store)
-            .code_symbols(&q)
-            .unwrap();
+        let r = store.code_symbols(&q).unwrap();
         let n = &r["items"][0];
         assert_eq!(n["source_evidence_total"], 80);
         assert_eq!(n["source_evidence"].as_array().unwrap().len(), 50);
@@ -560,9 +543,7 @@ mod budget_tests {
         assert_eq!(n["source_evidence"][49]["line"], 50);
         assert_eq!(n["source_evidence_truncated"], true);
         q.evidence_limit = Some(0);
-        let r = crate::code_index::CodeIndex::new(&store)
-            .code_symbols(&q)
-            .unwrap();
+        let r = store.code_symbols(&q).unwrap();
         assert_eq!(
             r["items"][0]["source_evidence"].as_array().unwrap().len(),
             1

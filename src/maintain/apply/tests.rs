@@ -328,9 +328,11 @@ async fn merge_exact_dup_rejects_one_unrelated_source_without_partial_mutation()
     .unwrap();
 
     assert_eq!(report.errors.len(), 1);
-    assert!(report.errors[0]
-        .message
-        .contains("not an exact content duplicate"));
+    assert!(
+        report.errors[0]
+            .message
+            .contains("not an exact content duplicate")
+    );
     for id in ["keep", "dup", "unrelated"] {
         let document = store
             .documents()
@@ -594,14 +596,18 @@ async fn set_tags_reuses_the_canonical_tag_hub_for_hash_and_case_variants() {
         .await
         .unwrap();
     assert_eq!(report.errors.len(), 0, "{:?}", report.errors);
-    let conn = store.lock().unwrap();
-    let uris: Vec<String> = {
-        let mut stmt = conn
-            .prepare("SELECT uri FROM graph_nodes WHERE kind = 'tag' ORDER BY uri")
-            .unwrap();
-        let rows = stmt.query_map([], |r| r.get::<_, String>(0)).unwrap();
-        rows.map(|r| r.unwrap()).collect()
+    let mut uris: Vec<String> = {
+        use crate::db::lin_engine::{LinReader, opt_str};
+        let r = store.read().unwrap();
+        let mut out = Vec::new();
+        for rec in r.find_by_eq("graph_nodes", "kind", "tag").unwrap() {
+            if let Some(u) = opt_str(&rec, "uri") {
+                out.push(u.to_string());
+            }
+        }
+        out
     };
+    uris.sort();
     assert_eq!(uris, vec!["tag://alpha".to_string()]);
 }
 
@@ -660,8 +666,8 @@ async fn reembed_plan_finishes_with_generation_clean_fts() {
     assert_eq!(report.errors.len(), 0, "{:?}", report.errors);
     assert_eq!(report.applied.len(), 1);
     let generation_after_plan = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert!(!generation_after_plan.dirty);
 
@@ -678,8 +684,8 @@ async fn reembed_plan_finishes_with_generation_clean_fts() {
     .unwrap();
     assert_eq!(hits.len(), 1);
     let generation_after_search = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert_eq!(generation_after_search, generation_after_plan);
 }
@@ -743,9 +749,11 @@ async fn partial_reembed_failure_is_structured_error_and_keeps_migration_marker(
         .embedding_manifest()
         .require_embedding_manifest_match(&config)
         .expect_err("target identity must stay blocked after partial migration");
-    assert!(target_error
-        .to_string()
-        .contains("incomplete corpus migration"));
+    assert!(
+        target_error
+            .to_string()
+            .contains("incomplete corpus migration")
+    );
     store
         .embedding_manifest()
         .require_embedding_manifest_match(&old_config)
@@ -841,8 +849,8 @@ async fn final_fts_failure_returns_mutation_report_and_terminal_ops_log() {
         true
     );
     let generation = {
-        let conn = store.lock().unwrap();
-        db::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        db::fts_generation_state(&*r).unwrap()
     };
     assert!(generation.dirty, "next lexical read must retry FTS");
 
@@ -855,18 +863,22 @@ async fn final_fts_failure_returns_mutation_report_and_terminal_ops_log() {
         .find(|entry| entry.id == summary_id)
         .expect("terminal summary ops_log row");
     assert_eq!(summary.op, "apply_maintenance_plan");
-    assert!(store
-        .ops_log()
-        .list_ops_log(10)
-        .unwrap()
-        .iter()
-        .any(|entry| entry.op == "fts_finalization_failed"));
+    assert!(
+        store
+            .ops_log()
+            .list_ops_log(10)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.op == "fts_finalization_failed")
+    );
     let payload: serde_json::Value = serde_json::from_str(&summary.payload_json).unwrap();
-    assert!(payload["errors"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|error| error["action"] == "finalize_fts"));
+    assert!(
+        payload["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|error| error["action"] == "finalize_fts")
+    );
 }
 
 #[test]

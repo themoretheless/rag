@@ -6,6 +6,17 @@ use super::*;
 pub(super) struct Facts {
     pub(super) type_parameters: BTreeMap<String, Vec<String>>,
     implementations: Vec<Implementation>,
+    #[serde(default)]
+    associated_bounds: Vec<AssociatedBound>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AssociatedBound {
+    owner: String,
+    name: String,
+    bounds: Vec<Ty>,
+    at: usize,
+    generic: bool,
+    available: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Implementation {
@@ -89,7 +100,10 @@ pub(super) fn collect(root: Node, source: &str, doc: &IndexedDocument) -> Facts 
         if depth > 128 {
             continue;
         }
-        if matches!(node.kind(), "struct_item" | "enum_item" | "trait_item") {
+        if matches!(
+            node.kind(),
+            "struct_item" | "union_item" | "enum_item" | "trait_item"
+        ) {
             if let Some(s) = doc
                 .symbols
                 .iter()
@@ -98,6 +112,43 @@ pub(super) fn collect(root: Node, source: &str, doc: &IndexedDocument) -> Facts 
                 facts
                     .type_parameters
                     .insert(s.id.clone(), parameters(node, source));
+            }
+        }
+        if node.kind() == "trait_item" {
+            if let (Some(owner), Some(body)) = (
+                doc.symbols
+                    .iter()
+                    .find(|s| s.start_byte == node.start_byte()),
+                node.child_by_field_name("body"),
+            ) {
+                for member in children(body)
+                    .into_iter()
+                    .filter(|n| n.kind() == "associated_type")
+                {
+                    if let Some(name) = member.child_by_field_name("name") {
+                        let mut previous = member.prev_named_sibling();
+                        let mut available = true;
+                        while let Some(p) = previous.filter(|p| {
+                            p.kind() == "attribute_item" || p.kind().ends_with("comment")
+                        }) {
+                            available &=
+                                p.kind() != "attribute_item" || !text(p, source).contains("cfg");
+                            previous = p.prev_named_sibling();
+                        }
+                        facts.associated_bounds.push(AssociatedBound {
+                            owner: owner.id.clone(),
+                            name: text(name, source).into(),
+                            bounds: member
+                                .child_by_field_name("bounds")
+                                .map(|n| bound_types(n, source))
+                                .unwrap_or_default(),
+                            at: member.start_byte(),
+                            generic: member.child_by_field_name("type_parameters").is_some()
+                                || node.child_by_field_name("type_parameters").is_some(),
+                            available,
+                        });
+                    }
+                }
             }
         }
         if node.kind() == "impl_item" {
@@ -163,6 +214,13 @@ pub(super) fn configure(
     ids: &HashSet<String>,
 ) {
     facts.type_parameters.retain(|id, _| ids.contains(id));
+    facts.associated_bounds.retain_mut(|bound| {
+        if !ids.contains(&bound.owner) || decision(bound.at) == Some(false) {
+            return false;
+        }
+        bound.available = decision(bound.at) == Some(true);
+        true
+    });
     facts.implementations.retain_mut(|implementation| {
         if decision(implementation.start) != Some(true) {
             return false;
@@ -175,6 +233,11 @@ pub(super) fn configure(
     });
 }
 pub(super) fn remap(facts: &mut Facts, ids: &HashMap<String, String>) {
+    for bound in &mut facts.associated_bounds {
+        if let Some(id) = ids.get(&bound.owner) {
+            bound.owner = id.clone();
+        }
+    }
     facts.type_parameters = std::mem::take(&mut facts.type_parameters)
         .into_iter()
         .filter_map(|(id, p)| ids.get(&id).map(|next| (next.clone(), p)))
@@ -198,6 +261,46 @@ impl<'a> Engine<'a> {
     ) -> ValueType {
         if depth > 24 || trait_ids.is_empty() || !self.step() {
             return ValueType::Unknown;
+        }
+        if let ValueType::Parameter {
+            identity, traits, ..
+        } = actual
+        {
+            let declarations: Vec<_> = trait_ids
+                .iter()
+                .filter(|id| traits.contains(id))
+                .filter_map(|id| {
+                    self.symbol(id)
+                        .and_then(|s| self.docs.get(&s.document_id))
+                        .map(|d| (id, d))
+                })
+                .flat_map(|(id, d)| {
+                    d.rust_semantics
+                        .trait_data
+                        .associated_bounds
+                        .iter()
+                        .filter(move |b| b.owner == *id && b.name == name)
+                        .map(move |b| (d, b.clone()))
+                })
+                .collect();
+            if declarations.len() != 1 {
+                return ValueType::Unknown;
+            }
+            let (d, bound) = &declarations[0];
+            if bound.generic || !bound.available {
+                return ValueType::Unknown;
+            }
+            let substitutions = HashMap::from([("Self".into(), actual.clone())]);
+            let ids = self.trait_ids(d, bound.at, "", &bound.bounds, &substitutions, depth + 1);
+            if ids.is_empty() {
+                return ValueType::Unknown;
+            }
+            return ValueType::Parameter {
+                identity: format!("{identity}::{}::{name}", bound.owner),
+                traits: ids,
+                sized: bound.bounds.iter().all(|b| !matches!(b, Ty::Unknown)),
+                callable: None,
+            };
         }
         let project = trait_ids
             .first()
@@ -282,7 +385,7 @@ impl<'a> Engine<'a> {
             (Ty::Named(name, args), _)
                 if args.is_empty() && implementation.parameters.contains(name) =>
             {
-                if matches!(actual, ValueType::Unknown) {
+                if matches!(actual, ValueType::Unknown | ValueType::Callable { .. }) {
                     return false;
                 }
                 if let Some(prior) = substitutions.get(name) {
@@ -293,13 +396,27 @@ impl<'a> Engine<'a> {
                 }
             }
             (Ty::Primitive(p), ValueType::Primitive(a)) => p == a,
+            (Ty::Named(_, args), ValueType::Stdarch(id)) if args.is_empty() => {
+                let candidate = self.types(
+                    doc,
+                    implementation.start,
+                    "",
+                    pattern,
+                    &HashMap::new(),
+                    depth + 1,
+                );
+                matches!(candidate, ValueType::Stdarch(candidate) if candidate == *id)
+            }
             (Ty::Pointer(pm, p), ValueType::Pointer(am, a)) if pm == am => {
                 // A blanket impl<T> has an implicit Sized bound. Unsized or
                 // unmodeled pointees must not satisfy it by shape alone.
                 if matches!(p.as_ref(), Ty::Named(name, args) if args.is_empty() && implementation.parameters.contains(name))
                     && (matches!(
                         a.as_ref(),
-                        ValueType::Unknown | ValueType::Traits(_) | ValueType::Array(_)
+                        ValueType::Unknown
+                            | ValueType::Traits(_)
+                            | ValueType::Array(_)
+                            | ValueType::Parameter { sized: false, .. }
                     ) || matches!(a.as_ref(), ValueType::Primitive(name) if name == "str"))
                 {
                     return false;
@@ -350,6 +467,20 @@ impl<'a> Engine<'a> {
         ) {
             return None;
         }
+        if matches!(actual, ValueType::Stdarch(_)) {
+            let tr = implementation.trait_type.as_ref()?;
+            let ValueType::Nominal(id, _) =
+                self.types(doc, implementation.start, "", tr, &substitutions, depth + 1)
+            else {
+                return None;
+            };
+            let declaration = self
+                .symbol(&id)
+                .and_then(|s| self.docs.get(&s.document_id))?;
+            if !rust_cargo::share_target(self.docs, doc, declaration) {
+                return None;
+            }
+        }
         if let ValueType::Nominal(id, _) = actual {
             if let Some(owner) = self.symbol(id).and_then(|s| self.docs.get(&s.document_id)) {
                 if !rust_cargo::share_target(self.docs, doc, owner) {
@@ -394,13 +525,17 @@ impl<'a> Engine<'a> {
         if depth > 16 || !self.step() {
             return false;
         }
-        if let ValueType::Traits(ids) = actual {
+        if let ValueType::Traits(ids)
+        | ValueType::Parameter { traits: ids, .. }
+        | ValueType::Callable { traits: ids, .. } = actual
+        {
             return ids.iter().any(|id| id == trait_id);
         }
         let project = self
             .symbol(trait_id)
             .and_then(|s| self.docs.get(&s.document_id))
             .map(|d| d.project.clone());
+        let expected_name = self.symbol(trait_id).map(|s| s.name.as_str());
         for d in self
             .docs
             .values()
@@ -410,6 +545,19 @@ impl<'a> Engine<'a> {
                 let Some(t) = &implementation.trait_type else {
                     continue;
                 };
+                // A spelling mismatch can reject an unrelated impl cheaply.
+                // Surviving aliases still require exact declaration identity.
+                if let (Ty::Named(name, _), Some(expected)) = (t, expected_name) {
+                    let (head, tail) = name.split_once("::").unwrap_or((name, ""));
+                    let candidate = if tail.is_empty() {
+                        resolve::import_target(d, head, implementation.start).unwrap_or(name)
+                    } else {
+                        tail
+                    };
+                    if candidate.rsplit("::").next() != Some(expected) {
+                        continue;
+                    }
+                }
                 let Some(substitutions) = self.impl_match(d, implementation, actual, depth + 1)
                 else {
                     continue;
@@ -459,8 +607,16 @@ impl<'a> Engine<'a> {
         if depth > 24 || !self.step() {
             return vec![];
         }
+        // The catalog proves identity, not the external inherent-method set.
+        // Only an explicit UFCS trait selection can bypass that unknown set.
+        if matches!(actual, ValueType::Stdarch(_)) && selected.is_none() {
+            return vec![];
+        }
         let (doc, at, owner) = context;
-        if let ValueType::Traits(ids) = actual {
+        if let ValueType::Traits(ids)
+        | ValueType::Parameter { traits: ids, .. }
+        | ValueType::Callable { traits: ids, .. } = actual
+        {
             return ids
                 .iter()
                 .filter(|id| selected.is_none_or(|s| s == id.as_str()))
@@ -612,6 +768,29 @@ impl<'a> Engine<'a> {
                     && function.end_byte <= s.end_byte
             })
             .min_by_key(|s| s.end_byte - s.start_byte);
+        if let (ValueType::Parameter { traits, .. }, Some(declaration)) = (value, default_trait) {
+            if traits.contains(&declaration.id) {
+                let mut substitutions = HashMap::from([("Self".into(), value.clone())]);
+                let names: std::collections::BTreeSet<_> = d
+                    .rust_semantics
+                    .trait_data
+                    .associated_bounds
+                    .iter()
+                    .filter(|b| b.owner == declaration.id)
+                    .map(|b| b.name.clone())
+                    .collect();
+                for name in names {
+                    let projected = self.associated_type(
+                        value,
+                        &name,
+                        std::slice::from_ref(&declaration.id),
+                        depth + 1,
+                    );
+                    substitutions.insert(format!("Self::{name}"), projected);
+                }
+                return substitutions;
+            }
+        }
         for d in self
             .docs
             .values()

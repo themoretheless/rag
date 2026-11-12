@@ -12,9 +12,9 @@
 //!   --wing projects --room downloader
 //! ```
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use rag_mcp::ingest::{IngestCommand, IngestService};
-use rag_mcp::source_scan::{collect_source_files, SourceScanPolicy};
+use rag_mcp::source_scan::{SourceScanPolicy, collect_source_files};
 use std::path::PathBuf;
 
 fn main() -> Result<()> {

@@ -1,0 +1,50 @@
+{
+  "contract_version": 1,
+  "index_format": 78,
+  "source_inputs_and_oracle_labels_unchanged": true,
+  "native_mcp_parity_sites": 1183,
+  "before": {
+    "labelled_sites": 1183,
+    "local_positive_sites": 570,
+    "external_negative_sites": 613,
+    "true_positive": 467,
+    "false_positive": 0,
+    "false_negative": 103,
+    "precision": 1.0,
+    "recall": 0.8192982456140351,
+    "exact_sites": 1080,
+    "exact_site_rate": 0.9129332206255283
+  },
+  "after": {
+    "labelled_sites": 1183,
+    "local_positive_sites": 570,
+    "external_negative_sites": 613,
+    "true_positive": 473,
+    "false_positive": 0,
+    "false_negative": 97,
+    "precision": 1.0,
+    "recall": 0.8298245614035088,
+    "exact_sites": 1086,
+    "exact_site_rate": 0.9180050718512257
+  },
+  "recovered_sites": 6,
+  "lost_correct_sites": 0,
+  "focused_rust_passed": 92,
+  "mcp_configurations": 2,
+  "mcp_labelled_targets": 8,
+  "compiler_executed_tests": 2,
+  "workspace": {
+    "passed": 1569,
+    "failed": 0,
+    "ignored": 1
+  },
+  "strict_clippy_passed": true,
+  "production_binary_replaced": false,
+  "performance_qualified": false,
+  "shared_source_not_frozen": true,
+  "retained_failures": [
+    "regression-before.log",
+    "preliminary/runtime.log",
+    "preliminary/workspace.log"
+  ]
+}

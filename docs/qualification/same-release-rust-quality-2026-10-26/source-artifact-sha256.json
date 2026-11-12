@@ -1,0 +1,10 @@
+{
+  "scripts/build_release_quality_capture.py": "25c3416b1ae5abe2d5a13fbf15cfc63984944eb8a38bda350fda3f3c1d0fbc59",
+  "scripts/verify_release_quality_capture.py": "fe3c408738eba373a559ba81b9fc93d27b2957b53877b3c8907fa6231e126c7b",
+  "scripts/test_release_quality_capture.py": "5de85f3d7a2a61447752b83833bcc0824d7e1ed7ac6809fbef757a30752f7b2c",
+  "scripts/qualify_rust_corpus.py": "b5c2f1dec94912aceb6cf8ea0a06554eab3b5bdea403160a7516a92eda560ebd",
+  "scripts/scip_binding_labels.py": "1591760a4ba2b4237d0bd713c67d0e15e3b25f987d1c7af48a473fcf71f7913e",
+  "scripts/summarize_rust_quality.py": "07682725c6da0b2c5c2a7091ca410ffc977ec045786616ff3faab63ccd15a7b6",
+  "scripts/mcp_smoke_client.py": "78f44eb3b5812426c7d78f0d3f919258c5e7a732c071de17dc73716a2dff3309",
+  "scripts/test_scip_binding_labels.py": "8d639656d47ab1a5ffd260aa0dc220992bb23c4ada5a80513137e36eee4e300c"
+}

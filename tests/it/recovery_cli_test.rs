@@ -1,12 +1,12 @@
 use std::process::Command;
 
 use chrono::Utc;
+use rag_mcp::Store;
 use rag_mcp::db::recovery::{
-    BundleDocument, RecoveryBundle, BUNDLE_VERSION, PORTABLE_RECOVERY_MAX_BYTES,
-    PORTABLE_RECOVERY_MAX_DOCUMENTS,
+    BUNDLE_VERSION, BundleDocument, PORTABLE_RECOVERY_MAX_BYTES, PORTABLE_RECOVERY_MAX_DOCUMENTS,
+    RecoveryBundle,
 };
 use rag_mcp::models::Document;
-use rag_mcp::Store;
 
 #[test]
 fn recovery_cli_smoke_backup_verify_inventory_and_drill() {
@@ -190,26 +190,44 @@ fn recovery_cli_rejects_oversized_input_before_opening_target_database() {
 
 #[test]
 fn recovery_cli_export_preflight_leaves_no_artifact() {
+    use rag_mcp::db::lin_engine::{LinWriter, RecBuilder};
+
     let root = tempfile::tempdir().unwrap();
-    let db = root.path().join("large.duckdb");
+    let db = root.path().join("large.lin");
     let output_path = root.path().join("must-not-exist.json");
-    drop(Store::open(&db).unwrap());
-    let conn = duckdb::Connection::open(&db).unwrap();
-    conn.execute(
-        r#"
-        INSERT INTO documents (
-            id, uri, title, content, metadata_json, created_at, updated_at
-        )
-        SELECT
-            'portable-limit-' || CAST(i AS VARCHAR),
-            'recovery://portable-limit/' || CAST(i AS VARCHAR),
-            'limit', '', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-        FROM range(0, ?) AS generated(i)
-        "#,
-        [i64::try_from(PORTABLE_RECOVERY_MAX_DOCUMENTS + 1).unwrap()],
-    )
-    .unwrap();
-    drop(conn);
+    {
+        let store = Store::open(&db).unwrap();
+        let mut w = store.write().unwrap();
+        let now = "2026-11-11T00:00:00Z";
+        let total = PORTABLE_RECOVERY_MAX_DOCUMENTS + 1;
+        let mut batch = Vec::with_capacity(512);
+        for i in 0..total {
+            batch.push(
+                RecBuilder::new()
+                    .id(format!("portable-limit-{i}"))
+                    .str("uri", format!("recovery://portable-limit/{i}"))
+                    .str("title", "limit")
+                    .str("content", "")
+                    .str("metadata_json", "{}")
+                    .str("created_at", now)
+                    .str("updated_at", now)
+                    .str("status", "active")
+                    .str("layer", "raw")
+                    .str("kind", "document")
+                    .i64("revision", 1)
+                    .bool("pinned", false)
+                    .f64("boost", 0.0)
+                    .build(),
+            );
+            if batch.len() >= 512 {
+                w.insert_records("documents", std::mem::take(&mut batch))
+                    .unwrap();
+            }
+        }
+        if !batch.is_empty() {
+            w.insert_records("documents", batch).unwrap();
+        }
+    }
 
     let output = Command::new(env!("CARGO_BIN_EXE_recovery"))
         .args([

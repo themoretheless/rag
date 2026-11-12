@@ -5,9 +5,7 @@ use super::*;
 pub(super) fn portable_recovery_limit_error(reason: impl std::fmt::Display) -> AppError {
     AppError::config(format!(
         "portable recovery bundle {reason}; limit is {} bytes, {} documents, and {} chunks; {PORTABLE_RECOVERY_LIMIT_GUIDANCE}",
-        PORTABLE_RECOVERY_MAX_BYTES,
-        PORTABLE_RECOVERY_MAX_DOCUMENTS,
-        PORTABLE_RECOVERY_MAX_CHUNKS,
+        PORTABLE_RECOVERY_MAX_BYTES, PORTABLE_RECOVERY_MAX_DOCUMENTS, PORTABLE_RECOVERY_MAX_CHUNKS,
     ))
 }
 
@@ -281,7 +279,7 @@ pub fn encode_recovery_bundle(bundle: &RecoveryBundle, format: &str) -> Result<V
         _ => {
             return Err(AppError::config(
                 "recovery bundle format must be json or jsonl",
-            ))
+            ));
         }
     };
     if let Err(error) = encoded {
@@ -449,7 +447,7 @@ pub fn decode_recovery_bundle(input: &str, format: &str) -> Result<RecoveryBundl
             other => {
                 return Err(AppError::config(format!(
                     "unknown JSONL record_type {other:?} at line {line_no}"
-                )))
+                )));
             }
         }
     }
@@ -614,78 +612,80 @@ pub(super) fn ensure_only_fields(
     Ok(())
 }
 
-pub(super) fn nonnegative_metric(value: i64, name: &str) -> Result<u64> {
-    u64::try_from(value).map_err(|_| {
-        AppError::db(format!(
-            "portable recovery preflight returned negative {name}"
-        ))
-    })
-}
-
 pub(super) fn portable_store_preflight_locked(
-    conn: &duckdb::Connection,
+    r: &impl LinReader,
 ) -> Result<PortableBundlePreflight> {
-    let (documents_raw, document_string_bytes_raw): (i64, i64) = conn.query_row(
-        r#"
-        SELECT
-            COUNT(*),
-            CAST(COALESCE(SUM(
-                strlen(id) + strlen(uri) + strlen(title) + strlen(content) +
-                strlen(metadata_json) + strlen(COALESCE(content_hash, '')) +
-                strlen(COALESCE(wing, '')) + strlen(COALESCE(room, '')) +
-                strlen(COALESCE(source_file, '')) + strlen(COALESCE(layer, 'raw')) +
-                strlen(COALESCE(kind, 'document')) + strlen(COALESCE(status, 'active'))
-            ), 0) AS BIGINT)
-        FROM documents
-        "#,
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
-    let (chunks_raw, chunk_string_bytes_raw, embedding_json_bytes_raw, embedding_values_raw): (
-        i64,
-        i64,
-        i64,
-        i64,
-    ) = conn.query_row(
-        r#"
-        SELECT
-            COUNT(*),
-            CAST(COALESCE(SUM(
-                strlen(id) + strlen(document_id) + strlen(content) +
-                strlen(COALESCE(metadata_json, '{}'))
-            ), 0) AS BIGINT),
-            -- Brackets plus one separator per value; the digits are covered
-            -- by the per-value worst case below.
-            CAST(COALESCE(SUM(2 + len(embedding)), 0) AS BIGINT),
-            CAST(COALESCE(SUM(len(embedding)), 0) AS BIGINT)
-        FROM chunks
-        "#,
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-    )?;
-    let manifest_string_bytes_raw: i64 = conn.query_row(
-        r#"
-        SELECT CAST(COALESCE(SUM(
-            strlen(id) + strlen(provider) + strlen(model) +
-            strlen(COALESCE(base_url, '')) + strlen(COALESCE(content_fingerprint, ''))
-        ), 0) AS BIGINT)
-        FROM embedding_manifest
-        WHERE id = 'default'
-        "#,
-        [],
-        |row| row.get(0),
-    )?;
+    let mut documents: u64 = 0;
+    let mut document_string_bytes: u64 = 0;
+    r.scan_each("documents", |row| {
+        documents = documents.saturating_add(1);
+        let row_bytes = saturating_len(cell_str(row, "id").unwrap_or(""))
+            .saturating_add(saturating_len(cell_str(row, "uri").unwrap_or("")))
+            .saturating_add(saturating_len(cell_str(row, "title").unwrap_or("")))
+            .saturating_add(saturating_len(cell_str(row, "content").unwrap_or("")))
+            .saturating_add(saturating_len(cell_str(row, "metadata_json").unwrap_or("")))
+            .saturating_add(saturating_len(cell_str(row, "content_hash").unwrap_or("")))
+            .saturating_add(saturating_len(cell_str(row, "wing").unwrap_or("")))
+            .saturating_add(saturating_len(cell_str(row, "room").unwrap_or("")))
+            .saturating_add(saturating_len(cell_str(row, "source_file").unwrap_or("")))
+            .saturating_add(saturating_len(
+                cell_nonempty_string(row, "layer")
+                    .as_deref()
+                    .unwrap_or("raw"),
+            ))
+            .saturating_add(saturating_len(
+                cell_nonempty_string(row, "kind")
+                    .as_deref()
+                    .unwrap_or("document"),
+            ))
+            .saturating_add(saturating_len(
+                cell_nonempty_string(row, "status")
+                    .as_deref()
+                    .unwrap_or("active"),
+            ));
+        document_string_bytes = document_string_bytes.saturating_add(row_bytes);
+        Ok(true)
+    })?;
 
-    let documents = nonnegative_metric(documents_raw, "document count")?;
-    let chunks = nonnegative_metric(chunks_raw, "chunk count")?;
-    let document_string_bytes =
-        nonnegative_metric(document_string_bytes_raw, "document byte count")?;
-    let chunk_string_bytes = nonnegative_metric(chunk_string_bytes_raw, "chunk byte count")?;
-    let embedding_json_bytes =
-        nonnegative_metric(embedding_json_bytes_raw, "embedding JSON byte count")?;
-    let embedding_values = nonnegative_metric(embedding_values_raw, "embedding value count")?;
-    let manifest_string_bytes =
-        nonnegative_metric(manifest_string_bytes_raw, "manifest byte count")?;
+    let mut chunks: u64 = 0;
+    let mut chunk_string_bytes: u64 = 0;
+    let mut embedding_json_bytes: u64 = 0;
+    let mut embedding_values: u64 = 0;
+    r.scan_each("chunks", |row| {
+        chunks = chunks.saturating_add(1);
+        let row_bytes = saturating_len(cell_str(row, "id").unwrap_or(""))
+            .saturating_add(saturating_len(cell_str(row, "document_id").unwrap_or("")))
+            .saturating_add(saturating_len(cell_str(row, "content").unwrap_or("")))
+            .saturating_add(saturating_len(
+                cell_str(row, "metadata_json").unwrap_or("{}"),
+            ));
+        chunk_string_bytes = chunk_string_bytes.saturating_add(row_bytes);
+        if let Some(lin::Cell::Vec(v)) = row.get("embedding") {
+            let dim = u64::try_from(v.len()).unwrap_or(u64::MAX);
+            embedding_values = embedding_values.saturating_add(dim);
+            embedding_json_bytes =
+                embedding_json_bytes.saturating_add(dim.saturating_mul(12).saturating_add(2));
+        } else if let Some(raw_json) = cell_str(row, "embedding_json") {
+            embedding_json_bytes = embedding_json_bytes.saturating_add(saturating_len(raw_json));
+            if raw_json.trim() != "[]" && !raw_json.trim().is_empty() {
+                let commas = raw_json.bytes().filter(|&b| b == b',').count() as u64;
+                embedding_values = embedding_values.saturating_add(commas.saturating_add(1));
+            }
+        }
+        Ok(true)
+    })?;
+
+    let mut manifest_string_bytes: u64 = 0;
+    if let Some(row) = r.get_by_id("embedding_manifest", "default")? {
+        manifest_string_bytes = saturating_len(cell_str(&row, "id").unwrap_or(""))
+            .saturating_add(saturating_len(cell_str(&row, "provider").unwrap_or("")))
+            .saturating_add(saturating_len(cell_str(&row, "model").unwrap_or("")))
+            .saturating_add(saturating_len(cell_str(&row, "base_url").unwrap_or("")))
+            .saturating_add(saturating_len(
+                cell_str(&row, "content_fingerprint").unwrap_or(""),
+            ));
+    }
+
     let string_bytes = document_string_bytes
         .saturating_add(chunk_string_bytes)
         .saturating_add(manifest_string_bytes);

@@ -1,7 +1,10 @@
 //! Bounded live reads, checksum freshness and a persistent acknowledgement ledger.
 use super::history::File;
 use super::*;
-use duckdb::Connection;
+use crate::db::lin_engine::{
+    LinWriter, RecBuilder, cell_i64, cell_opt_string, cell_str, cell_string, format_db_timestamp,
+};
+use chrono::Utc;
 use std::io::Read;
 use std::path::PathBuf;
 
@@ -33,7 +36,7 @@ pub struct DriftAck {
     pub note: String,
 }
 pub(super) fn observe(
-    conn: &Connection,
+    w: &mut impl LinWriter,
     revision: i64,
     file: &File,
     kind: &str,
@@ -43,26 +46,41 @@ pub(super) fn observe(
     let id = content_hash(&serde_json::to_string(&(
         revision, &file.id, kind, observed, source,
     ))?);
-    let seq: Option<i64> = conn
-        .query_row(
-            "SELECT seq FROM code_index_drift WHERE event_id=?",
-            [&id],
-            |r| r.get(0),
-        )
-        .optional()?;
-    if seq.is_some() {
-        conn.execute(
-            "UPDATE code_index_drift SET last_seen=current_timestamp WHERE event_id=?",
-            [&id],
+    let now = format_db_timestamp(Utc::now());
+    if w.get_by_id("code_index_drift", &id)?.is_some() {
+        w.update_where(
+            "code_index_drift",
+            lin::query::pred::eq("id", id.as_str()),
+            RecBuilder::new().str("last_seen", now).build(),
         )?;
         return Ok(id);
     }
-    let seq: i64 = conn.query_row(
-        "SELECT COALESCE(MAX(seq),0)+1 FROM code_index_drift",
-        [],
-        |r| r.get(0),
+    let seq = crate::analysis_tasks::next_seq(w, "code_index_drift")?;
+    w.insert_one(
+        "code_index_drift",
+        RecBuilder::new()
+            .id(&id)
+            .str("event_id", &id)
+            .i64("seq", seq)
+            .i64("index_revision", revision)
+            .str("document_id", &file.id)
+            .str("path", &file.path)
+            .opt_str("project", file.project.as_deref())
+            .str("kind", kind)
+            .str("source_kind", source)
+            .opt_str(
+                "indexed_hash",
+                if kind == "added_to_index" {
+                    None
+                } else {
+                    Some(file.hash.as_str())
+                },
+            )
+            .opt_str("observed_hash", observed)
+            .str("first_seen", &now)
+            .str("last_seen", &now)
+            .build(),
     )?;
-    conn.execute("INSERT INTO code_index_drift(event_id,seq,index_revision,document_id,path,project,kind,source_kind,indexed_hash,observed_hash) VALUES (?,?,?,?,?,?,?,?,?,?)",params![id,seq,revision,file.id,file.path,file.project,kind,source,if kind=="added_to_index"{None}else{Some(file.hash.as_str())},observed])?;
     Ok(id)
 }
 fn source_mode(q: &SourceQuery) -> Result<&str> {
@@ -73,18 +91,13 @@ fn source_mode(q: &SourceQuery) -> Result<&str> {
     Ok(mode)
 }
 fn revision_files(store: &Store, q: &SourceQuery) -> Result<(i64, Vec<File>)> {
-    store.with_conn(|conn| revision_files_locked(conn, q))
-}
-fn revision_files_locked(conn: &duckdb::Connection, q: &SourceQuery) -> Result<(i64, Vec<File>)> {
+    let r = store.read()?;
     let revision = match q.index_revision {
         Some(id) => id,
-        None => conn
-            .query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| {
-                r.get::<_, Option<i64>>(0)
-            })?
+        None => crate::analysis_tasks::latest_code_index_rev(&*r)?
             .ok_or_else(|| AppError::not_found("run index_code or sync_sources first"))?,
     };
-    let files = history::files(conn, revision, q.project.as_deref())?
+    let files = history::files(&*r, revision, q.project.as_deref())?
         .into_iter()
         .filter(|f| {
             q.document_id.as_ref().is_none_or(|id| id == &f.id)
@@ -109,23 +122,18 @@ impl LiveSource {
 fn actual(store: &Store, file: &File, mode: &str, roots: &[PathBuf]) -> Result<Option<LiveSource>> {
     if mode == "stored" {
         let doc = store
-            .documents()
             .get_document(&file.id)?
             .filter(|d| !matches!(d.status.as_str(), "archived" | "tombstone" | "consolidated"));
         return doc
             .map(|d| {
-                store
-                    .with_conn(|conn| {
-                        source::read(conn, &d.content, &d.metadata_json)
-                            .map(std::borrow::Cow::into_owned)
-                    })
-                    .map(|s| LiveSource {
-                        bytes: s.len(),
-                        bytes_hash: content_hash(&s),
-                        text: s,
-                        encoding: "stored_utf8",
-                        basis: "stored_representation",
-                    })
+                let r = store.read()?;
+                source::read(&*r, &d.content, &d.metadata_json).map(|s| LiveSource {
+                    bytes: s.len(),
+                    bytes_hash: content_hash(&s),
+                    text: s.into_owned(),
+                    encoding: "stored_utf8",
+                    basis: "stored_representation",
+                })
             })
             .transpose();
     }
@@ -316,9 +324,14 @@ impl<'a> CodeIndex<'a> {
                         comparison(&file.hash, content.as_ref().map(|s| s.text.as_str()));
                     let event = if status != "unchanged" {
                         changed += 1;
-                        Some(self.store.with_conn(|conn| {
-                            observe(conn, revision, file, status, hash.as_deref(), mode)
-                        })?)
+                        Some(observe(
+                            &mut *self.store.write()?,
+                            revision,
+                            file,
+                            status,
+                            hash.as_deref(),
+                            mode,
+                        )?)
                     } else {
                         None
                     };
@@ -349,14 +362,18 @@ impl<'a> CodeIndex<'a> {
         let file = &files[0];
         let content = actual(self.store, file, mode, roots)?;
         let (status, hash) = comparison(&file.hash, content.as_ref().map(|s| s.text.as_str()));
-        let event =
-            if status != "unchanged" {
-                Some(self.store.with_conn(|conn| {
-                    observe(conn, revision, file, status, hash.as_deref(), mode)
-                })?)
-            } else {
-                None
-            };
+        let event = if status != "unchanged" {
+            Some(observe(
+                &mut *self.store.write()?,
+                revision,
+                file,
+                status,
+                hash.as_deref(),
+                mode,
+            )?)
+        } else {
+            None
+        };
         let start = q.start_line.unwrap_or(1);
         let end = q.end_line.unwrap_or(start.saturating_add(199));
         if start == 0 || end < start {
@@ -383,17 +400,58 @@ impl<'a> CodeIndex<'a> {
         )
     }
     pub fn code_drift_report(&self, q: &DriftQuery) -> Result<serde_json::Value> {
-        self.store.with_conn(|conn| {
-            let limit = q.limit.unwrap_or(100).clamp(1, 500);
-            let mut stmt=conn.prepare("SELECT event_id,seq,index_revision,document_id,path,project,kind,source_kind,indexed_hash,observed_hash,CAST(first_seen AS VARCHAR),CAST(last_seen AS VARCHAR),CAST(acknowledged_at AS VARCHAR),acknowledgement FROM code_index_drift WHERE (? IS NULL OR project=?) AND (? IS NULL OR index_revision=?) AND (? IS NULL OR seq<?) AND (? OR acknowledged_at IS NULL) ORDER BY seq DESC LIMIT ?")?;
-            let rows=stmt.query_map(params![q.project,q.project,q.index_revision,q.index_revision,q.before_seq,q.before_seq,q.include_acknowledged,(limit+1)as i64],|r|Ok(serde_json::json!({"event_id":r.get::<_,String>(0)?,"seq":r.get::<_,i64>(1)?,"index_rev":r.get::<_,i64>(2)?,"document_id":r.get::<_,String>(3)?,"path":r.get::<_,String>(4)?,"project":r.get::<_,Option<String>>(5)?,"kind":r.get::<_,String>(6)?,"source":r.get::<_,String>(7)?,"indexed_hash":r.get::<_,Option<String>>(8)?,"observed_hash":r.get::<_,Option<String>>(9)?,"first_seen":r.get::<_,String>(10)?,"last_seen":r.get::<_,String>(11)?,"acknowledged_at":r.get::<_,Option<String>>(12)?,"acknowledgement":r.get::<_,Option<String>>(13)?})))?;
-            let mut items = rows.collect::<std::result::Result<Vec<_>, _>>()?;
-            let more = items.len() > limit;
-            items.truncate(limit);
-            Ok(
-                serde_json::json!({"items":items,"has_more":more,"next_before_seq":if more{items.last().and_then(|v|v["seq"].as_i64())}else{None},"observation_log_only":true}),
-            )
-        })
+        let r = self.store.read()?;
+        let limit = q.limit.unwrap_or(100).clamp(1, 500);
+        let mut matched: Vec<(i64, serde_json::Value)> = Vec::new();
+        r.scan_each("code_index_drift", |row| {
+            let seq = cell_i64(row, "seq", 0);
+            if let Some(before) = q.before_seq
+                && seq >= before
+            {
+                return Ok(true);
+            }
+            if let Some(rev) = q.index_revision
+                && cell_i64(row, "index_revision", 0) != rev
+            {
+                return Ok(true);
+            }
+            if let Some(ref proj) = q.project
+                && cell_str(row, "project") != Some(proj.as_str())
+            {
+                return Ok(true);
+            }
+            let ack_at = cell_opt_string(row, "acknowledged_at");
+            if !q.include_acknowledged && ack_at.is_some() {
+                return Ok(true);
+            }
+            matched.push((
+                seq,
+                serde_json::json!({
+                    "event_id": cell_string(row, "event_id"),
+                    "seq": seq,
+                    "index_rev": cell_i64(row, "index_revision", 0),
+                    "document_id": cell_string(row, "document_id"),
+                    "path": cell_string(row, "path"),
+                    "project": cell_opt_string(row, "project"),
+                    "kind": cell_string(row, "kind"),
+                    "source": cell_string(row, "source_kind"),
+                    "indexed_hash": cell_opt_string(row, "indexed_hash"),
+                    "observed_hash": cell_opt_string(row, "observed_hash"),
+                    "first_seen": cell_string(row, "first_seen"),
+                    "last_seen": cell_string(row, "last_seen"),
+                    "acknowledged_at": ack_at,
+                    "acknowledgement": cell_opt_string(row, "acknowledgement"),
+                }),
+            ));
+            Ok(true)
+        })?;
+        matched.sort_by_key(|a| std::cmp::Reverse(a.0));
+        let more = matched.len() > limit;
+        let items: Vec<serde_json::Value> =
+            matched.into_iter().take(limit).map(|(_, v)| v).collect();
+        Ok(
+            serde_json::json!({"items":items,"has_more":more,"next_before_seq":if more{items.last().and_then(|v|v["seq"].as_i64())}else{None},"observation_log_only":true}),
+        )
     }
     pub fn code_drift_ack(&self, q: &DriftAck) -> Result<serde_json::Value> {
         if q.event_ids.is_empty()
@@ -405,25 +463,29 @@ impl<'a> CodeIndex<'a> {
                 "drift_ack requires 1..500 event IDs and a nonblank note up to 4096 bytes",
             ));
         }
-        self.store.with_conn(|conn| {
-            let tx = conn.transaction()?;
-            let mut changed = 0;
+        let note = q.note.trim();
+        let now = format_db_timestamp(Utc::now());
+        self.store.with_tx(|tx| {
+            let mut changed = 0usize;
             let mut seen = HashSet::new();
             for id in &q.event_ids {
                 if !seen.insert(id) {
                     continue;
                 }
-                let exists: i64 = tx.query_row(
-                    "SELECT COUNT(*) FROM code_index_drift WHERE event_id=?",
-                    [id],
-                    |r| r.get(0),
-                )?;
-                if exists != 1 {
+                let Some(row) = tx.get_by_id("code_index_drift", id)? else {
                     return Err(AppError::not_found(format!("unknown drift event {id}")));
+                };
+                if cell_str(&row, "acknowledged_at").is_none() {
+                    changed += tx.update_where(
+                        "code_index_drift",
+                        lin::query::pred::eq("id", id.as_str()),
+                        RecBuilder::new()
+                            .str("acknowledged_at", &now)
+                            .str("acknowledgement", note)
+                            .build(),
+                    )?;
                 }
-                changed+=tx.execute("UPDATE code_index_drift SET acknowledged_at=current_timestamp, acknowledgement=? WHERE event_id=? AND acknowledged_at IS NULL",params![q.note.trim(),id])?;
             }
-            tx.commit()?;
             Ok(
                 serde_json::json!({"acknowledged":changed,"requested_unique":seen.len(),"source_or_index_changed":false}),
             )
@@ -432,7 +494,337 @@ impl<'a> CodeIndex<'a> {
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+    use crate::models::Document;
+    fn reconstruct(old: &str, new: &str, diff: &serde_json::Value) -> String {
+        let a: Vec<_> = old.split_inclusive('\n').collect();
+        let b: Vec<_> = new.split_inclusive('\n').collect();
+        let mut result = String::new();
+        let mut at = 0;
+        for h in diff["edit_hunks"]["items"].as_array().unwrap() {
+            let start = h["indexed_range"]["start"].as_u64().unwrap() as usize - 1;
+            let end = h["indexed_range"]["end_exclusive"].as_u64().unwrap() as usize - 1;
+            let live_start = h["live_range"]["start"].as_u64().unwrap() as usize - 1;
+            let live_end = h["live_range"]["end_exclusive"].as_u64().unwrap() as usize - 1;
+            result.push_str(&a[at..start].concat());
+            result.push_str(&b[live_start..live_end].concat());
+            at = end;
+        }
+        result.push_str(&a[at..].concat());
+        result
+    }
+    #[test]
+    fn live_diff_separates_edits_and_keeps_half_open_coordinates() {
+        let old = "same\nold\nbridge\ntail\n";
+        let new = "same\nnew\nbridge\nadded\ntail\n";
+        let d = line_diff(old, new);
+        assert_eq!(d["edit_hunks"]["total"], 2);
+        assert_eq!(d["edit_hunks"]["items"][0]["kind"], "replace");
+        assert_eq!(d["edit_hunks"]["items"][1]["kind"], "insert");
+        assert_eq!(reconstruct(old, new, &d), new);
+        assert!(!d.to_string().contains("bridge"));
+    }
+    #[test]
+    fn live_diff_reconstructs_exhaustive_short_repeated_line_inputs() {
+        let texts: Vec<String> = (0..31)
+            .map(|n| {
+                let len = usize::BITS - (n + 1usize).leading_zeros() - 1;
+                (0..len)
+                    .map(|bit| {
+                        if (n + 1) & (1 << bit) == 0 {
+                            "a\n"
+                        } else {
+                            "b\n"
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        for old in &texts {
+            for new in &texts {
+                let d = line_diff(old, new);
+                assert_eq!(d["edit_hunks"]["exact"], true);
+                assert_eq!(reconstruct(old, new, &d), *new, "{old:?} -> {new:?}");
+                assert_eq!(d, line_diff(old, new));
+            }
+        }
+    }
+    #[test]
+    fn live_diff_preserves_final_newline_crlf_unicode_and_empty_sides() {
+        for (old, new) in [
+            ("", "雪\n"),
+            ("a\n", ""),
+            ("x", "x\n"),
+            ("x\r\n", "x\n"),
+            ("雪\n", "雪\n"),
+        ] {
+            let d = line_diff(old, new);
+            assert_eq!(reconstruct(old, new, &d), new);
+            assert_eq!(d["edit_hunks"]["total"], if old == new { 0 } else { 1 });
+        }
+    }
+    #[test]
+    fn live_diff_bounds_cells_and_hunks_without_claiming_full_precision() {
+        let old = "old\n".repeat(1100);
+        let new = "new\n".repeat(1100);
+        let d = line_diff(&old, &new);
+        assert_eq!(d["edit_hunks"]["exact"], false);
+        assert_eq!(
+            d["edit_hunks"]["fallback_reason"],
+            "lcs_cell_budget_exceeded"
+        );
+        assert_eq!(reconstruct(&old, &new, &d), new);
+        let old = (0..80)
+            .map(|n| format!("old{n}\nkeep{n}\n"))
+            .collect::<String>();
+        let new = old.replace("old", "new");
+        let d = line_diff(&old, &new);
+        assert_eq!(d["edit_hunks"]["total"], 80);
+        assert_eq!(d["edit_hunks"]["items"].as_array().unwrap().len(), 64);
+        assert_eq!(d["edit_hunks"]["truncated"], true);
+        assert_eq!(d["edit_hunks"]["exact"], true);
+    }
+    fn seed(store: &Store, path: &str, content: &str) {
+        store
+            .upsert_document(&Document {
+                id: "a".into(),
+                uri: format!("file://{path}"),
+                source_file: Some(path.into()),
+                wing: Some("p".into()),
+                content: content.into(),
+                ..Default::default()
+            })
+            .unwrap();
+        store.index_code().unwrap();
+    }
+    #[test]
+    fn encoded_live_sources_compare_decoded_text_and_expose_raw_evidence() {
+        let text = "// Привет\nfn work() {}\n";
+        let cp = encoding_rs::WINDOWS_1251.encode(text).0.into_owned();
+        let le = [
+            vec![0xff, 0xfe],
+            text.encode_utf16().flat_map(u16::to_le_bytes).collect(),
+        ]
+        .concat();
+        let be = [
+            vec![0xfe, 0xff],
+            text.encode_utf16().flat_map(u16::to_be_bytes).collect(),
+        ]
+        .concat();
+        let bom = [vec![0xef, 0xbb, 0xbf], text.as_bytes().to_vec()].concat();
+        for (bytes, encoding) in [
+            (cp, "windows-1251"),
+            (le, "utf-16le"),
+            (be, "utf-16be"),
+            (bom, "utf-8-sig"),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let db = tempfile::tempdir().unwrap();
+            let path = root.path().join("a.rs");
+            std::fs::write(&path, &bytes).unwrap();
+            let store = Store::open(&db.path().join("live.duckdb")).unwrap();
+            seed(&store, &path.display().to_string(), text);
+            let roots = vec![root.path().to_path_buf()];
+            let q = SourceQuery {
+                document_id: Some("a".into()),
+                ..Default::default()
+            };
+            let fresh = store.code_freshness(&q, &roots).unwrap();
+            assert_eq!(fresh["all_checked_unchanged"], true, "{encoding}");
+            assert_eq!(fresh["items"][0]["observed_source"]["encoding"], encoding);
+            let live = store.code_live_read(&q, &roots).unwrap();
+            assert!(live["content"].as_str().unwrap().contains("Привет"));
+            assert_eq!(live["observed_source"]["bytes"], bytes.len());
+            assert!(
+                read_live_source(&path.display().to_string(), &roots, bytes.len() - 1).is_err()
+            );
+            std::fs::write(&path, text).unwrap();
+            let recoded = store.code_live_read(&q, &roots).unwrap();
+            assert_eq!(recoded["status"], "unchanged");
+            assert_eq!(recoded["observed_hash"], live["observed_hash"]);
+            assert_ne!(
+                recoded["observed_source"]["bytes_hash"],
+                live["observed_source"]["bytes_hash"]
+            );
+            std::fs::write(&path, text.replace("work", "changed")).unwrap();
+            assert_eq!(store.code_freshness(&q, &roots).unwrap()["changed"], 1);
+        }
+    }
+
+    #[test]
+    fn live_files_are_bounded_and_drift_ack_is_atomic_persistent_and_idempotent() {
+        let root = tempfile::tempdir().unwrap();
+        let db = tempfile::tempdir().unwrap();
+        let path = root.path().join("a.rs");
+        std::fs::write(&path, "first\nold\nlast\n").unwrap();
+        let dbpath = db.path().join("drift.duckdb");
+        let store = Store::open(&dbpath).unwrap();
+        seed(&store, &path.display().to_string(), "first\nold\nlast\n");
+        let q = SourceQuery {
+            document_id: Some("a".into()),
+            ..Default::default()
+        };
+        let roots = vec![root.path().to_path_buf()];
+        assert_eq!(
+            store.code_freshness(&q, &roots).unwrap()["all_checked_unchanged"],
+            true
+        );
+        std::fs::write(&path, "first\nnew 🦀\nlast\n").unwrap();
+        let freshness = store.code_freshness(&q, &roots).unwrap();
+        assert_eq!(freshness["changed"], 1);
+        let id = freshness["items"][0]["drift_event_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let read = store
+            .code_live_read(
+                &SourceQuery {
+                    document_id: Some("a".into()),
+                    start_line: Some(2),
+                    end_line: Some(2),
+                    max_chars: Some(3),
+                    ..Default::default()
+                },
+                &roots,
+            )
+            .unwrap();
+        assert_eq!(read["content"], "new");
+        assert_eq!(read["truncated"], true);
+        assert_eq!(read["drift_event_id"], id);
+        assert_eq!(
+            store.get_document("a").unwrap().unwrap().content,
+            "first\nold\nlast\n"
+        );
+        assert!(
+            store
+                .code_drift_ack(&DriftAck {
+                    event_ids: vec![id.clone(), "unknown".into()],
+                    note: "reviewed".into()
+                })
+                .is_err()
+        );
+        assert_eq!(
+            store.code_drift_report(&DriftQuery::default()).unwrap()["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .code_drift_ack(&DriftAck {
+                    event_ids: vec![id.clone()],
+                    note: "reviewed".into()
+                })
+                .unwrap()["acknowledged"],
+            1
+        );
+        assert_eq!(
+            store
+                .code_drift_ack(&DriftAck {
+                    event_ids: vec![id.clone()],
+                    note: "must not overwrite".into()
+                })
+                .unwrap()["acknowledged"],
+            0
+        );
+        store.code_freshness(&q, &roots).unwrap();
+        assert!(
+            store.code_drift_report(&DriftQuery::default()).unwrap()["items"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        drop(store);
+        let store = Store::open(&dbpath).unwrap();
+        let report = store
+            .code_drift_report(&DriftQuery {
+                include_acknowledged: true,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(report["items"][0]["acknowledgement"], "reviewed");
+        assert_eq!(
+            store
+                .code_index_history(&history::HistoryQuery::default())
+                .unwrap()["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+    #[test]
+    fn missing_disallowed_and_malformed_sources_never_report_fresh() {
+        let root = tempfile::tempdir().unwrap();
+        let db = tempfile::tempdir().unwrap();
+        let path = root.path().join("a.rs");
+        std::fs::write(&path, "old").unwrap();
+        let store = Store::open(&db.path().join("drift.duckdb")).unwrap();
+        seed(&store, &path.display().to_string(), "old");
+        let q = SourceQuery {
+            document_id: Some("a".into()),
+            ..Default::default()
+        };
+        assert_eq!(store.code_freshness(&q, &[]).unwrap()["unavailable"], 1);
+        assert!(store.code_live_read(&q, &[]).is_err());
+        let roots = vec![root.path().to_path_buf()];
+        std::fs::write(&path, [0xff, 0xfe, 0]).unwrap();
+        assert_eq!(store.code_freshness(&q, &roots).unwrap()["unavailable"], 1);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(
+            store.code_freshness(&q, &roots).unwrap()["items"][0]["status"],
+            "missing"
+        );
+        assert_eq!(
+            store.code_live_read(&q, &roots).unwrap()["status"],
+            "missing"
+        );
+        assert_eq!(
+            store
+                .code_freshness(
+                    &SourceQuery {
+                        source: Some("stored".into()),
+                        ..q
+                    },
+                    &[]
+                )
+                .unwrap()["all_checked_unchanged"],
+            true
+        );
+    }
+    #[test]
+    fn publication_drift_has_stable_cursors_and_ack_requires_write_role() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open(&root.path().join("drift.duckdb")).unwrap();
+        seed(&store, "/p/a.rs", "fn a() {}");
+        let mut doc = store.get_document("a").unwrap().unwrap();
+        doc.content = "fn changed() {}".into();
+        store.upsert_document(&doc).unwrap();
+        store.index_code().unwrap();
+        store.delete_document("a").unwrap();
+        store.index_code().unwrap();
+        let first = store
+            .code_drift_report(&DriftQuery {
+                limit: Some(1),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(first["has_more"], true);
+        assert_eq!(first["items"][0]["kind"], "removed_from_index");
+        let second = store
+            .code_drift_report(&DriftQuery {
+                limit: Some(1),
+                before_seq: first["next_before_seq"].as_i64(),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(second["items"][0]["kind"], "modified");
+        assert!(!crate::access::AccessRole::Read.allows_tool("drift_ack"));
+        assert!(crate::access::AccessRole::Write.allows_tool("drift_ack"));
+    }
+}
 
 #[cfg(all(test, unix))]
 mod path_safety_tests {
@@ -446,9 +838,8 @@ mod path_safety_tests {
         std::fs::write(&target, "outside bytes").unwrap();
         let link = root.path().join("a.rs");
         std::os::unix::fs::symlink(&target, &link).unwrap();
-        let store = crate::testkit::open_test_store(&db.path().join("source.duckdb")).unwrap();
+        let store = Store::open(&db.path().join("source.duckdb")).unwrap();
         store
-            .documents()
             .upsert_document(&crate::models::Document {
                 id: "a".into(),
                 uri: "memory://a".into(),
@@ -457,35 +848,26 @@ mod path_safety_tests {
                 ..Default::default()
             })
             .unwrap();
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        store.index_code().unwrap();
         let q = SourceQuery {
             document_id: Some("a".into()),
             ..Default::default()
         };
         let roots = vec![root.path().to_path_buf()];
-        assert!(crate::code_index::CodeIndex::new(&store)
-            .code_live_read(&q, &roots)
-            .is_err());
-        assert_eq!(
-            crate::code_index::CodeIndex::new(&store)
-                .code_freshness(&q, &roots)
-                .unwrap()["unavailable"],
-            1
-        );
+        assert!(store.code_live_read(&q, &roots).is_err());
+        assert_eq!(store.code_freshness(&q, &roots).unwrap()["unavailable"], 1);
         std::fs::remove_file(&link).unwrap();
         let file = std::fs::File::create(&link).unwrap();
         file.set_len(4 * 1024 * 1024 + 1).unwrap();
-        assert!(crate::code_index::CodeIndex::new(&store)
-            .code_live_read(&q, &roots)
-            .unwrap_err()
-            .to_string()
-            .contains("4 MiB"));
+        assert!(
+            store
+                .code_live_read(&q, &roots)
+                .unwrap_err()
+                .to_string()
+                .contains("4 MiB")
+        );
         assert_eq!(
-            crate::code_index::CodeIndex::new(&store)
-                .code_freshness(&q, &roots)
-                .unwrap()["all_checked_unchanged"],
+            store.code_freshness(&q, &roots).unwrap()["all_checked_unchanged"],
             false
         );
     }

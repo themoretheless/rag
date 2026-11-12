@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use crate::config::Config;
 use crate::db::Store;
 
-pub use rag_store_duckdb::testkit::{scratch_dir, SeedDoc};
+pub use rag_store_duckdb::testkit::{SeedDoc, scratch_dir};
 
 /// A fresh Store in a [`scratch_dir`], removed when the test's thread ends.
 ///

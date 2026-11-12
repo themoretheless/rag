@@ -469,12 +469,12 @@ pub(super) fn merge_wiki_metadata(
             Ok(_) => {
                 return Err(AppError::config(
                     "existing wiki metadata_json is not an object; refusing to discard it while applying metadata fields",
-                ))
+                ));
             }
             Err(error) => {
                 return Err(AppError::config(format!(
                     "existing wiki metadata_json is invalid; refusing to discard it while applying metadata fields: {error}"
-                )))
+                )));
             }
         }
     };

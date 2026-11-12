@@ -23,39 +23,39 @@ pub mod refresh;
 pub use crate::config::limits::DEFAULT_MAX_DOCS;
 
 pub use analyze::{
-    analyze_corpus, AnalysisIssue, AnalysisReport, AnalyzeOptions, ArchiveCandidate, CorpusCounts,
-    CountBucket, DuplicateGroup, EmbedMismatchInfo, NearDuplicatePair, OrphanNode, SizeStats,
-    StaleWikiPage, StubInfo,
+    AnalysisIssue, AnalysisReport, AnalyzeOptions, ArchiveCandidate, CorpusCounts, CountBucket,
+    DuplicateGroup, EmbedMismatchInfo, NearDuplicatePair, OrphanNode, SizeStats, StaleWikiPage,
+    StubInfo, analyze_corpus,
 };
 pub use apply::{
-    apply_maintenance_plan, ActionOutcome, ActionOutcomeKind, ApplyMaintenancePlanReport,
-    ApplyPlanOptions,
+    ActionOutcome, ActionOutcomeKind, ApplyMaintenancePlanReport, ApplyPlanOptions,
+    apply_maintenance_plan,
 };
 pub use compress::{
-    maintain_compress, CompressL0Report, CompressMergeAction, CompressOptions,
-    MaintainCompressReport, COMPRESS_ACTION_WHITELIST, COMPRESS_LEVEL_MAX,
+    COMPRESS_ACTION_WHITELIST, COMPRESS_LEVEL_MAX, CompressL0Report, CompressMergeAction,
+    CompressOptions, MaintainCompressReport, maintain_compress,
 };
 pub use organize::{
-    maintain_organize, OrganizeMode, OrganizeOptions, OrganizeReport, RefileApplyResult,
-    RefileSuggestion,
+    OrganizeMode, OrganizeOptions, OrganizeReport, RefileApplyResult, RefileSuggestion,
+    maintain_organize,
 };
 pub use plan::{
-    action_from_parts, filter_plan, heuristic_plan, is_allowed_action, log_plan,
-    maintenance_actions_json_schema, maintenance_plan_json_schema, parse_and_filter_plan,
-    parse_plan_json, plan_maintenance, plan_with_llm, validate_action, validate_plan,
-    MaintenanceAction, MaintenanceActionKind, MaintenancePlan, MaintenancePlanItem, PlanOptions,
-    PlanSource, RejectedAction, ALLOWED_ACTIONS,
+    ALLOWED_ACTIONS, MaintenanceAction, MaintenanceActionKind, MaintenancePlan,
+    MaintenancePlanItem, PlanOptions, PlanSource, RejectedAction, action_from_parts, filter_plan,
+    heuristic_plan, is_allowed_action, log_plan, maintenance_actions_json_schema,
+    maintenance_plan_json_schema, parse_and_filter_plan, parse_plan_json, plan_maintenance,
+    plan_with_llm, validate_action, validate_plan,
 };
 pub use prompts::{PLAN_MAINTENANCE_SYSTEM, PLAN_MAINTENANCE_USER_PREFIX};
 pub use refresh::{
-    maintain_refresh, rebuild_graph_for_all_or_dirty, rebuild_wiki_index, reembed_all,
-    reembed_status, reindex_fts, GraphRebuildReport, MaintainRefreshFlags, MaintainRefreshReport,
+    GraphRebuildReport, MaintainRefreshFlags, MaintainRefreshReport, REFRESH_ACTION_WHITELIST,
     ReembedAllReport, ReembedMigrationStatus, ReembedStatus, ReindexFtsReport,
-    WikiIndexRebuildReport, REFRESH_ACTION_WHITELIST,
+    WikiIndexRebuildReport, maintain_refresh, rebuild_graph_for_all_or_dirty, rebuild_wiki_index,
+    reembed_all, reembed_status, reindex_fts,
 };
 
 // Stale wiki recompile (Karpathy layer hygiene); implementation in `crate::wiki`.
 pub use crate::wiki::{
-    find_stale_wiki, refresh_stale_wiki, RawRefreshTarget, RefreshError, RefreshStaleWikiResult,
-    StaleWikiItem,
+    RawRefreshTarget, RefreshError, RefreshStaleWikiResult, StaleWikiItem, find_stale_wiki,
+    refresh_stale_wiki,
 };

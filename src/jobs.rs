@@ -19,8 +19,8 @@ use crate::db::Store;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
 use crate::source_sync::{
-    sync_sources_nonblocking, SourceSyncCommand, SourceSyncControl, SourceSyncOutcome,
-    SourceSyncReport,
+    SourceSyncCommand, SourceSyncControl, SourceSyncOutcome, SourceSyncReport,
+    sync_sources_nonblocking,
 };
 
 pub(crate) const MAX_RETAINED_JOBS: usize = 100;

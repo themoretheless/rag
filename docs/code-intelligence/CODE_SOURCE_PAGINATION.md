@@ -15,8 +15,10 @@ responses. Single-symbol pages keep the legacy root `symbol`, `code` and
 Cursor format `cr1` binds normalized selectors, line/byte windows, container mode
 and source mode to the project-scoped captured view: global index revision,
 extractor version, document identities/fingerprints/freshness and selected-view
-symbol identities/byte bounds/build contexts. Changing a filter, ingesting a
-changed in-scope source, or publishing another revision returns `CONFLICT` with
+symbol identities/byte bounds/build contexts. Resolved selected-span identities,
+chunk ranges and unresolved IDs additionally seal that view. Changing a filter, ingesting a
+changed in-scope source, changing/removing selected chunks without a document
+revision change, or publishing another revision returns `CONFLICT` with
 `CODE_VIEW_CHANGED`; restart without a cursor. A foreign-project ingest without
 index publication does not invalidate a project-scoped view. Global publication
 may conservatively invalidate it even if the selected source did not change.
@@ -55,4 +57,9 @@ text budget. A partial page is never advertised as a complete body. There is no
 whole-response/RSS/latency guarantee or verified representative scale claim.
 Historical reads, source-mode/style CLI contracts and transformed chunk mappings
 remain open. See [base contract](CODE_READS.md) and
-[qualification](../qualification/code-cursors-2026-10-26/README.md).
+[qualification](qualification/code-cursors-2026-10-26/README.md).
+
+Derived parent/child partitions also validate UTF-8 slice boundaries and reject
+reversed cached intervals before partitioning. Invalid selected spans return an
+index-span error without unwinding through the store
+lock. Automatic malformed-cache repair remains outside this read operation.

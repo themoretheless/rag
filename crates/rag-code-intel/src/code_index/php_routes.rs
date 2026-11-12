@@ -170,10 +170,11 @@ mod tests {
             && r.method == "GET"
             && r.handler == "UserController::store"));
         assert!(doc.routes.iter().all(|r| r.binding_unverified));
-        assert!(doc
-            .routes
-            .iter()
-            .any(|r| r.route == "/write" && r.handler == "?anonymous_php_handler"));
+        assert!(
+            doc.routes
+                .iter()
+                .any(|r| r.route == "/write" && r.handler == "?anonymous_php_handler")
+        );
     }
     #[test]
     fn php_comments_strings_dynamic_paths_and_unrelated_receivers_are_excluded() {

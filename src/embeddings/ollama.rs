@@ -4,8 +4,8 @@
 //! path (`OpenAiEmbedder` against `{base}/embeddings`). This module targets the
 //! Ollama-native host root (e.g. `http://127.0.0.1:11434`).
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
 use reqwest::Client;

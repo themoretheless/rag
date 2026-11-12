@@ -1,0 +1,34 @@
+{
+  "workspace_tests": {
+    "passed": 1564,
+    "failed": 0,
+    "ignored": 1
+  },
+  "focused_php_tests_passed": 33,
+  "mcp_suites_passed": 8,
+  "context_mcp_checks_passed": 15,
+  "versions": {
+    "index_format": 76,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "source_sha256": {
+    "src/code_index.rs": "2d09c650331343d1cfff052b465aaf7f923ee0db7f5f270a518f4285ac7dad31",
+    "src/code_index/history.rs": "af816e2192d64b41282a9d17e74dfb56dbe78b8ccb63ecb4eba66a312bfaf816",
+    "src/code_index/references.rs": "4ce0da5ada22b752c78302104d95dd04f6a73f865f1e332b06be1bea0a015aa3",
+    "src/code_index/resolution_cache.rs": "21357ad608ac04ad55b362a1c141e7e6b404de8ea2a9d656c1003491e9d7229a",
+    "src/code_index/php_names.rs": "0d754d6e101b63986920f36feee810c4c4886b20c34b9ca1368c9e6cb4c9b3c9",
+    "src/code_index/php_names/hierarchy.rs": "096839c4093305efbe9bc9e4cc5c78e617a5a569f3dea3f25d8749f8701cdfe1",
+    "src/code_index/php_names/resolve.rs": "5ca4176721c2e03a598973267c23e7ccca825d432bcbcfeecabb816f2ffe56df",
+    "src/code_index/php_names/contexts.rs": "fa0dca5d08f8bf1868814d284a05f0389dc371facf4cfc7422eafcc0c87f5736",
+    "src/code_index/php_names/tests.rs": "00f9d66a2579ff0927d0b0a3d959a26f6a7b5d6fd6416665b594f3cb201dc3c8",
+    "src/code_index/php_names/traits.rs": "c1817e253208be7ba9b895b36a476e2c90907ac0798c665610e0131e7c89e206",
+    "src/code_index/php_names/capture.rs": "8d8bc018f6c2c07f065dcfecd23770f14cba1c55a2e479e0c9cf1bc752b09e52",
+    "scripts/smoke_php_trait_contexts.py": "da424236f68ed38311d8bbf305f5264f65ee8a40a6f7a4a769bf650ca3bcece4"
+  },
+  "shared_checkout": true,
+  "frozen_checkout_proven": false,
+  "compiler_runtime_verified": false,
+  "context_correlation_proven": false,
+  "deployment_proven": false
+}

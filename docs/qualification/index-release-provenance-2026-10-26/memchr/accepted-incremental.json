@@ -1,0 +1,3424 @@
+{
+  "contract_version": 1,
+  "status": "qualified_workloads",
+  "qualification_only": true,
+  "binary_sha256": "dab96adb738e01528410810122a0a7002edfa5ae1090761963be0201be3ea3fe",
+  "runner_sha256": "677409a904bde5eba6be3bfdac9cb54ee34fc5e8674ebb09f4cbb888bf7676c7",
+  "client_sha256": "78f44eb3b5812426c7d78f0d3f919258c5e7a732c071de17dc73716a2dff3309",
+  "build_manifest": {
+    "contract_version": 1,
+    "status": "built_verified",
+    "profile": "release",
+    "binary_path": "/private/tmp/rag-index-release-20261026/bin/rag-mcp",
+    "binary_sha256": "dab96adb738e01528410810122a0a7002edfa5ae1090761963be0201be3ea3fe",
+    "source_tree_sha256": "06d514e6540b8df962ca84333f75e5e8f6a2660904e6dc9150d7e5f25c248659",
+    "source_inputs_sha256": "4aa3a01ad66bdcb0ed9cdc1cba3bab374de603b577abc39b51132bc1895ae9cf",
+    "cargo_lock_sha256": "bec738712304fba10e5fc85af59ca588df50024c39b85c70fadcc9665266363b",
+    "compiler_artifact": {
+      "reason": "compiler-artifact",
+      "package_id": "path+file:///private/tmp/rag-index-release-20261026/source-0#rag-mcp@0.1.0",
+      "manifest_path": "/private/tmp/rag-index-release-20261026/source-0/Cargo.toml",
+      "target": {
+        "kind": [
+          "bin"
+        ],
+        "crate_types": [
+          "bin"
+        ],
+        "name": "rag-mcp",
+        "src_path": "/private/tmp/rag-index-release-20261026/source-0/src/main.rs",
+        "edition": "2021",
+        "doc": true,
+        "doctest": false,
+        "test": true
+      },
+      "profile": {
+        "opt_level": "3",
+        "debuginfo": 0,
+        "debug_assertions": false,
+        "overflow_checks": false,
+        "test": false
+      },
+      "features": [
+        "default",
+        "tokenizers"
+      ],
+      "filenames": [
+        "/private/tmp/rag-index-release-20261026/target/release/rag-mcp"
+      ],
+      "executable": "/private/tmp/rag-index-release-20261026/target/release/rag-mcp",
+      "fresh": false
+    },
+    "command": [
+      "/Users/themoretheless/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/cargo",
+      "--config",
+      "build.rustflags=[]",
+      "--config",
+      "build.rustc-wrapper=\"\"",
+      "--config",
+      "build.rustc-workspace-wrapper=\"\"",
+      "--config",
+      "profile.release.opt-level=3",
+      "--config",
+      "profile.release.debug-assertions=false",
+      "--config",
+      "profile.release.lto=\"thin\"",
+      "--config",
+      "profile.release.codegen-units=1",
+      "--config",
+      "profile.release.strip=\"debuginfo\"",
+      "build",
+      "--release",
+      "--locked",
+      "--offline",
+      "--bin",
+      "rag-mcp",
+      "--message-format=json-render-diagnostics",
+      "--jobs",
+      "2",
+      "--target-dir",
+      "/private/tmp/rag-index-release-20261026/target"
+    ],
+    "tools": {
+      "cargo": {
+        "path": "/Users/themoretheless/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/cargo",
+        "sha256": "4a558ead373f1b3f995d542cecd76e8455e9ff334344a2f480c8cb4387976174"
+      },
+      "rustc": {
+        "path": "/Users/themoretheless/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/rustc",
+        "sha256": "39d1222c09ff1b6d63097d7c143c8bcc9cfd2323d894f109bb360347d053b368"
+      },
+      "rustdoc": {
+        "path": "/Users/themoretheless/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/rustdoc",
+        "sha256": "2a6f0907f3f94ce68ce4aac4559f17c70d6c17f913eedf930b1db4de9531cce3"
+      }
+    },
+    "rustc_verbose_version": "rustc 1.101.0-nightly (4ebd25825 2026-10-15)\nbinary: rustc\ncommit-hash: 4ebd258257737d5b7635c116fa7d281627a7e937\ncommit-date: 2026-10-15\nhost: aarch64-apple-darwin\nrelease: 1.101.0-nightly\nLLVM version: 23.1.4",
+    "cargo_version": "cargo 1.101.0-nightly (3960fa69b 2026-10-12)",
+    "cargo_json_sha256": "fb3c8aa8abaeaa0854ba5f27a6cfda5ddf3245c7d83056e0c7a3070a18aee684",
+    "cargo_stderr_sha256": "12f6c7c97e84f8a844b3045bfe767c21694053e34c044d6369d3faa7806db0a0",
+    "source_unchanged_during_build": true,
+    "compiler_executables_unchanged": true,
+    "driver_sha256": "9dc7c4db0077d14b4d9143bd10ca2418de23fcb1835ae8beda04b7bd54581ef9",
+    "runtime_qualified": false,
+    "performance_qualified": false,
+    "production_binary_replaced": false,
+    "limitations": [
+      "source content identity, not a clean-commit or hermetic bit-reproducibility claim",
+      "registry dependencies use locked cached Cargo inputs; external SDK and native toolchain are not fully hashed",
+      "successful release build is not runtime/workload/performance qualification"
+    ]
+  },
+  "release_manifest_identity_matches": true,
+  "recipe_sha256": "8300a504eb8db3f7ad00fab758ed2967d13a13813b219a90228a98c9e3f4e759",
+  "recipe": {
+    "contract_version": 1,
+    "name": "memchr-bd6068c30e9074a90c285e47912fa0b047d07597",
+    "upstream_commit": "bd6068c30e9074a90c285e47912fa0b047d07597",
+    "input_recipe": "Cargo.toml and src/**/*.rs; captured default-feature library configuration",
+    "expected_inputs": {
+      "Cargo.toml": "acd93639cfd6bef0e806a15f9fc7d6eb0117ed4cac44d5bc9c8601d1fc357435",
+      "src/arch/aarch64/memchr.rs": "5bb70f915084e629d940dbc322f5b9096b2e658cf63fea8a2f6e7550412e73a0",
+      "src/arch/aarch64/mod.rs": "44cd1a614bd66f1e66fc86c541d3c3b8d3a14a644c13e8bf816df3f555eac2d4",
+      "src/arch/aarch64/neon/memchr.rs": "e8c00b8fb2c7e2711832ae3cedefe59f32ebedd7dfa4d0ec6de2a566c979daea",
+      "src/arch/aarch64/neon/mod.rs": "eab6d56c2b2354db4ee395f40282cd49f97e2ab853547be5de6e65fbe1b2f634",
+      "src/arch/aarch64/neon/packedpair.rs": "32d3e4cd0dd9b6c8382e5308cbd896d20242c90b12862c44a5de6a8b4d6126df",
+      "src/arch/all/memchr.rs": "b0b1214aa573ed5d02ae62a77c42c773065566b50274d4096e37817d65ab1594",
+      "src/arch/all/mod.rs": "05f3fc2b069682eb1545fc6366d167bb620a454365dac8b8dd6cde6cd64de18a",
+      "src/arch/all/packedpair/default_rank.rs": "abffd1b5b8b7a3be95c03dd1105b905c246a379854dc56f1e846ea7c4408f2c7",
+      "src/arch/all/packedpair/mod.rs": "3692afca650585fbc625ff43e0e415d298605f56bea8134bcb5a2decac46142b",
+      "src/arch/all/rabinkarp.rs": "06038cce1cbead7b088e541ba41bcc1c095c34bde483b7df6ad9f77a49c1063c",
+      "src/arch/all/shiftor.rs": "0d79117f52a1e4795843603a3bb0b45397df4ad5e4184bbc923658dab9dc3b5f",
+      "src/arch/all/twoway.rs": "0b27eb1cd7402c1375a50466f8f66a68cb2806c3f69a647340b2759793eed4f8",
+      "src/arch/generic/memchr.rs": "31b11f07c5f24f02cb53715a6e508665b45943ddeebc05a243b88e728502dbe0",
+      "src/arch/generic/mod.rs": "1dd75f61e0ea2563b8205a08aaa7b55500130aa331d18b9e9f995724b66c7a39",
+      "src/arch/generic/packedpair.rs": "9c67ffe618eb8ae004a9777759db7a4b4b9c04393c23ee14eabf8747a2b16dc2",
+      "src/arch/mod.rs": "ca3960b7e2ed28d1b3c121710a870430531aad792f64d4dcb4ca4709d6cbda30",
+      "src/arch/wasm32/memchr.rs": "d88ac79f891d8530f505f5035062d3da274a05d66c611480c75430d52709d052",
+      "src/arch/wasm32/mod.rs": "a20377aa8fe07d68594879101dc73061e4f51d9c8d812b593b1f376e3c8add79",
+      "src/arch/wasm32/simd128/memchr.rs": "bac2c4c43fe710c83a6f2b1118fede043be89dd821d4b532907f129f09fdb5cf",
+      "src/arch/wasm32/simd128/mod.rs": "c157b373faedbfd65323be432e25bc411d97aa1b7bc58e76048614c7b2bf3bf6",
+      "src/arch/wasm32/simd128/packedpair.rs": "288ba6e5eee6a7a8e5e45c64cff1aa5d72d996c2a6bc228be372c75789f08e45",
+      "src/arch/x86_64/avx2/memchr.rs": "576ec0c30f49874f7fd9f6caeb490d56132c0fbbaa4d877b1aa532cafce19323",
+      "src/arch/x86_64/avx2/mod.rs": "0033d1b712d0b10f0f273ef9aa8caa53e05e49f4c56a64f39af0b9df97eec584",
+      "src/arch/x86_64/avx2/packedpair.rs": "87b69cb4301815906127db4f6370f572c7c5d5dad35c0946c00ad888dbcaec8c",
+      "src/arch/x86_64/memchr.rs": "4cf0611c926c3016d1b640880ef14e5654a8d1c1b480fe9a5965956be7eeeeef",
+      "src/arch/x86_64/mod.rs": "61b2aa876942fd3e78714c2ae21e356c8634545c06995020f443fa50218df027",
+      "src/arch/x86_64/sse2/memchr.rs": "0de0444e26d885eaf866220578752aac871e03bebee7b4f5de7fe8a35f5fa97f",
+      "src/arch/x86_64/sse2/mod.rs": "38b70ae52a64ec974dbb91d04d6ca8013d9e06d1fe4af852206bbc2faf1c59aa",
+      "src/arch/x86_64/sse2/packedpair.rs": "ad893c5ab9525966693e742673fb666f54ff9102949fc91c5e61642c8ad2f110",
+      "src/cow.rs": "2b053e393d3841f780425b3b0da5bec4f187603fa7c271b045ecb7d885b23395",
+      "src/ext.rs": "210f89d1e32211bc64414cbd56e97b4f56ce8a8832d321d77a9fe519634e27ea",
+      "src/lib.rs": "614f778a41e88a29ea0ceb8e92c839dbb6b5a61c967f8bfd962975e18f932c71",
+      "src/macros.rs": "3e4b39252bfa471fad384160a43f113ebfec7bec46a85d16f006622881dd2081",
+      "src/memchr.rs": "6ae779ec5d00f443075316e0105edf30b489a38e2e96325bec14ccecd014145b",
+      "src/memmem/mod.rs": "d869159f0d0c1915d7acc42a6a4aa3c97c049ddc043e6566afeb78ad290995d1",
+      "src/memmem/searcher.rs": "da0581eabbd3a27127e578f4e178e519399b1dddba7856f5b1968d69f096efd5",
+      "src/tests/memchr/mod.rs": "269f8e4b4f7f5ea458f27a3c174eb1020ffb2484eeba9464170beb51747df69b",
+      "src/tests/memchr/naive.rs": "6a0bee033e5edfb5b1d5769a5fa1c78388f7e9ff7bb91cb67f0ad029289e00e7",
+      "src/tests/memchr/prop.rs": "1854eea2338c405fe4635aac430f51e10d2069cd37a7489ddaff47da95f8720b",
+      "src/tests/mod.rs": "7cec8f809e279310a465c6a7725087970f219a676cc76c83de30c695bb490740",
+      "src/tests/packedpair.rs": "b02ec4fbb61a8653cb5f2268c31bc9168b8043347f2abdcc74081acf83b98e15",
+      "src/tests/substring/mod.rs": "c7660d10749363ac4687e7da2b5fda60768230425df8ba416c0c28b8d56a5c74",
+      "src/tests/substring/naive.rs": "df6f55d165382b8a53762ba4c324926cac13ebc62cde1805f4ce08740b326483",
+      "src/tests/substring/prop.rs": "38c15992609b5681a95d838ae6f2933e00a1219f2c971bfba245f96e0729fcdc",
+      "src/vector.rs": "b3d4f4e30456eb2d32e139cee0dcd6fc5866db3f8feb75cfca413df9a25778cc"
+    },
+    "phases": [
+      {
+        "name": "body",
+        "edits": [
+          {
+            "path": "src/arch/all/rabinkarp.rs",
+            "before": "    haystack.len() < 16\n}",
+            "after": "    let length = haystack.len();\n    length < 16\n}"
+          }
+        ]
+      },
+      {
+        "name": "signature",
+        "edits": [
+          {
+            "path": "src/arch/all/rabinkarp.rs",
+            "before": "fn is_fast(haystack: &[u8], _needle: &[u8])",
+            "after": "fn is_fast(haystack: &[u8], _needle: &[u8], _benchmark_tag: ())"
+          },
+          {
+            "path": "src/memmem/searcher.rs",
+            "before": "if rabinkarp::is_fast(haystack, needle) {\n        searcher.rabinkarp.find(haystack, needle)\n    } else {\n        searcher.kind.two_way.find",
+            "after": "if rabinkarp::is_fast(haystack, needle, ()) {\n        searcher.rabinkarp.find(haystack, needle)\n    } else {\n        searcher.kind.two_way.find"
+          },
+          {
+            "path": "src/memmem/searcher.rs",
+            "before": "if rabinkarp::is_fast(haystack, needle) {\n        searcher.rabinkarp.find(haystack, needle)\n    } else {\n        let TwoWayWithPrefilter",
+            "after": "if rabinkarp::is_fast(haystack, needle, ()) {\n        searcher.rabinkarp.find(haystack, needle)\n    } else {\n        let TwoWayWithPrefilter"
+          },
+          {
+            "path": "src/memmem/searcher.rs",
+            "before": "if rabinkarp::is_fast(haystack, needle) {\n                    self.rabinkarp.rfind",
+            "after": "if rabinkarp::is_fast(haystack, needle, ()) {\n                    self.rabinkarp.rfind"
+          }
+        ]
+      },
+      {
+        "name": "manifest_metadata",
+        "edits": [
+          {
+            "path": "Cargo.toml",
+            "append": "\n[package.metadata.index_benchmark]\nnonce=1\n"
+          }
+        ]
+      }
+    ]
+  },
+  "source_inputs": {
+    "Cargo.toml": "acd93639cfd6bef0e806a15f9fc7d6eb0117ed4cac44d5bc9c8601d1fc357435",
+    "src/arch/aarch64/memchr.rs": "5bb70f915084e629d940dbc322f5b9096b2e658cf63fea8a2f6e7550412e73a0",
+    "src/arch/aarch64/mod.rs": "44cd1a614bd66f1e66fc86c541d3c3b8d3a14a644c13e8bf816df3f555eac2d4",
+    "src/arch/aarch64/neon/memchr.rs": "e8c00b8fb2c7e2711832ae3cedefe59f32ebedd7dfa4d0ec6de2a566c979daea",
+    "src/arch/aarch64/neon/mod.rs": "eab6d56c2b2354db4ee395f40282cd49f97e2ab853547be5de6e65fbe1b2f634",
+    "src/arch/aarch64/neon/packedpair.rs": "32d3e4cd0dd9b6c8382e5308cbd896d20242c90b12862c44a5de6a8b4d6126df",
+    "src/arch/all/memchr.rs": "b0b1214aa573ed5d02ae62a77c42c773065566b50274d4096e37817d65ab1594",
+    "src/arch/all/mod.rs": "05f3fc2b069682eb1545fc6366d167bb620a454365dac8b8dd6cde6cd64de18a",
+    "src/arch/all/packedpair/default_rank.rs": "abffd1b5b8b7a3be95c03dd1105b905c246a379854dc56f1e846ea7c4408f2c7",
+    "src/arch/all/packedpair/mod.rs": "3692afca650585fbc625ff43e0e415d298605f56bea8134bcb5a2decac46142b",
+    "src/arch/all/rabinkarp.rs": "06038cce1cbead7b088e541ba41bcc1c095c34bde483b7df6ad9f77a49c1063c",
+    "src/arch/all/shiftor.rs": "0d79117f52a1e4795843603a3bb0b45397df4ad5e4184bbc923658dab9dc3b5f",
+    "src/arch/all/twoway.rs": "0b27eb1cd7402c1375a50466f8f66a68cb2806c3f69a647340b2759793eed4f8",
+    "src/arch/generic/memchr.rs": "31b11f07c5f24f02cb53715a6e508665b45943ddeebc05a243b88e728502dbe0",
+    "src/arch/generic/mod.rs": "1dd75f61e0ea2563b8205a08aaa7b55500130aa331d18b9e9f995724b66c7a39",
+    "src/arch/generic/packedpair.rs": "9c67ffe618eb8ae004a9777759db7a4b4b9c04393c23ee14eabf8747a2b16dc2",
+    "src/arch/mod.rs": "ca3960b7e2ed28d1b3c121710a870430531aad792f64d4dcb4ca4709d6cbda30",
+    "src/arch/wasm32/memchr.rs": "d88ac79f891d8530f505f5035062d3da274a05d66c611480c75430d52709d052",
+    "src/arch/wasm32/mod.rs": "a20377aa8fe07d68594879101dc73061e4f51d9c8d812b593b1f376e3c8add79",
+    "src/arch/wasm32/simd128/memchr.rs": "bac2c4c43fe710c83a6f2b1118fede043be89dd821d4b532907f129f09fdb5cf",
+    "src/arch/wasm32/simd128/mod.rs": "c157b373faedbfd65323be432e25bc411d97aa1b7bc58e76048614c7b2bf3bf6",
+    "src/arch/wasm32/simd128/packedpair.rs": "288ba6e5eee6a7a8e5e45c64cff1aa5d72d996c2a6bc228be372c75789f08e45",
+    "src/arch/x86_64/avx2/memchr.rs": "576ec0c30f49874f7fd9f6caeb490d56132c0fbbaa4d877b1aa532cafce19323",
+    "src/arch/x86_64/avx2/mod.rs": "0033d1b712d0b10f0f273ef9aa8caa53e05e49f4c56a64f39af0b9df97eec584",
+    "src/arch/x86_64/avx2/packedpair.rs": "87b69cb4301815906127db4f6370f572c7c5d5dad35c0946c00ad888dbcaec8c",
+    "src/arch/x86_64/memchr.rs": "4cf0611c926c3016d1b640880ef14e5654a8d1c1b480fe9a5965956be7eeeeef",
+    "src/arch/x86_64/mod.rs": "61b2aa876942fd3e78714c2ae21e356c8634545c06995020f443fa50218df027",
+    "src/arch/x86_64/sse2/memchr.rs": "0de0444e26d885eaf866220578752aac871e03bebee7b4f5de7fe8a35f5fa97f",
+    "src/arch/x86_64/sse2/mod.rs": "38b70ae52a64ec974dbb91d04d6ca8013d9e06d1fe4af852206bbc2faf1c59aa",
+    "src/arch/x86_64/sse2/packedpair.rs": "ad893c5ab9525966693e742673fb666f54ff9102949fc91c5e61642c8ad2f110",
+    "src/cow.rs": "2b053e393d3841f780425b3b0da5bec4f187603fa7c271b045ecb7d885b23395",
+    "src/ext.rs": "210f89d1e32211bc64414cbd56e97b4f56ce8a8832d321d77a9fe519634e27ea",
+    "src/lib.rs": "614f778a41e88a29ea0ceb8e92c839dbb6b5a61c967f8bfd962975e18f932c71",
+    "src/macros.rs": "3e4b39252bfa471fad384160a43f113ebfec7bec46a85d16f006622881dd2081",
+    "src/memchr.rs": "6ae779ec5d00f443075316e0105edf30b489a38e2e96325bec14ccecd014145b",
+    "src/memmem/mod.rs": "d869159f0d0c1915d7acc42a6a4aa3c97c049ddc043e6566afeb78ad290995d1",
+    "src/memmem/searcher.rs": "da0581eabbd3a27127e578f4e178e519399b1dddba7856f5b1968d69f096efd5",
+    "src/tests/memchr/mod.rs": "269f8e4b4f7f5ea458f27a3c174eb1020ffb2484eeba9464170beb51747df69b",
+    "src/tests/memchr/naive.rs": "6a0bee033e5edfb5b1d5769a5fa1c78388f7e9ff7bb91cb67f0ad029289e00e7",
+    "src/tests/memchr/prop.rs": "1854eea2338c405fe4635aac430f51e10d2069cd37a7489ddaff47da95f8720b",
+    "src/tests/mod.rs": "7cec8f809e279310a465c6a7725087970f219a676cc76c83de30c695bb490740",
+    "src/tests/packedpair.rs": "b02ec4fbb61a8653cb5f2268c31bc9168b8043347f2abdcc74081acf83b98e15",
+    "src/tests/substring/mod.rs": "c7660d10749363ac4687e7da2b5fda60768230425df8ba416c0c28b8d56a5c74",
+    "src/tests/substring/naive.rs": "df6f55d165382b8a53762ba4c324926cac13ebc62cde1805f4ce08740b326483",
+    "src/tests/substring/prop.rs": "38c15992609b5681a95d838ae6f2933e00a1219f2c971bfba245f96e0729fcdc",
+    "src/vector.rs": "b3d4f4e30456eb2d32e139cee0dcd6fc5866db3f8feb75cfca413df9a25778cc"
+  },
+  "mode": "incremental",
+  "preflight": {
+    "blocking_processes": [
+      {
+        "pid": 411,
+        "cpu_percent": 51.4,
+        "command": "WindowServer",
+        "compiler": false
+      },
+      {
+        "pid": 525,
+        "cpu_percent": 83.0,
+        "command": "mds_stores",
+        "compiler": false
+      },
+      {
+        "pid": 14339,
+        "cpu_percent": 25.2,
+        "command": "Perplexity",
+        "compiler": false
+      },
+      {
+        "pid": 62493,
+        "cpu_percent": 32.5,
+        "command": "Kimi Helper (Renderer)",
+        "compiler": false
+      },
+      {
+        "pid": 94044,
+        "cpu_percent": 46.1,
+        "command": "Antigravity Helper (Renderer)",
+        "compiler": false
+      }
+    ],
+    "quiet": false,
+    "sampled_at_unix": 1792985268.0713868,
+    "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+  },
+  "controls": [
+    {
+      "case": "cold_ingest_and_index",
+      "before": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 51.8,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 525,
+            "cpu_percent": 79.7,
+            "command": "mds_stores",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 30.5,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 46.9,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985268.234761,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "after": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 51.2,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 40.0,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 42.7,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985273.197898,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      }
+    },
+    {
+      "case": "warm_noop",
+      "before": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 40.2,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 5666,
+            "cpu_percent": 33.8,
+            "command": "(node)",
+            "compiler": false
+          },
+          {
+            "pid": 5671,
+            "cpu_percent": 35.3,
+            "command": "(node)",
+            "compiler": false
+          },
+          {
+            "pid": 28578,
+            "cpu_percent": 63.2,
+            "command": "trustd",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 40.9,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 74855,
+            "cpu_percent": 34.5,
+            "command": "ChatGPT",
+            "compiler": false
+          },
+          {
+            "pid": 74974,
+            "cpu_percent": 25.2,
+            "command": "Codex (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 74975,
+            "cpu_percent": 29.1,
+            "command": "codex",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 35.3,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985277.6099,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "after": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 45.7,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 28578,
+            "cpu_percent": 55.2,
+            "command": "trustd",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 41.5,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 74855,
+            "cpu_percent": 26.1,
+            "command": "ChatGPT",
+            "compiler": false
+          },
+          {
+            "pid": 74975,
+            "cpu_percent": 29.0,
+            "command": "codex",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 33.3,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985277.6860118,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      }
+    },
+    {
+      "case": "body",
+      "before": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 43.5,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 5878,
+            "cpu_percent": 52.9,
+            "command": "(Python)",
+            "compiler": false
+          },
+          {
+            "pid": 5881,
+            "cpu_percent": 26.1,
+            "command": "node",
+            "compiler": false
+          },
+          {
+            "pid": 28578,
+            "cpu_percent": 62.2,
+            "command": "trustd",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 55.0,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 74855,
+            "cpu_percent": 54.7,
+            "command": "ChatGPT",
+            "compiler": false
+          },
+          {
+            "pid": 74974,
+            "cpu_percent": 138.7,
+            "command": "Codex (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 74975,
+            "cpu_percent": 42.6,
+            "command": "codex",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 42.7,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985281.9667819,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "after": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 43.4,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 5967,
+            "cpu_percent": 207.5,
+            "command": "Kimi Helper",
+            "compiler": false
+          },
+          {
+            "pid": 5968,
+            "cpu_percent": 101.4,
+            "command": "Kimi Helper",
+            "compiler": false
+          },
+          {
+            "pid": 6034,
+            "cpu_percent": 94.5,
+            "command": "top",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 25.3,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 41.7,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985286.042613,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      }
+    },
+    {
+      "case": "signature",
+      "before": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 43.2,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 5967,
+            "cpu_percent": 67.6,
+            "command": "Kimi Helper",
+            "compiler": false
+          },
+          {
+            "pid": 5968,
+            "cpu_percent": 99.7,
+            "command": "Kimi Helper",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 39.5,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985290.380308,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "after": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 40.6,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 712,
+            "cpu_percent": 44.0,
+            "command": "FindMyWidgetItems",
+            "compiler": false
+          },
+          {
+            "pid": 5967,
+            "cpu_percent": 113.4,
+            "command": "Kimi Helper",
+            "compiler": false
+          },
+          {
+            "pid": 5968,
+            "cpu_percent": 100.0,
+            "command": "Kimi Helper",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 41.1,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985294.5137348,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      }
+    },
+    {
+      "case": "manifest_metadata",
+      "before": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 48.0,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 5967,
+            "cpu_percent": 108.0,
+            "command": "Kimi Helper",
+            "compiler": false
+          },
+          {
+            "pid": 74855,
+            "cpu_percent": 26.0,
+            "command": "ChatGPT",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 31.5,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985298.8570392,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "after": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 43.2,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 5967,
+            "cpu_percent": 111.8,
+            "command": "Kimi Helper",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 40.0,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985302.915827,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      }
+    }
+  ],
+  "records": [
+    {
+      "case": "cold_ingest_and_index",
+      "steps": [
+        {
+          "operation": "ingest_file",
+          "path": "Cargo.toml",
+          "ms": 17.932042,
+          "result": {
+            "document_id": "c8f5a8b3-80b5-4afd-ae41-21068129b66d",
+            "chunk_count": 6,
+            "node_id": "a2855040-60dd-4ca1-a7e3-7d0a5e389ccf",
+            "edge_count": 2,
+            "content_hash": "942ecb2eb798430029c4d883649eb72031a75709239c77eb0fdb340a7fc327d3",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/aarch64/memchr.rs",
+          "ms": 9.22625,
+          "result": {
+            "document_id": "3b28f584-835c-4ea8-b719-aab31dd71568",
+            "chunk_count": 18,
+            "node_id": "c8a57a1d-cbcd-4b88-891d-01428272f2a8",
+            "edge_count": 2,
+            "content_hash": "9ee89f847c5c4c53c51cc7054f661fc251ef18a3d0e3b4cdd13190c2c895a058",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/aarch64/mod.rs",
+          "ms": 6.7525,
+          "result": {
+            "document_id": "ab488daf-3314-43c8-b1f0-42571ed2e572",
+            "chunk_count": 5,
+            "node_id": "119ac8e3-ac66-4c8f-832a-f3c0ec2dd746",
+            "edge_count": 2,
+            "content_hash": "27b4b25fa27972906dbe8a210454dc5b5355d4b9c179bd4f31c741d1e7afbcc3",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/aarch64/neon/memchr.rs",
+          "ms": 14.793416,
+          "result": {
+            "document_id": "6bda5f9d-bebb-4151-ad55-8130ffdbf1a8",
+            "chunk_count": 72,
+            "node_id": "5f872028-2fa4-426e-b0c1-3d93e6d7530e",
+            "edge_count": 2,
+            "content_hash": "fa8828198704c6e0c213d4d3ed25b2090b88aad8e1c60837d4f2d8c8712b74ec",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/aarch64/neon/mod.rs",
+          "ms": 7.053583,
+          "result": {
+            "document_id": "dca22875-f181-43f5-bb93-64b0e288a7ed",
+            "chunk_count": 5,
+            "node_id": "55de6765-e9e1-4068-9c0d-1c8a9f85d3d1",
+            "edge_count": 2,
+            "content_hash": "3018a87755ecb94979ff952c632d9eb089e09f0883e9b08812fdaf05cfc205e3",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/aarch64/neon/packedpair.rs",
+          "ms": 8.499834,
+          "result": {
+            "document_id": "4a8a1e49-8522-48f8-b63a-140e772ab83a",
+            "chunk_count": 18,
+            "node_id": "c77eeb55-cb92-42f8-bee6-10a419c9d4a2",
+            "edge_count": 2,
+            "content_hash": "bb0520eab1d70336d8f5a5ed3bba5150f225bc38a4f2f62f1ee58a70bb2b4d5c",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/all/memchr.rs",
+          "ms": 15.266541,
+          "result": {
+            "document_id": "101129f7-8f15-4233-9bd2-fb738429e4d3",
+            "chunk_count": 76,
+            "node_id": "065e79c2-a2ff-412d-b12d-91e1be9de77c",
+            "edge_count": 2,
+            "content_hash": "82b43cbf166b211e82b4f7c12618be88efcc5c8b6fc032716c5bd58b9eea43e0",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/all/mod.rs",
+          "ms": 9.446875,
+          "result": {
+            "document_id": "2d57150f-4336-46e2-b6f7-f01b90a8e7c9",
+            "chunk_count": 29,
+            "node_id": "62d18fae-3fb9-41a2-aec3-1f2abdba13b5",
+            "edge_count": 2,
+            "content_hash": "7d36f2e0c41153619afd882c5508d2f3738f6f14e7811552242571e854756d1b",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/all/packedpair/default_rank.rs",
+          "ms": 8.635541,
+          "result": {
+            "document_id": "fa1b0394-2284-4412-b8ca-3460e8bdb047",
+            "chunk_count": 8,
+            "node_id": "0d37a1fb-0d90-4c5e-8f6c-95f4de73b447",
+            "edge_count": 2,
+            "content_hash": "1ebd5cc1c22e116ea7212b935ec5f027341d4d784b02f1cd08d4c2e092d97422",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/all/packedpair/mod.rs",
+          "ms": 9.933666,
+          "result": {
+            "document_id": "6a55759f-2045-47ab-b37a-47014d4e8d08",
+            "chunk_count": 37,
+            "node_id": "b51bed08-cd68-4888-bda9-48f9b44822ee",
+            "edge_count": 2,
+            "content_hash": "6d4d30686992caeb606e90f28280b4cd870a26663afb4a317d132e5a34a4f34e",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/all/rabinkarp.rs",
+          "ms": 10.763458,
+          "result": {
+            "document_id": "a3f61c09-a39a-4520-a3e9-5c8b18a659ff",
+            "chunk_count": 37,
+            "node_id": "f5914aca-b29c-449f-9b62-0d722b1be570",
+            "edge_count": 2,
+            "content_hash": "176af8e1d35113e72b0491e5647cfbf39d6254940d189caac85d37c8d60c48eb",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/all/shiftor.rs",
+          "ms": 7.991375,
+          "result": {
+            "document_id": "dbfd698c-169e-4982-9ab1-f9939e8df412",
+            "chunk_count": 10,
+            "node_id": "b5bab884-5fb9-4cdb-916b-f7b9a9f8d289",
+            "edge_count": 2,
+            "content_hash": "164864cc8432ce8aaded0739d1df54dd2a1cb1de43c6ac3aca696880caa3baa6",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/all/twoway.rs",
+          "ms": 13.443208,
+          "result": {
+            "document_id": "82395ffc-0e67-4c29-a47e-4c0a8313cde2",
+            "chunk_count": 72,
+            "node_id": "b8c5fcd6-bf0d-45ea-96f5-7ad569fa7b4a",
+            "edge_count": 2,
+            "content_hash": "5bd50cd38c6d1816c3ff76dc9bdc747d00a77354c49776de70ab5399bae20c52",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/generic/memchr.rs",
+          "ms": 16.850042,
+          "result": {
+            "document_id": "8a37edc9-339a-4352-b08e-721def1f54b9",
+            "chunk_count": 89,
+            "node_id": "97e2ab86-1d39-46c8-b5a6-8267bb8d0225",
+            "edge_count": 2,
+            "content_hash": "c2b86279373bfdfa310b9b00bb390d2fa433c56f9fa97fa7ee9377d8653e05e9",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/generic/mod.rs",
+          "ms": 6.999125,
+          "result": {
+            "document_id": "5079d319-5301-4765-a97d-7e862519bde4",
+            "chunk_count": 5,
+            "node_id": "1f82127c-dce9-4024-9548-486c9107accf",
+            "edge_count": 2,
+            "content_hash": "e9a5614180c4e29c99dd5ca758b36289610d4e460517ba8507fe4bfc686f369c",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/generic/packedpair.rs",
+          "ms": 8.495833,
+          "result": {
+            "document_id": "f593a551-0ca2-4bd5-96e1-389ee2e9af32",
+            "chunk_count": 22,
+            "node_id": "f8f73c04-27e0-4ef9-a502-77da2b92c938",
+            "edge_count": 2,
+            "content_hash": "12629d8506214970608591a21cec8a00467e4390a1f478d937cea0aec339dfaf",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/mod.rs",
+          "ms": 8.375625,
+          "result": {
+            "document_id": "539d9f12-5817-4d39-aac2-e87470d10c00",
+            "chunk_count": 11,
+            "node_id": "62263a66-0626-4f38-8b73-7e67af70e67b",
+            "edge_count": 2,
+            "content_hash": "93d247b301840bbc982d207af3138c33c9cc46a0a0cfa8333b9fc6e93fb75661",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/wasm32/memchr.rs",
+          "ms": 8.760834,
+          "result": {
+            "document_id": "eea11358-8801-4a49-9683-f0e1987b79ed",
+            "chunk_count": 17,
+            "node_id": "6272eda7-bf42-4433-9248-21af33183e50",
+            "edge_count": 2,
+            "content_hash": "27713079fda1292aba1dee4d5ce2755e62bd477f695aee9a5ac1c983a30c25ba",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/wasm32/mod.rs",
+          "ms": 6.666667,
+          "result": {
+            "document_id": "0e144e2e-45c4-4a9e-b67d-37b11a746403",
+            "chunk_count": 5,
+            "node_id": "c2afd0bc-80f7-413d-956c-ac29489f89c6",
+            "edge_count": 2,
+            "content_hash": "d9e024e055f68c0fdb9951d963172fa839e9ec92c63ecd487a04a44e15d725a6",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/wasm32/simd128/memchr.rs",
+          "ms": 14.872083,
+          "result": {
+            "document_id": "f83cd9a2-5cea-456c-9b50-3e6d4e6df27c",
+            "chunk_count": 72,
+            "node_id": "46bb5524-cccf-4191-9ae6-16c86ddb6a6c",
+            "edge_count": 2,
+            "content_hash": "4a0bf4d73789ffa2624d694a5c704d5ec9b4e3a7d1111ddc94d3e333e171e07d",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/wasm32/simd128/mod.rs",
+          "ms": 6.584958,
+          "result": {
+            "document_id": "3d3d4ba1-cc8c-4663-b449-f2e1ffb06cb3",
+            "chunk_count": 5,
+            "node_id": "0ffd25f9-5384-4e73-95d0-98699a6f796e",
+            "edge_count": 2,
+            "content_hash": "915e943a2121bf1604b3b812a06dc391faf1d8593bb07cc702d6a10c752c8dd1",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/wasm32/simd128/packedpair.rs",
+          "ms": 7.838125,
+          "result": {
+            "document_id": "dc4bf9ee-04b2-49a7-81a0-d06a57eae749",
+            "chunk_count": 18,
+            "node_id": "8c12b338-0fc5-43f0-9b2b-2e3dd1076a3a",
+            "edge_count": 2,
+            "content_hash": "bbe928b96edbbc7d89d22e7769b11482e0530759381dde9890f2db84c97c451e",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/x86_64/avx2/memchr.rs",
+          "ms": 16.821166,
+          "result": {
+            "document_id": "6cdb9baa-5263-438c-b6cb-67c86665ebed",
+            "chunk_count": 92,
+            "node_id": "6522b1d2-cec2-451e-b322-f79ce9c614d2",
+            "edge_count": 2,
+            "content_hash": "165da37b285916f4accbbaf779d493c21e56e1b86c0287b06132690d69b3c6a9",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/x86_64/avx2/mod.rs",
+          "ms": 6.903,
+          "result": {
+            "document_id": "0813393a-8f18-4bfc-b0b8-72cfc6818316",
+            "chunk_count": 5,
+            "node_id": "f1861ced-2fa5-4c88-b32f-d6489e04eb81",
+            "edge_count": 2,
+            "content_hash": "642b3273128dcd93749a24383b1963c2393acbcad6909d5843a29201c25fe6f1",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/x86_64/avx2/packedpair.rs",
+          "ms": 7.962417,
+          "result": {
+            "document_id": "14720744-ac9f-4117-b4aa-3df9c76b3d04",
+            "chunk_count": 20,
+            "node_id": "a858fa6d-14da-416b-b049-3a5ddcae4924",
+            "edge_count": 2,
+            "content_hash": "ba588c69151ae3a20fab9062972a010a3d4158b04c663ab461a1678cff97fc21",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/x86_64/memchr.rs",
+          "ms": 9.553083,
+          "result": {
+            "document_id": "d48a7f0a-ef68-4a5d-962e-ee822f04b5d9",
+            "chunk_count": 26,
+            "node_id": "382f0581-9d87-43bd-a58a-1b77a327e262",
+            "edge_count": 2,
+            "content_hash": "070c95ffeb46d8d4fdcf4291261644bfe444d519c4f2bd57f797a73fa2a655a5",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/x86_64/mod.rs",
+          "ms": 6.837875,
+          "result": {
+            "document_id": "6376c355-efe3-41aa-8db1-4e8b31ab2a98",
+            "chunk_count": 7,
+            "node_id": "b41e155b-3cee-46ed-b0e0-cce04334f139",
+            "edge_count": 2,
+            "content_hash": "0c30fc0d4d710d0df5e6c846d3c8a67bf4a5f2e9222d8536ad1233e74218f543",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/x86_64/sse2/memchr.rs",
+          "ms": 15.143542,
+          "result": {
+            "document_id": "f6e82af2-bfbf-433d-acda-de926055f803",
+            "chunk_count": 78,
+            "node_id": "d486755a-b419-4efc-9363-524fae626fd0",
+            "edge_count": 2,
+            "content_hash": "5a7793d5c060afdc9879acb290dc17c834a44c732a004cd5b7bf45e69759d7c3",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/x86_64/sse2/mod.rs",
+          "ms": 6.656916,
+          "result": {
+            "document_id": "4edb33d2-eb7b-413e-80db-7e039eff5af7",
+            "chunk_count": 5,
+            "node_id": "715dffef-1334-416a-a2a6-c4ee696a948e",
+            "edge_count": 2,
+            "content_hash": "0bdf2f3da0d75cdaedbc23bc1b82c5bbba03a7a033725a9bfcf62cc2b10a27c1",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/x86_64/sse2/packedpair.rs",
+          "ms": 8.364416,
+          "result": {
+            "document_id": "7aec8900-0635-4204-85af-5bba0e66f897",
+            "chunk_count": 19,
+            "node_id": "1fec4400-cbcb-4a8c-b4bc-f3adf40dbc59",
+            "edge_count": 2,
+            "content_hash": "54a163ebc7ec4490e116f945615435f1d0f2c3318e13fa1d6af63aad2efa07e9",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/cow.rs",
+          "ms": 8.009625,
+          "result": {
+            "document_id": "997ce5da-e51f-4512-9a58-6a3c93a54bee",
+            "chunk_count": 10,
+            "node_id": "e673b560-d6ea-4711-a59b-2893a5902024",
+            "edge_count": 2,
+            "content_hash": "607f6c9e6c8aa6b1edd3c2939062fa641f4258b3ee5e9e8fd521348b48b1b031",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/ext.rs",
+          "ms": 6.856833,
+          "result": {
+            "document_id": "95558db6-e412-440b-95a0-682dde432b3c",
+            "chunk_count": 6,
+            "node_id": "de61c4b3-07b6-4948-9044-d049abab1a0a",
+            "edge_count": 2,
+            "content_hash": "e1c40f35a6cd1d784005fd265321f6d64c398898d8b545a6341a40f8018c4f79",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/lib.rs",
+          "ms": 9.177791,
+          "result": {
+            "document_id": "fc8ee627-ddde-458f-811a-365128a1945d",
+            "chunk_count": 29,
+            "node_id": "1feff205-0d05-4512-b286-45a57f829b94",
+            "edge_count": 2,
+            "content_hash": "8a1d1ea4c1e8c111bdb83ec7ea7bb7f2bb9bf24a75956ae467c112e31aa0a031",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/macros.rs",
+          "ms": 6.50175,
+          "result": {
+            "document_id": "4db98c9d-435c-4f81-8ab2-4fb0926fe52b",
+            "chunk_count": 7,
+            "node_id": "f6b28732-f0d5-49ce-b203-78a0847628f1",
+            "edge_count": 2,
+            "content_hash": "26cd7ab5a5d0775a18c7a6ba227aa1e6508383c945e6515d60729085953e995f",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/memchr.rs",
+          "ms": 13.4815,
+          "result": {
+            "document_id": "9f70d9bf-5b83-49db-b573-0b57cb340b6f",
+            "chunk_count": 75,
+            "node_id": "1f22172c-2344-4251-8489-6593cd4c071b",
+            "edge_count": 2,
+            "content_hash": "27943e026a265b80019ec151fa655c9358ca39c5608337d1a908cf005cccfc4d",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/memmem/mod.rs",
+          "ms": 12.453,
+          "result": {
+            "document_id": "fc60683d-c59c-4bd4-a08e-1f1cce308035",
+            "chunk_count": 56,
+            "node_id": "cefb923e-e67f-4843-a5ca-4796ab12ec05",
+            "edge_count": 2,
+            "content_hash": "9b0068068ec6c03bad149c994561ed942fde91cbbc67f8393cad939e0b430a02",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/memmem/searcher.rs",
+          "ms": 15.941583,
+          "result": {
+            "document_id": "a98bd250-a374-4516-b11c-4ef1fb77ef51",
+            "chunk_count": 101,
+            "node_id": "7db5d9d3-1452-4f5d-b431-924eaf135ca9",
+            "edge_count": 2,
+            "content_hash": "64cb2685befd62b578c02847fbbe4a480c5522bf79f9617b85b88ea479183c20",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/tests/memchr/mod.rs",
+          "ms": 10.133792,
+          "result": {
+            "document_id": "fab73e9c-f3d2-4aa0-9e95-a19795d19549",
+            "chunk_count": 31,
+            "node_id": "3137d7bb-2ea0-4682-9818-7ca3afaaf2c8",
+            "edge_count": 2,
+            "content_hash": "6cf8a4231529f6b723d21989c310c7e00a6ec7e2c412dfed66c3b5dfc164590a",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/tests/memchr/naive.rs",
+          "ms": 7.150542,
+          "result": {
+            "document_id": "9ddd4fb6-136a-435a-a2f3-d23bfc1ae67f",
+            "chunk_count": 12,
+            "node_id": "2f7a5890-0a9b-4467-8089-3fa3eb96fdc2",
+            "edge_count": 2,
+            "content_hash": "8657612ebe9f326b950c7cd3dd08fdfe5470f91260741983665a959ead7eaa7a",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/tests/memchr/prop.rs",
+          "ms": 8.839416,
+          "result": {
+            "document_id": "39abfd23-ac79-4c9f-b8da-82665d71cf8e",
+            "chunk_count": 29,
+            "node_id": "54230ba6-3482-4222-abb3-7c73507151c8",
+            "edge_count": 2,
+            "content_hash": "9c061d272ae21581148aeda93c7ef0efbfd44f16319f01570fb2b7a996928d9a",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/tests/mod.rs",
+          "ms": 7.980125,
+          "result": {
+            "document_id": "f933e04d-a336-4642-b57b-63d545de8495",
+            "chunk_count": 8,
+            "node_id": "31c1d36a-55df-4850-93f3-8988447d1fbb",
+            "edge_count": 2,
+            "content_hash": "56bb2cc1acd1dcf1c7cd889fe934839fe433b8e70145bfce5e3abae7ecb307fb",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/tests/packedpair.rs",
+          "ms": 8.630334,
+          "result": {
+            "document_id": "6a53b863-b609-49cf-a0e9-e7365056362b",
+            "chunk_count": 23,
+            "node_id": "f984043b-4bed-4881-a615-6baa40e7905e",
+            "edge_count": 2,
+            "content_hash": "6a24d7df3d106b0d6e0b691b84d76229f6f2ba470a014fae8cef7a91fed3367d",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/tests/substring/mod.rs",
+          "ms": 9.595333,
+          "result": {
+            "document_id": "e7bde657-87b6-455b-b2e1-f2c1f90429dd",
+            "chunk_count": 25,
+            "node_id": "992d582d-89dc-4919-83e8-b48fe905f0f5",
+            "edge_count": 2,
+            "content_hash": "01a658750da3adfaecb00d46bf7b2051fa6471bf57c03925e982f2c215c14047",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/tests/substring/naive.rs",
+          "ms": 7.95175,
+          "result": {
+            "document_id": "a096a5ea-3e34-46c0-8e45-c1d004b1f464",
+            "chunk_count": 7,
+            "node_id": "34f2108c-9ce5-435a-b220-a538baa99a34",
+            "edge_count": 2,
+            "content_hash": "5da40d6a199a4f5645d44ac1524d193c6f87e82b2e323b9881d713c4bcea67bb",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/tests/substring/prop.rs",
+          "ms": 8.152875,
+          "result": {
+            "document_id": "9a2eae05-2572-400c-bc17-08df49639aaf",
+            "chunk_count": 13,
+            "node_id": "c5860164-3b34-42e3-a0d2-c9c597d695b3",
+            "edge_count": 2,
+            "content_hash": "59eed72b5c1093af345c1c88c726a1ee984c5a1ca39c0fc52fb54895d9ae4a8b",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/vector.rs",
+          "ms": 10.31875,
+          "result": {
+            "document_id": "4741b789-b35d-450f-a5ad-22b29e0ad154",
+            "chunk_count": 41,
+            "node_id": "907d5059-6464-473c-9f6f-eeab0193a454",
+            "edge_count": 2,
+            "content_hash": "6dd761f60f204d7e78948a6100086d82d8d78f0165ed984b34c7a637801f7cd2",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "index_code",
+          "arguments": {},
+          "ms": 4458.280375,
+          "result": {
+            "indexed": 46,
+            "unchanged": 0,
+            "unsupported": 0,
+            "parse_errors": [],
+            "index_revision": 1,
+            "revision_created": true,
+            "stage_timings": {
+              "contract_version": 1,
+              "run_id": "46b8f03f-ed65-4e7d-bb7f-5a4234d109ca",
+              "lock_wait_ms": 4.2e-05,
+              "source_load_decode_ms": 0.461458,
+              "cache_parse_serialize_ms": 602.0066670000001,
+              "cache_replace_ms": 31.599415999999998,
+              "revision_publish_ms": 3813.4872079999996,
+              "transaction_body_ms": 4447.588583,
+              "before_metrics_write_ms": 4447.588624999999,
+              "documents_loaded": 46,
+              "cache_hits": 0,
+              "cache_misses": 46,
+              "unsupported_documents": 0,
+              "parse_error_documents": 0,
+              "commit_included": false,
+              "metrics_write_included": false,
+              "embedding_fts_included": false
+            },
+            "resolution": {
+              "contract_version": 1,
+              "documents_total": 46,
+              "documents_resolved": 46,
+              "documents_reused": 0,
+              "reference_sites_resolved": 5986,
+              "reference_sites_reused": 0,
+              "rust_package_scopes": 20,
+              "project_fallback_scopes": 0,
+              "empty_reference_documents": 26,
+              "dependency_inputs_hashed": 920,
+              "invalid_cache_entries": 0,
+              "forced_full": false,
+              "cache_available": false,
+              "no_resolution_required": false,
+              "resolution_ms": 3724.723375,
+              "equivalent_to_existing": null
+            },
+            "completion": {
+              "contract_version": 1,
+              "native_total_ms": 4457.982083,
+              "commit_ms": 9.787875,
+              "metrics_write_ms": 0.605583,
+              "commit_included": true,
+              "process_lifetime_peak_rss_bytes": 316063744
+            }
+          }
+        }
+      ],
+      "inputs": {
+        "Cargo.toml": "acd93639cfd6bef0e806a15f9fc7d6eb0117ed4cac44d5bc9c8601d1fc357435",
+        "src/arch/aarch64/memchr.rs": "5bb70f915084e629d940dbc322f5b9096b2e658cf63fea8a2f6e7550412e73a0",
+        "src/arch/aarch64/mod.rs": "44cd1a614bd66f1e66fc86c541d3c3b8d3a14a644c13e8bf816df3f555eac2d4",
+        "src/arch/aarch64/neon/memchr.rs": "e8c00b8fb2c7e2711832ae3cedefe59f32ebedd7dfa4d0ec6de2a566c979daea",
+        "src/arch/aarch64/neon/mod.rs": "eab6d56c2b2354db4ee395f40282cd49f97e2ab853547be5de6e65fbe1b2f634",
+        "src/arch/aarch64/neon/packedpair.rs": "32d3e4cd0dd9b6c8382e5308cbd896d20242c90b12862c44a5de6a8b4d6126df",
+        "src/arch/all/memchr.rs": "b0b1214aa573ed5d02ae62a77c42c773065566b50274d4096e37817d65ab1594",
+        "src/arch/all/mod.rs": "05f3fc2b069682eb1545fc6366d167bb620a454365dac8b8dd6cde6cd64de18a",
+        "src/arch/all/packedpair/default_rank.rs": "abffd1b5b8b7a3be95c03dd1105b905c246a379854dc56f1e846ea7c4408f2c7",
+        "src/arch/all/packedpair/mod.rs": "3692afca650585fbc625ff43e0e415d298605f56bea8134bcb5a2decac46142b",
+        "src/arch/all/rabinkarp.rs": "06038cce1cbead7b088e541ba41bcc1c095c34bde483b7df6ad9f77a49c1063c",
+        "src/arch/all/shiftor.rs": "0d79117f52a1e4795843603a3bb0b45397df4ad5e4184bbc923658dab9dc3b5f",
+        "src/arch/all/twoway.rs": "0b27eb1cd7402c1375a50466f8f66a68cb2806c3f69a647340b2759793eed4f8",
+        "src/arch/generic/memchr.rs": "31b11f07c5f24f02cb53715a6e508665b45943ddeebc05a243b88e728502dbe0",
+        "src/arch/generic/mod.rs": "1dd75f61e0ea2563b8205a08aaa7b55500130aa331d18b9e9f995724b66c7a39",
+        "src/arch/generic/packedpair.rs": "9c67ffe618eb8ae004a9777759db7a4b4b9c04393c23ee14eabf8747a2b16dc2",
+        "src/arch/mod.rs": "ca3960b7e2ed28d1b3c121710a870430531aad792f64d4dcb4ca4709d6cbda30",
+        "src/arch/wasm32/memchr.rs": "d88ac79f891d8530f505f5035062d3da274a05d66c611480c75430d52709d052",
+        "src/arch/wasm32/mod.rs": "a20377aa8fe07d68594879101dc73061e4f51d9c8d812b593b1f376e3c8add79",
+        "src/arch/wasm32/simd128/memchr.rs": "bac2c4c43fe710c83a6f2b1118fede043be89dd821d4b532907f129f09fdb5cf",
+        "src/arch/wasm32/simd128/mod.rs": "c157b373faedbfd65323be432e25bc411d97aa1b7bc58e76048614c7b2bf3bf6",
+        "src/arch/wasm32/simd128/packedpair.rs": "288ba6e5eee6a7a8e5e45c64cff1aa5d72d996c2a6bc228be372c75789f08e45",
+        "src/arch/x86_64/avx2/memchr.rs": "576ec0c30f49874f7fd9f6caeb490d56132c0fbbaa4d877b1aa532cafce19323",
+        "src/arch/x86_64/avx2/mod.rs": "0033d1b712d0b10f0f273ef9aa8caa53e05e49f4c56a64f39af0b9df97eec584",
+        "src/arch/x86_64/avx2/packedpair.rs": "87b69cb4301815906127db4f6370f572c7c5d5dad35c0946c00ad888dbcaec8c",
+        "src/arch/x86_64/memchr.rs": "4cf0611c926c3016d1b640880ef14e5654a8d1c1b480fe9a5965956be7eeeeef",
+        "src/arch/x86_64/mod.rs": "61b2aa876942fd3e78714c2ae21e356c8634545c06995020f443fa50218df027",
+        "src/arch/x86_64/sse2/memchr.rs": "0de0444e26d885eaf866220578752aac871e03bebee7b4f5de7fe8a35f5fa97f",
+        "src/arch/x86_64/sse2/mod.rs": "38b70ae52a64ec974dbb91d04d6ca8013d9e06d1fe4af852206bbc2faf1c59aa",
+        "src/arch/x86_64/sse2/packedpair.rs": "ad893c5ab9525966693e742673fb666f54ff9102949fc91c5e61642c8ad2f110",
+        "src/cow.rs": "2b053e393d3841f780425b3b0da5bec4f187603fa7c271b045ecb7d885b23395",
+        "src/ext.rs": "210f89d1e32211bc64414cbd56e97b4f56ce8a8832d321d77a9fe519634e27ea",
+        "src/lib.rs": "614f778a41e88a29ea0ceb8e92c839dbb6b5a61c967f8bfd962975e18f932c71",
+        "src/macros.rs": "3e4b39252bfa471fad384160a43f113ebfec7bec46a85d16f006622881dd2081",
+        "src/memchr.rs": "6ae779ec5d00f443075316e0105edf30b489a38e2e96325bec14ccecd014145b",
+        "src/memmem/mod.rs": "d869159f0d0c1915d7acc42a6a4aa3c97c049ddc043e6566afeb78ad290995d1",
+        "src/memmem/searcher.rs": "da0581eabbd3a27127e578f4e178e519399b1dddba7856f5b1968d69f096efd5",
+        "src/tests/memchr/mod.rs": "269f8e4b4f7f5ea458f27a3c174eb1020ffb2484eeba9464170beb51747df69b",
+        "src/tests/memchr/naive.rs": "6a0bee033e5edfb5b1d5769a5fa1c78388f7e9ff7bb91cb67f0ad029289e00e7",
+        "src/tests/memchr/prop.rs": "1854eea2338c405fe4635aac430f51e10d2069cd37a7489ddaff47da95f8720b",
+        "src/tests/mod.rs": "7cec8f809e279310a465c6a7725087970f219a676cc76c83de30c695bb490740",
+        "src/tests/packedpair.rs": "b02ec4fbb61a8653cb5f2268c31bc9168b8043347f2abdcc74081acf83b98e15",
+        "src/tests/substring/mod.rs": "c7660d10749363ac4687e7da2b5fda60768230425df8ba416c0c28b8d56a5c74",
+        "src/tests/substring/naive.rs": "df6f55d165382b8a53762ba4c324926cac13ebc62cde1805f4ce08740b326483",
+        "src/tests/substring/prop.rs": "38c15992609b5681a95d838ae6f2933e00a1219f2c971bfba245f96e0729fcdc",
+        "src/vector.rs": "b3d4f4e30456eb2d32e139cee0dcd6fc5866db3f8feb75cfca413df9a25778cc"
+      },
+      "ordinary_noop": false,
+      "environment": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 51.8,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 525,
+            "cpu_percent": 79.7,
+            "command": "mds_stores",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 30.5,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 46.9,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985268.234761,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "end_to_end_mcp_ms": 4913.016666,
+      "sampled_worker_peak_rss_bytes": 286834688,
+      "rss_samples": 82,
+      "rss_sample_period_seconds": 0.05,
+      "environment_after": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 51.2,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 40.0,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 42.7,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985273.197898,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      }
+    },
+    {
+      "case": "warm_noop",
+      "steps": [
+        {
+          "operation": "index_code",
+          "arguments": {},
+          "ms": 15.997541,
+          "result": {
+            "indexed": 0,
+            "unchanged": 46,
+            "unsupported": 0,
+            "parse_errors": [],
+            "index_revision": 1,
+            "revision_created": false,
+            "stage_timings": {
+              "contract_version": 1,
+              "run_id": "4a3d6a1c-70c7-4f92-97f6-b28c13a1e53d",
+              "lock_wait_ms": 0.00033299999999999996,
+              "source_load_decode_ms": 0.8355,
+              "cache_parse_serialize_ms": 12.291208,
+              "cache_replace_ms": 0.000166,
+              "revision_publish_ms": 1.184167,
+              "transaction_body_ms": 14.41925,
+              "before_metrics_write_ms": 14.419667,
+              "documents_loaded": 46,
+              "cache_hits": 46,
+              "cache_misses": 0,
+              "unsupported_documents": 0,
+              "parse_error_documents": 0,
+              "commit_included": false,
+              "metrics_write_included": false,
+              "embedding_fts_included": false
+            },
+            "resolution": {
+              "contract_version": 1,
+              "documents_total": 0,
+              "documents_resolved": 0,
+              "documents_reused": 0,
+              "reference_sites_resolved": 0,
+              "reference_sites_reused": 0,
+              "rust_package_scopes": 0,
+              "project_fallback_scopes": 0,
+              "empty_reference_documents": 0,
+              "dependency_inputs_hashed": 0,
+              "invalid_cache_entries": 0,
+              "forced_full": false,
+              "cache_available": false,
+              "no_resolution_required": true,
+              "resolution_ms": 0.0,
+              "equivalent_to_existing": null
+            },
+            "completion": {
+              "contract_version": 1,
+              "native_total_ms": 15.695667,
+              "commit_ms": 0.647167,
+              "metrics_write_ms": 0.628875,
+              "commit_included": true,
+              "process_lifetime_peak_rss_bytes": 409419776
+            }
+          }
+        }
+      ],
+      "inputs": {
+        "Cargo.toml": "acd93639cfd6bef0e806a15f9fc7d6eb0117ed4cac44d5bc9c8601d1fc357435",
+        "src/arch/aarch64/memchr.rs": "5bb70f915084e629d940dbc322f5b9096b2e658cf63fea8a2f6e7550412e73a0",
+        "src/arch/aarch64/mod.rs": "44cd1a614bd66f1e66fc86c541d3c3b8d3a14a644c13e8bf816df3f555eac2d4",
+        "src/arch/aarch64/neon/memchr.rs": "e8c00b8fb2c7e2711832ae3cedefe59f32ebedd7dfa4d0ec6de2a566c979daea",
+        "src/arch/aarch64/neon/mod.rs": "eab6d56c2b2354db4ee395f40282cd49f97e2ab853547be5de6e65fbe1b2f634",
+        "src/arch/aarch64/neon/packedpair.rs": "32d3e4cd0dd9b6c8382e5308cbd896d20242c90b12862c44a5de6a8b4d6126df",
+        "src/arch/all/memchr.rs": "b0b1214aa573ed5d02ae62a77c42c773065566b50274d4096e37817d65ab1594",
+        "src/arch/all/mod.rs": "05f3fc2b069682eb1545fc6366d167bb620a454365dac8b8dd6cde6cd64de18a",
+        "src/arch/all/packedpair/default_rank.rs": "abffd1b5b8b7a3be95c03dd1105b905c246a379854dc56f1e846ea7c4408f2c7",
+        "src/arch/all/packedpair/mod.rs": "3692afca650585fbc625ff43e0e415d298605f56bea8134bcb5a2decac46142b",
+        "src/arch/all/rabinkarp.rs": "06038cce1cbead7b088e541ba41bcc1c095c34bde483b7df6ad9f77a49c1063c",
+        "src/arch/all/shiftor.rs": "0d79117f52a1e4795843603a3bb0b45397df4ad5e4184bbc923658dab9dc3b5f",
+        "src/arch/all/twoway.rs": "0b27eb1cd7402c1375a50466f8f66a68cb2806c3f69a647340b2759793eed4f8",
+        "src/arch/generic/memchr.rs": "31b11f07c5f24f02cb53715a6e508665b45943ddeebc05a243b88e728502dbe0",
+        "src/arch/generic/mod.rs": "1dd75f61e0ea2563b8205a08aaa7b55500130aa331d18b9e9f995724b66c7a39",
+        "src/arch/generic/packedpair.rs": "9c67ffe618eb8ae004a9777759db7a4b4b9c04393c23ee14eabf8747a2b16dc2",
+        "src/arch/mod.rs": "ca3960b7e2ed28d1b3c121710a870430531aad792f64d4dcb4ca4709d6cbda30",
+        "src/arch/wasm32/memchr.rs": "d88ac79f891d8530f505f5035062d3da274a05d66c611480c75430d52709d052",
+        "src/arch/wasm32/mod.rs": "a20377aa8fe07d68594879101dc73061e4f51d9c8d812b593b1f376e3c8add79",
+        "src/arch/wasm32/simd128/memchr.rs": "bac2c4c43fe710c83a6f2b1118fede043be89dd821d4b532907f129f09fdb5cf",
+        "src/arch/wasm32/simd128/mod.rs": "c157b373faedbfd65323be432e25bc411d97aa1b7bc58e76048614c7b2bf3bf6",
+        "src/arch/wasm32/simd128/packedpair.rs": "288ba6e5eee6a7a8e5e45c64cff1aa5d72d996c2a6bc228be372c75789f08e45",
+        "src/arch/x86_64/avx2/memchr.rs": "576ec0c30f49874f7fd9f6caeb490d56132c0fbbaa4d877b1aa532cafce19323",
+        "src/arch/x86_64/avx2/mod.rs": "0033d1b712d0b10f0f273ef9aa8caa53e05e49f4c56a64f39af0b9df97eec584",
+        "src/arch/x86_64/avx2/packedpair.rs": "87b69cb4301815906127db4f6370f572c7c5d5dad35c0946c00ad888dbcaec8c",
+        "src/arch/x86_64/memchr.rs": "4cf0611c926c3016d1b640880ef14e5654a8d1c1b480fe9a5965956be7eeeeef",
+        "src/arch/x86_64/mod.rs": "61b2aa876942fd3e78714c2ae21e356c8634545c06995020f443fa50218df027",
+        "src/arch/x86_64/sse2/memchr.rs": "0de0444e26d885eaf866220578752aac871e03bebee7b4f5de7fe8a35f5fa97f",
+        "src/arch/x86_64/sse2/mod.rs": "38b70ae52a64ec974dbb91d04d6ca8013d9e06d1fe4af852206bbc2faf1c59aa",
+        "src/arch/x86_64/sse2/packedpair.rs": "ad893c5ab9525966693e742673fb666f54ff9102949fc91c5e61642c8ad2f110",
+        "src/cow.rs": "2b053e393d3841f780425b3b0da5bec4f187603fa7c271b045ecb7d885b23395",
+        "src/ext.rs": "210f89d1e32211bc64414cbd56e97b4f56ce8a8832d321d77a9fe519634e27ea",
+        "src/lib.rs": "614f778a41e88a29ea0ceb8e92c839dbb6b5a61c967f8bfd962975e18f932c71",
+        "src/macros.rs": "3e4b39252bfa471fad384160a43f113ebfec7bec46a85d16f006622881dd2081",
+        "src/memchr.rs": "6ae779ec5d00f443075316e0105edf30b489a38e2e96325bec14ccecd014145b",
+        "src/memmem/mod.rs": "d869159f0d0c1915d7acc42a6a4aa3c97c049ddc043e6566afeb78ad290995d1",
+        "src/memmem/searcher.rs": "da0581eabbd3a27127e578f4e178e519399b1dddba7856f5b1968d69f096efd5",
+        "src/tests/memchr/mod.rs": "269f8e4b4f7f5ea458f27a3c174eb1020ffb2484eeba9464170beb51747df69b",
+        "src/tests/memchr/naive.rs": "6a0bee033e5edfb5b1d5769a5fa1c78388f7e9ff7bb91cb67f0ad029289e00e7",
+        "src/tests/memchr/prop.rs": "1854eea2338c405fe4635aac430f51e10d2069cd37a7489ddaff47da95f8720b",
+        "src/tests/mod.rs": "7cec8f809e279310a465c6a7725087970f219a676cc76c83de30c695bb490740",
+        "src/tests/packedpair.rs": "b02ec4fbb61a8653cb5f2268c31bc9168b8043347f2abdcc74081acf83b98e15",
+        "src/tests/substring/mod.rs": "c7660d10749363ac4687e7da2b5fda60768230425df8ba416c0c28b8d56a5c74",
+        "src/tests/substring/naive.rs": "df6f55d165382b8a53762ba4c324926cac13ebc62cde1805f4ce08740b326483",
+        "src/tests/substring/prop.rs": "38c15992609b5681a95d838ae6f2933e00a1219f2c971bfba245f96e0729fcdc",
+        "src/vector.rs": "b3d4f4e30456eb2d32e139cee0dcd6fc5866db3f8feb75cfca413df9a25778cc"
+      },
+      "ordinary_noop": true,
+      "environment": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 40.2,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 5666,
+            "cpu_percent": 33.8,
+            "command": "(node)",
+            "compiler": false
+          },
+          {
+            "pid": 5671,
+            "cpu_percent": 35.3,
+            "command": "(node)",
+            "compiler": false
+          },
+          {
+            "pid": 28578,
+            "cpu_percent": 63.2,
+            "command": "trustd",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 40.9,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 74855,
+            "cpu_percent": 34.5,
+            "command": "ChatGPT",
+            "compiler": false
+          },
+          {
+            "pid": 74974,
+            "cpu_percent": 25.2,
+            "command": "Codex (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 74975,
+            "cpu_percent": 29.1,
+            "command": "codex",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 35.3,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985277.6099,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "end_to_end_mcp_ms": 16.001291,
+      "sampled_worker_peak_rss_bytes": 355483648,
+      "rss_samples": 1,
+      "rss_sample_period_seconds": 0.05,
+      "environment_after": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 45.7,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 28578,
+            "cpu_percent": 55.2,
+            "command": "trustd",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 41.5,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 74855,
+            "cpu_percent": 26.1,
+            "command": "ChatGPT",
+            "compiler": false
+          },
+          {
+            "pid": 74975,
+            "cpu_percent": 29.0,
+            "command": "codex",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 33.3,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985277.6860118,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      }
+    },
+    {
+      "case": "body",
+      "steps": [
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/all/rabinkarp.rs",
+          "ms": 25.151,
+          "result": {
+            "document_id": "a3f61c09-a39a-4520-a3e9-5c8b18a659ff",
+            "chunk_count": 37,
+            "node_id": "f5914aca-b29c-449f-9b62-0d722b1be570",
+            "edge_count": 2,
+            "content_hash": "6ecc7ef33e5ba5632d3d2bc25cff1ebb23d3468c8855ee1f0de26b32b6e7772f",
+            "op": "updated",
+            "revision": 2,
+            "etag": "W/\"2\""
+          }
+        },
+        {
+          "operation": "index_code",
+          "arguments": {},
+          "ms": 3995.160167,
+          "result": {
+            "indexed": 1,
+            "unchanged": 45,
+            "unsupported": 0,
+            "parse_errors": [],
+            "index_revision": 2,
+            "revision_created": true,
+            "stage_timings": {
+              "contract_version": 1,
+              "run_id": "b2cc11cb-681f-49c4-b613-975e6b0a1aa9",
+              "lock_wait_ms": 0.000209,
+              "source_load_decode_ms": 0.77625,
+              "cache_parse_serialize_ms": 23.299125,
+              "cache_replace_ms": 1.614417,
+              "revision_publish_ms": 3957.5273749999997,
+              "transaction_body_ms": 3983.272,
+              "before_metrics_write_ms": 3983.2722499999995,
+              "documents_loaded": 46,
+              "cache_hits": 45,
+              "cache_misses": 1,
+              "unsupported_documents": 0,
+              "parse_error_documents": 0,
+              "commit_included": false,
+              "metrics_write_included": false,
+              "embedding_fts_included": false
+            },
+            "resolution": {
+              "contract_version": 1,
+              "documents_total": 46,
+              "documents_resolved": 20,
+              "documents_reused": 26,
+              "reference_sites_resolved": 5987,
+              "reference_sites_reused": 0,
+              "rust_package_scopes": 20,
+              "project_fallback_scopes": 0,
+              "empty_reference_documents": 26,
+              "dependency_inputs_hashed": 920,
+              "invalid_cache_entries": 0,
+              "forced_full": false,
+              "cache_available": true,
+              "no_resolution_required": false,
+              "resolution_ms": 3806.593083,
+              "equivalent_to_existing": null
+            },
+            "completion": {
+              "contract_version": 1,
+              "native_total_ms": 3994.857042,
+              "commit_ms": 10.965041999999999,
+              "metrics_write_ms": 0.619709,
+              "commit_included": true,
+              "process_lifetime_peak_rss_bytes": 474890240
+            }
+          }
+        }
+      ],
+      "inputs": {
+        "Cargo.toml": "acd93639cfd6bef0e806a15f9fc7d6eb0117ed4cac44d5bc9c8601d1fc357435",
+        "src/arch/aarch64/memchr.rs": "5bb70f915084e629d940dbc322f5b9096b2e658cf63fea8a2f6e7550412e73a0",
+        "src/arch/aarch64/mod.rs": "44cd1a614bd66f1e66fc86c541d3c3b8d3a14a644c13e8bf816df3f555eac2d4",
+        "src/arch/aarch64/neon/memchr.rs": "e8c00b8fb2c7e2711832ae3cedefe59f32ebedd7dfa4d0ec6de2a566c979daea",
+        "src/arch/aarch64/neon/mod.rs": "eab6d56c2b2354db4ee395f40282cd49f97e2ab853547be5de6e65fbe1b2f634",
+        "src/arch/aarch64/neon/packedpair.rs": "32d3e4cd0dd9b6c8382e5308cbd896d20242c90b12862c44a5de6a8b4d6126df",
+        "src/arch/all/memchr.rs": "b0b1214aa573ed5d02ae62a77c42c773065566b50274d4096e37817d65ab1594",
+        "src/arch/all/mod.rs": "05f3fc2b069682eb1545fc6366d167bb620a454365dac8b8dd6cde6cd64de18a",
+        "src/arch/all/packedpair/default_rank.rs": "abffd1b5b8b7a3be95c03dd1105b905c246a379854dc56f1e846ea7c4408f2c7",
+        "src/arch/all/packedpair/mod.rs": "3692afca650585fbc625ff43e0e415d298605f56bea8134bcb5a2decac46142b",
+        "src/arch/all/rabinkarp.rs": "77583d97e36c111c27d19e9af5c7188c7216aec8fc51625afd4772013953e4c5",
+        "src/arch/all/shiftor.rs": "0d79117f52a1e4795843603a3bb0b45397df4ad5e4184bbc923658dab9dc3b5f",
+        "src/arch/all/twoway.rs": "0b27eb1cd7402c1375a50466f8f66a68cb2806c3f69a647340b2759793eed4f8",
+        "src/arch/generic/memchr.rs": "31b11f07c5f24f02cb53715a6e508665b45943ddeebc05a243b88e728502dbe0",
+        "src/arch/generic/mod.rs": "1dd75f61e0ea2563b8205a08aaa7b55500130aa331d18b9e9f995724b66c7a39",
+        "src/arch/generic/packedpair.rs": "9c67ffe618eb8ae004a9777759db7a4b4b9c04393c23ee14eabf8747a2b16dc2",
+        "src/arch/mod.rs": "ca3960b7e2ed28d1b3c121710a870430531aad792f64d4dcb4ca4709d6cbda30",
+        "src/arch/wasm32/memchr.rs": "d88ac79f891d8530f505f5035062d3da274a05d66c611480c75430d52709d052",
+        "src/arch/wasm32/mod.rs": "a20377aa8fe07d68594879101dc73061e4f51d9c8d812b593b1f376e3c8add79",
+        "src/arch/wasm32/simd128/memchr.rs": "bac2c4c43fe710c83a6f2b1118fede043be89dd821d4b532907f129f09fdb5cf",
+        "src/arch/wasm32/simd128/mod.rs": "c157b373faedbfd65323be432e25bc411d97aa1b7bc58e76048614c7b2bf3bf6",
+        "src/arch/wasm32/simd128/packedpair.rs": "288ba6e5eee6a7a8e5e45c64cff1aa5d72d996c2a6bc228be372c75789f08e45",
+        "src/arch/x86_64/avx2/memchr.rs": "576ec0c30f49874f7fd9f6caeb490d56132c0fbbaa4d877b1aa532cafce19323",
+        "src/arch/x86_64/avx2/mod.rs": "0033d1b712d0b10f0f273ef9aa8caa53e05e49f4c56a64f39af0b9df97eec584",
+        "src/arch/x86_64/avx2/packedpair.rs": "87b69cb4301815906127db4f6370f572c7c5d5dad35c0946c00ad888dbcaec8c",
+        "src/arch/x86_64/memchr.rs": "4cf0611c926c3016d1b640880ef14e5654a8d1c1b480fe9a5965956be7eeeeef",
+        "src/arch/x86_64/mod.rs": "61b2aa876942fd3e78714c2ae21e356c8634545c06995020f443fa50218df027",
+        "src/arch/x86_64/sse2/memchr.rs": "0de0444e26d885eaf866220578752aac871e03bebee7b4f5de7fe8a35f5fa97f",
+        "src/arch/x86_64/sse2/mod.rs": "38b70ae52a64ec974dbb91d04d6ca8013d9e06d1fe4af852206bbc2faf1c59aa",
+        "src/arch/x86_64/sse2/packedpair.rs": "ad893c5ab9525966693e742673fb666f54ff9102949fc91c5e61642c8ad2f110",
+        "src/cow.rs": "2b053e393d3841f780425b3b0da5bec4f187603fa7c271b045ecb7d885b23395",
+        "src/ext.rs": "210f89d1e32211bc64414cbd56e97b4f56ce8a8832d321d77a9fe519634e27ea",
+        "src/lib.rs": "614f778a41e88a29ea0ceb8e92c839dbb6b5a61c967f8bfd962975e18f932c71",
+        "src/macros.rs": "3e4b39252bfa471fad384160a43f113ebfec7bec46a85d16f006622881dd2081",
+        "src/memchr.rs": "6ae779ec5d00f443075316e0105edf30b489a38e2e96325bec14ccecd014145b",
+        "src/memmem/mod.rs": "d869159f0d0c1915d7acc42a6a4aa3c97c049ddc043e6566afeb78ad290995d1",
+        "src/memmem/searcher.rs": "da0581eabbd3a27127e578f4e178e519399b1dddba7856f5b1968d69f096efd5",
+        "src/tests/memchr/mod.rs": "269f8e4b4f7f5ea458f27a3c174eb1020ffb2484eeba9464170beb51747df69b",
+        "src/tests/memchr/naive.rs": "6a0bee033e5edfb5b1d5769a5fa1c78388f7e9ff7bb91cb67f0ad029289e00e7",
+        "src/tests/memchr/prop.rs": "1854eea2338c405fe4635aac430f51e10d2069cd37a7489ddaff47da95f8720b",
+        "src/tests/mod.rs": "7cec8f809e279310a465c6a7725087970f219a676cc76c83de30c695bb490740",
+        "src/tests/packedpair.rs": "b02ec4fbb61a8653cb5f2268c31bc9168b8043347f2abdcc74081acf83b98e15",
+        "src/tests/substring/mod.rs": "c7660d10749363ac4687e7da2b5fda60768230425df8ba416c0c28b8d56a5c74",
+        "src/tests/substring/naive.rs": "df6f55d165382b8a53762ba4c324926cac13ebc62cde1805f4ce08740b326483",
+        "src/tests/substring/prop.rs": "38c15992609b5681a95d838ae6f2933e00a1219f2c971bfba245f96e0729fcdc",
+        "src/vector.rs": "b3d4f4e30456eb2d32e139cee0dcd6fc5866db3f8feb75cfca413df9a25778cc"
+      },
+      "ordinary_noop": false,
+      "environment": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 43.5,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 5878,
+            "cpu_percent": 52.9,
+            "command": "(Python)",
+            "compiler": false
+          },
+          {
+            "pid": 5881,
+            "cpu_percent": 26.1,
+            "command": "node",
+            "compiler": false
+          },
+          {
+            "pid": 28578,
+            "cpu_percent": 62.2,
+            "command": "trustd",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 55.0,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 74855,
+            "cpu_percent": 54.7,
+            "command": "ChatGPT",
+            "compiler": false
+          },
+          {
+            "pid": 74974,
+            "cpu_percent": 138.7,
+            "command": "Codex (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 74975,
+            "cpu_percent": 42.6,
+            "command": "codex",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 42.7,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985281.9667819,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "end_to_end_mcp_ms": 4020.318583,
+      "sampled_worker_peak_rss_bytes": 463503360,
+      "rss_samples": 67,
+      "rss_sample_period_seconds": 0.05,
+      "environment_after": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 43.4,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 5967,
+            "cpu_percent": 207.5,
+            "command": "Kimi Helper",
+            "compiler": false
+          },
+          {
+            "pid": 5968,
+            "cpu_percent": 101.4,
+            "command": "Kimi Helper",
+            "compiler": false
+          },
+          {
+            "pid": 6034,
+            "cpu_percent": 94.5,
+            "command": "top",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 25.3,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 41.7,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985286.042613,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "mutations": [
+        {
+          "path": "src/arch/all/rabinkarp.rs",
+          "before_sha256": "06038cce1cbead7b088e541ba41bcc1c095c34bde483b7df6ad9f77a49c1063c",
+          "after_sha256": "77583d97e36c111c27d19e9af5c7188c7216aec8fc51625afd4772013953e4c5"
+        }
+      ]
+    },
+    {
+      "case": "signature",
+      "steps": [
+        {
+          "operation": "ingest_file",
+          "path": "src/arch/all/rabinkarp.rs",
+          "ms": 14.755667,
+          "result": {
+            "document_id": "a3f61c09-a39a-4520-a3e9-5c8b18a659ff",
+            "chunk_count": 37,
+            "node_id": "f5914aca-b29c-449f-9b62-0d722b1be570",
+            "edge_count": 2,
+            "content_hash": "9ed63dfccbc58ece6c239c796e4f12b9d487657053b798ec0adc157036bff332",
+            "op": "updated",
+            "revision": 3,
+            "etag": "W/\"3\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/memmem/searcher.rs",
+          "ms": 82.00875,
+          "result": {
+            "document_id": "a98bd250-a374-4516-b11c-4ef1fb77ef51",
+            "chunk_count": 101,
+            "node_id": "7db5d9d3-1452-4f5d-b431-924eaf135ca9",
+            "edge_count": 2,
+            "content_hash": "1e0e5391ca8de52931d7a2c7612f2dc17196768b6f2c019044e91ab29480caef",
+            "op": "updated",
+            "revision": 2,
+            "etag": "W/\"2\""
+          }
+        },
+        {
+          "operation": "index_code",
+          "arguments": {},
+          "ms": 3983.789417,
+          "result": {
+            "indexed": 2,
+            "unchanged": 44,
+            "unsupported": 0,
+            "parse_errors": [],
+            "index_revision": 3,
+            "revision_created": true,
+            "stage_timings": {
+              "contract_version": 1,
+              "run_id": "87654ff1-833c-4ceb-9585-f2dfbfa07671",
+              "lock_wait_ms": 0.000125,
+              "source_load_decode_ms": 0.7306250000000001,
+              "cache_parse_serialize_ms": 56.51825,
+              "cache_replace_ms": 2.3405829999999996,
+              "revision_publish_ms": 3908.223,
+              "transaction_body_ms": 3967.869875,
+              "before_metrics_write_ms": 3967.8700839999997,
+              "documents_loaded": 46,
+              "cache_hits": 44,
+              "cache_misses": 2,
+              "unsupported_documents": 0,
+              "parse_error_documents": 0,
+              "commit_included": false,
+              "metrics_write_included": false,
+              "embedding_fts_included": false
+            },
+            "resolution": {
+              "contract_version": 1,
+              "documents_total": 46,
+              "documents_resolved": 20,
+              "documents_reused": 26,
+              "reference_sites_resolved": 5987,
+              "reference_sites_reused": 0,
+              "rust_package_scopes": 20,
+              "project_fallback_scopes": 0,
+              "empty_reference_documents": 26,
+              "dependency_inputs_hashed": 920,
+              "invalid_cache_entries": 0,
+              "forced_full": false,
+              "cache_available": true,
+              "no_resolution_required": false,
+              "resolution_ms": 3794.138417,
+              "equivalent_to_existing": null
+            },
+            "completion": {
+              "contract_version": 1,
+              "native_total_ms": 3983.4843339999998,
+              "commit_ms": 15.106083,
+              "metrics_write_ms": 0.508042,
+              "commit_included": true,
+              "process_lifetime_peak_rss_bytes": 504414208
+            }
+          }
+        }
+      ],
+      "inputs": {
+        "Cargo.toml": "acd93639cfd6bef0e806a15f9fc7d6eb0117ed4cac44d5bc9c8601d1fc357435",
+        "src/arch/aarch64/memchr.rs": "5bb70f915084e629d940dbc322f5b9096b2e658cf63fea8a2f6e7550412e73a0",
+        "src/arch/aarch64/mod.rs": "44cd1a614bd66f1e66fc86c541d3c3b8d3a14a644c13e8bf816df3f555eac2d4",
+        "src/arch/aarch64/neon/memchr.rs": "e8c00b8fb2c7e2711832ae3cedefe59f32ebedd7dfa4d0ec6de2a566c979daea",
+        "src/arch/aarch64/neon/mod.rs": "eab6d56c2b2354db4ee395f40282cd49f97e2ab853547be5de6e65fbe1b2f634",
+        "src/arch/aarch64/neon/packedpair.rs": "32d3e4cd0dd9b6c8382e5308cbd896d20242c90b12862c44a5de6a8b4d6126df",
+        "src/arch/all/memchr.rs": "b0b1214aa573ed5d02ae62a77c42c773065566b50274d4096e37817d65ab1594",
+        "src/arch/all/mod.rs": "05f3fc2b069682eb1545fc6366d167bb620a454365dac8b8dd6cde6cd64de18a",
+        "src/arch/all/packedpair/default_rank.rs": "abffd1b5b8b7a3be95c03dd1105b905c246a379854dc56f1e846ea7c4408f2c7",
+        "src/arch/all/packedpair/mod.rs": "3692afca650585fbc625ff43e0e415d298605f56bea8134bcb5a2decac46142b",
+        "src/arch/all/rabinkarp.rs": "53e6e66618088b6db85121ba03890edf062759d1dce2e2309ccf7b1dcb55ca55",
+        "src/arch/all/shiftor.rs": "0d79117f52a1e4795843603a3bb0b45397df4ad5e4184bbc923658dab9dc3b5f",
+        "src/arch/all/twoway.rs": "0b27eb1cd7402c1375a50466f8f66a68cb2806c3f69a647340b2759793eed4f8",
+        "src/arch/generic/memchr.rs": "31b11f07c5f24f02cb53715a6e508665b45943ddeebc05a243b88e728502dbe0",
+        "src/arch/generic/mod.rs": "1dd75f61e0ea2563b8205a08aaa7b55500130aa331d18b9e9f995724b66c7a39",
+        "src/arch/generic/packedpair.rs": "9c67ffe618eb8ae004a9777759db7a4b4b9c04393c23ee14eabf8747a2b16dc2",
+        "src/arch/mod.rs": "ca3960b7e2ed28d1b3c121710a870430531aad792f64d4dcb4ca4709d6cbda30",
+        "src/arch/wasm32/memchr.rs": "d88ac79f891d8530f505f5035062d3da274a05d66c611480c75430d52709d052",
+        "src/arch/wasm32/mod.rs": "a20377aa8fe07d68594879101dc73061e4f51d9c8d812b593b1f376e3c8add79",
+        "src/arch/wasm32/simd128/memchr.rs": "bac2c4c43fe710c83a6f2b1118fede043be89dd821d4b532907f129f09fdb5cf",
+        "src/arch/wasm32/simd128/mod.rs": "c157b373faedbfd65323be432e25bc411d97aa1b7bc58e76048614c7b2bf3bf6",
+        "src/arch/wasm32/simd128/packedpair.rs": "288ba6e5eee6a7a8e5e45c64cff1aa5d72d996c2a6bc228be372c75789f08e45",
+        "src/arch/x86_64/avx2/memchr.rs": "576ec0c30f49874f7fd9f6caeb490d56132c0fbbaa4d877b1aa532cafce19323",
+        "src/arch/x86_64/avx2/mod.rs": "0033d1b712d0b10f0f273ef9aa8caa53e05e49f4c56a64f39af0b9df97eec584",
+        "src/arch/x86_64/avx2/packedpair.rs": "87b69cb4301815906127db4f6370f572c7c5d5dad35c0946c00ad888dbcaec8c",
+        "src/arch/x86_64/memchr.rs": "4cf0611c926c3016d1b640880ef14e5654a8d1c1b480fe9a5965956be7eeeeef",
+        "src/arch/x86_64/mod.rs": "61b2aa876942fd3e78714c2ae21e356c8634545c06995020f443fa50218df027",
+        "src/arch/x86_64/sse2/memchr.rs": "0de0444e26d885eaf866220578752aac871e03bebee7b4f5de7fe8a35f5fa97f",
+        "src/arch/x86_64/sse2/mod.rs": "38b70ae52a64ec974dbb91d04d6ca8013d9e06d1fe4af852206bbc2faf1c59aa",
+        "src/arch/x86_64/sse2/packedpair.rs": "ad893c5ab9525966693e742673fb666f54ff9102949fc91c5e61642c8ad2f110",
+        "src/cow.rs": "2b053e393d3841f780425b3b0da5bec4f187603fa7c271b045ecb7d885b23395",
+        "src/ext.rs": "210f89d1e32211bc64414cbd56e97b4f56ce8a8832d321d77a9fe519634e27ea",
+        "src/lib.rs": "614f778a41e88a29ea0ceb8e92c839dbb6b5a61c967f8bfd962975e18f932c71",
+        "src/macros.rs": "3e4b39252bfa471fad384160a43f113ebfec7bec46a85d16f006622881dd2081",
+        "src/memchr.rs": "6ae779ec5d00f443075316e0105edf30b489a38e2e96325bec14ccecd014145b",
+        "src/memmem/mod.rs": "d869159f0d0c1915d7acc42a6a4aa3c97c049ddc043e6566afeb78ad290995d1",
+        "src/memmem/searcher.rs": "e33cafe1c1217430e4551691f6a935244909ad2f31269fe410bcbf9d4de26e6d",
+        "src/tests/memchr/mod.rs": "269f8e4b4f7f5ea458f27a3c174eb1020ffb2484eeba9464170beb51747df69b",
+        "src/tests/memchr/naive.rs": "6a0bee033e5edfb5b1d5769a5fa1c78388f7e9ff7bb91cb67f0ad029289e00e7",
+        "src/tests/memchr/prop.rs": "1854eea2338c405fe4635aac430f51e10d2069cd37a7489ddaff47da95f8720b",
+        "src/tests/mod.rs": "7cec8f809e279310a465c6a7725087970f219a676cc76c83de30c695bb490740",
+        "src/tests/packedpair.rs": "b02ec4fbb61a8653cb5f2268c31bc9168b8043347f2abdcc74081acf83b98e15",
+        "src/tests/substring/mod.rs": "c7660d10749363ac4687e7da2b5fda60768230425df8ba416c0c28b8d56a5c74",
+        "src/tests/substring/naive.rs": "df6f55d165382b8a53762ba4c324926cac13ebc62cde1805f4ce08740b326483",
+        "src/tests/substring/prop.rs": "38c15992609b5681a95d838ae6f2933e00a1219f2c971bfba245f96e0729fcdc",
+        "src/vector.rs": "b3d4f4e30456eb2d32e139cee0dcd6fc5866db3f8feb75cfca413df9a25778cc"
+      },
+      "ordinary_noop": false,
+      "environment": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 43.2,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 5967,
+            "cpu_percent": 67.6,
+            "command": "Kimi Helper",
+            "compiler": false
+          },
+          {
+            "pid": 5968,
+            "cpu_percent": 99.7,
+            "command": "Kimi Helper",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 39.5,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985290.380308,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "end_to_end_mcp_ms": 4080.563792,
+      "sampled_worker_peak_rss_bytes": 494649344,
+      "rss_samples": 67,
+      "rss_sample_period_seconds": 0.05,
+      "environment_after": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 40.6,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 712,
+            "cpu_percent": 44.0,
+            "command": "FindMyWidgetItems",
+            "compiler": false
+          },
+          {
+            "pid": 5967,
+            "cpu_percent": 113.4,
+            "command": "Kimi Helper",
+            "compiler": false
+          },
+          {
+            "pid": 5968,
+            "cpu_percent": 100.0,
+            "command": "Kimi Helper",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 41.1,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985294.5137348,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "mutations": [
+        {
+          "path": "src/arch/all/rabinkarp.rs",
+          "before_sha256": "77583d97e36c111c27d19e9af5c7188c7216aec8fc51625afd4772013953e4c5",
+          "after_sha256": "53e6e66618088b6db85121ba03890edf062759d1dce2e2309ccf7b1dcb55ca55"
+        },
+        {
+          "path": "src/memmem/searcher.rs",
+          "before_sha256": "da0581eabbd3a27127e578f4e178e519399b1dddba7856f5b1968d69f096efd5",
+          "after_sha256": "b5ff90c10638e1d0fe2d6f933b75349adf62c68cb08f431e696787650d43d70e"
+        },
+        {
+          "path": "src/memmem/searcher.rs",
+          "before_sha256": "b5ff90c10638e1d0fe2d6f933b75349adf62c68cb08f431e696787650d43d70e",
+          "after_sha256": "4c8e7a22c79a91fdb6456d652af367d569cf1c7bf4efdb3b9493224a7a93d09d"
+        },
+        {
+          "path": "src/memmem/searcher.rs",
+          "before_sha256": "4c8e7a22c79a91fdb6456d652af367d569cf1c7bf4efdb3b9493224a7a93d09d",
+          "after_sha256": "e33cafe1c1217430e4551691f6a935244909ad2f31269fe410bcbf9d4de26e6d"
+        }
+      ]
+    },
+    {
+      "case": "manifest_metadata",
+      "steps": [
+        {
+          "operation": "ingest_file",
+          "path": "Cargo.toml",
+          "ms": 68.008917,
+          "result": {
+            "document_id": "c8f5a8b3-80b5-4afd-ae41-21068129b66d",
+            "chunk_count": 6,
+            "node_id": "a2855040-60dd-4ca1-a7e3-7d0a5e389ccf",
+            "edge_count": 2,
+            "content_hash": "b5bd1504739f618c38fe76508833ba3d754b3e5cd209a742d4835219c8167762",
+            "op": "updated",
+            "revision": 2,
+            "etag": "W/\"2\""
+          }
+        },
+        {
+          "operation": "index_code",
+          "arguments": {},
+          "ms": 3937.716042,
+          "result": {
+            "indexed": 1,
+            "unchanged": 45,
+            "unsupported": 0,
+            "parse_errors": [],
+            "index_revision": 4,
+            "revision_created": true,
+            "stage_timings": {
+              "contract_version": 1,
+              "run_id": "98ff9b1b-87cc-4686-9b57-1c186dfae016",
+              "lock_wait_ms": 0.00025,
+              "source_load_decode_ms": 0.750791,
+              "cache_parse_serialize_ms": 12.043667,
+              "cache_replace_ms": 0.960209,
+              "revision_publish_ms": 3909.087834,
+              "transaction_body_ms": 3922.9082919999996,
+              "before_metrics_write_ms": 3922.908583,
+              "documents_loaded": 46,
+              "cache_hits": 45,
+              "cache_misses": 1,
+              "unsupported_documents": 0,
+              "parse_error_documents": 0,
+              "commit_included": false,
+              "metrics_write_included": false,
+              "embedding_fts_included": false
+            },
+            "resolution": {
+              "contract_version": 1,
+              "documents_total": 46,
+              "documents_resolved": 24,
+              "documents_reused": 22,
+              "reference_sites_resolved": 5987,
+              "reference_sites_reused": 0,
+              "rust_package_scopes": 20,
+              "project_fallback_scopes": 0,
+              "empty_reference_documents": 26,
+              "dependency_inputs_hashed": 920,
+              "invalid_cache_entries": 0,
+              "forced_full": false,
+              "cache_available": true,
+              "no_resolution_required": false,
+              "resolution_ms": 3797.944125,
+              "equivalent_to_existing": null
+            },
+            "completion": {
+              "contract_version": 1,
+              "native_total_ms": 3937.423083,
+              "commit_ms": 13.949958,
+              "metrics_write_ms": 0.564417,
+              "commit_included": true,
+              "process_lifetime_peak_rss_bytes": 531464192
+            }
+          }
+        }
+      ],
+      "inputs": {
+        "Cargo.toml": "5e1b6946fdedc02ffd1e9a9abba3111f47e124bd1bbb833ada8509eed1bd3f97",
+        "src/arch/aarch64/memchr.rs": "5bb70f915084e629d940dbc322f5b9096b2e658cf63fea8a2f6e7550412e73a0",
+        "src/arch/aarch64/mod.rs": "44cd1a614bd66f1e66fc86c541d3c3b8d3a14a644c13e8bf816df3f555eac2d4",
+        "src/arch/aarch64/neon/memchr.rs": "e8c00b8fb2c7e2711832ae3cedefe59f32ebedd7dfa4d0ec6de2a566c979daea",
+        "src/arch/aarch64/neon/mod.rs": "eab6d56c2b2354db4ee395f40282cd49f97e2ab853547be5de6e65fbe1b2f634",
+        "src/arch/aarch64/neon/packedpair.rs": "32d3e4cd0dd9b6c8382e5308cbd896d20242c90b12862c44a5de6a8b4d6126df",
+        "src/arch/all/memchr.rs": "b0b1214aa573ed5d02ae62a77c42c773065566b50274d4096e37817d65ab1594",
+        "src/arch/all/mod.rs": "05f3fc2b069682eb1545fc6366d167bb620a454365dac8b8dd6cde6cd64de18a",
+        "src/arch/all/packedpair/default_rank.rs": "abffd1b5b8b7a3be95c03dd1105b905c246a379854dc56f1e846ea7c4408f2c7",
+        "src/arch/all/packedpair/mod.rs": "3692afca650585fbc625ff43e0e415d298605f56bea8134bcb5a2decac46142b",
+        "src/arch/all/rabinkarp.rs": "53e6e66618088b6db85121ba03890edf062759d1dce2e2309ccf7b1dcb55ca55",
+        "src/arch/all/shiftor.rs": "0d79117f52a1e4795843603a3bb0b45397df4ad5e4184bbc923658dab9dc3b5f",
+        "src/arch/all/twoway.rs": "0b27eb1cd7402c1375a50466f8f66a68cb2806c3f69a647340b2759793eed4f8",
+        "src/arch/generic/memchr.rs": "31b11f07c5f24f02cb53715a6e508665b45943ddeebc05a243b88e728502dbe0",
+        "src/arch/generic/mod.rs": "1dd75f61e0ea2563b8205a08aaa7b55500130aa331d18b9e9f995724b66c7a39",
+        "src/arch/generic/packedpair.rs": "9c67ffe618eb8ae004a9777759db7a4b4b9c04393c23ee14eabf8747a2b16dc2",
+        "src/arch/mod.rs": "ca3960b7e2ed28d1b3c121710a870430531aad792f64d4dcb4ca4709d6cbda30",
+        "src/arch/wasm32/memchr.rs": "d88ac79f891d8530f505f5035062d3da274a05d66c611480c75430d52709d052",
+        "src/arch/wasm32/mod.rs": "a20377aa8fe07d68594879101dc73061e4f51d9c8d812b593b1f376e3c8add79",
+        "src/arch/wasm32/simd128/memchr.rs": "bac2c4c43fe710c83a6f2b1118fede043be89dd821d4b532907f129f09fdb5cf",
+        "src/arch/wasm32/simd128/mod.rs": "c157b373faedbfd65323be432e25bc411d97aa1b7bc58e76048614c7b2bf3bf6",
+        "src/arch/wasm32/simd128/packedpair.rs": "288ba6e5eee6a7a8e5e45c64cff1aa5d72d996c2a6bc228be372c75789f08e45",
+        "src/arch/x86_64/avx2/memchr.rs": "576ec0c30f49874f7fd9f6caeb490d56132c0fbbaa4d877b1aa532cafce19323",
+        "src/arch/x86_64/avx2/mod.rs": "0033d1b712d0b10f0f273ef9aa8caa53e05e49f4c56a64f39af0b9df97eec584",
+        "src/arch/x86_64/avx2/packedpair.rs": "87b69cb4301815906127db4f6370f572c7c5d5dad35c0946c00ad888dbcaec8c",
+        "src/arch/x86_64/memchr.rs": "4cf0611c926c3016d1b640880ef14e5654a8d1c1b480fe9a5965956be7eeeeef",
+        "src/arch/x86_64/mod.rs": "61b2aa876942fd3e78714c2ae21e356c8634545c06995020f443fa50218df027",
+        "src/arch/x86_64/sse2/memchr.rs": "0de0444e26d885eaf866220578752aac871e03bebee7b4f5de7fe8a35f5fa97f",
+        "src/arch/x86_64/sse2/mod.rs": "38b70ae52a64ec974dbb91d04d6ca8013d9e06d1fe4af852206bbc2faf1c59aa",
+        "src/arch/x86_64/sse2/packedpair.rs": "ad893c5ab9525966693e742673fb666f54ff9102949fc91c5e61642c8ad2f110",
+        "src/cow.rs": "2b053e393d3841f780425b3b0da5bec4f187603fa7c271b045ecb7d885b23395",
+        "src/ext.rs": "210f89d1e32211bc64414cbd56e97b4f56ce8a8832d321d77a9fe519634e27ea",
+        "src/lib.rs": "614f778a41e88a29ea0ceb8e92c839dbb6b5a61c967f8bfd962975e18f932c71",
+        "src/macros.rs": "3e4b39252bfa471fad384160a43f113ebfec7bec46a85d16f006622881dd2081",
+        "src/memchr.rs": "6ae779ec5d00f443075316e0105edf30b489a38e2e96325bec14ccecd014145b",
+        "src/memmem/mod.rs": "d869159f0d0c1915d7acc42a6a4aa3c97c049ddc043e6566afeb78ad290995d1",
+        "src/memmem/searcher.rs": "e33cafe1c1217430e4551691f6a935244909ad2f31269fe410bcbf9d4de26e6d",
+        "src/tests/memchr/mod.rs": "269f8e4b4f7f5ea458f27a3c174eb1020ffb2484eeba9464170beb51747df69b",
+        "src/tests/memchr/naive.rs": "6a0bee033e5edfb5b1d5769a5fa1c78388f7e9ff7bb91cb67f0ad029289e00e7",
+        "src/tests/memchr/prop.rs": "1854eea2338c405fe4635aac430f51e10d2069cd37a7489ddaff47da95f8720b",
+        "src/tests/mod.rs": "7cec8f809e279310a465c6a7725087970f219a676cc76c83de30c695bb490740",
+        "src/tests/packedpair.rs": "b02ec4fbb61a8653cb5f2268c31bc9168b8043347f2abdcc74081acf83b98e15",
+        "src/tests/substring/mod.rs": "c7660d10749363ac4687e7da2b5fda60768230425df8ba416c0c28b8d56a5c74",
+        "src/tests/substring/naive.rs": "df6f55d165382b8a53762ba4c324926cac13ebc62cde1805f4ce08740b326483",
+        "src/tests/substring/prop.rs": "38c15992609b5681a95d838ae6f2933e00a1219f2c971bfba245f96e0729fcdc",
+        "src/vector.rs": "b3d4f4e30456eb2d32e139cee0dcd6fc5866db3f8feb75cfca413df9a25778cc"
+      },
+      "ordinary_noop": false,
+      "environment": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 48.0,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 5967,
+            "cpu_percent": 108.0,
+            "command": "Kimi Helper",
+            "compiler": false
+          },
+          {
+            "pid": 74855,
+            "cpu_percent": 26.0,
+            "command": "ChatGPT",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 31.5,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985298.8570392,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "end_to_end_mcp_ms": 4005.733042,
+      "sampled_worker_peak_rss_bytes": 531464192,
+      "rss_samples": 67,
+      "rss_sample_period_seconds": 0.05,
+      "environment_after": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 43.2,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 5967,
+            "cpu_percent": 111.8,
+            "command": "Kimi Helper",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 40.0,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792985302.915827,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "mutations": [
+        {
+          "path": "Cargo.toml",
+          "before_sha256": "acd93639cfd6bef0e806a15f9fc7d6eb0117ed4cac44d5bc9c8601d1fc357435",
+          "after_sha256": "5e1b6946fdedc02ffd1e9a9abba3111f47e124bd1bbb833ada8509eed1bd3f97"
+        }
+      ]
+    }
+  ],
+  "correctness_audits": [
+    {
+      "case": "cold_ingest_and_index",
+      "result": {
+        "indexed": 0,
+        "unchanged": 46,
+        "unsupported": 0,
+        "parse_errors": [],
+        "index_revision": 1,
+        "revision_created": false,
+        "stage_timings": {
+          "contract_version": 1,
+          "run_id": "1f17622e-59c3-4dbe-b844-9456f4ffb2f6",
+          "lock_wait_ms": 0.000125,
+          "source_load_decode_ms": 0.7738750000000001,
+          "cache_parse_serialize_ms": 11.277000000000001,
+          "cache_replace_ms": 4.2e-05,
+          "revision_publish_ms": 4057.7618749999997,
+          "transaction_body_ms": 4069.924167,
+          "before_metrics_write_ms": 4069.924375,
+          "documents_loaded": 46,
+          "cache_hits": 46,
+          "cache_misses": 0,
+          "unsupported_documents": 0,
+          "parse_error_documents": 0,
+          "commit_included": false,
+          "metrics_write_included": false,
+          "embedding_fts_included": false
+        },
+        "resolution": {
+          "contract_version": 1,
+          "documents_total": 46,
+          "documents_resolved": 46,
+          "documents_reused": 0,
+          "reference_sites_resolved": 5986,
+          "reference_sites_reused": 0,
+          "rust_package_scopes": 20,
+          "project_fallback_scopes": 0,
+          "empty_reference_documents": 26,
+          "dependency_inputs_hashed": 920,
+          "invalid_cache_entries": 0,
+          "forced_full": true,
+          "cache_available": true,
+          "no_resolution_required": false,
+          "resolution_ms": 3720.158958,
+          "equivalent_to_existing": true
+        },
+        "completion": {
+          "contract_version": 1,
+          "native_total_ms": 4119.305084,
+          "commit_ms": 47.398208,
+          "metrics_write_ms": 1.9824579999999998,
+          "commit_included": true,
+          "process_lifetime_peak_rss_bytes": 409419776
+        }
+      }
+    },
+    {
+      "case": "warm_noop",
+      "result": {
+        "indexed": 0,
+        "unchanged": 46,
+        "unsupported": 0,
+        "parse_errors": [],
+        "index_revision": 1,
+        "revision_created": false,
+        "stage_timings": {
+          "contract_version": 1,
+          "run_id": "62f7c96a-3e19-48e9-83bd-ae77007226d0",
+          "lock_wait_ms": 0.000292,
+          "source_load_decode_ms": 0.754,
+          "cache_parse_serialize_ms": 10.682374999999999,
+          "cache_replace_ms": 4.1e-05,
+          "revision_publish_ms": 4155.7137920000005,
+          "transaction_body_ms": 4167.264583,
+          "before_metrics_write_ms": 4167.264959,
+          "documents_loaded": 46,
+          "cache_hits": 46,
+          "cache_misses": 0,
+          "unsupported_documents": 0,
+          "parse_error_documents": 0,
+          "commit_included": false,
+          "metrics_write_included": false,
+          "embedding_fts_included": false
+        },
+        "resolution": {
+          "contract_version": 1,
+          "documents_total": 46,
+          "documents_resolved": 46,
+          "documents_reused": 0,
+          "reference_sites_resolved": 5986,
+          "reference_sites_reused": 0,
+          "rust_package_scopes": 20,
+          "project_fallback_scopes": 0,
+          "empty_reference_documents": 26,
+          "dependency_inputs_hashed": 920,
+          "invalid_cache_entries": 0,
+          "forced_full": true,
+          "cache_available": true,
+          "no_resolution_required": false,
+          "resolution_ms": 3819.876375,
+          "equivalent_to_existing": true
+        },
+        "completion": {
+          "contract_version": 1,
+          "native_total_ms": 4172.297792,
+          "commit_ms": 3.5456670000000003,
+          "metrics_write_ms": 1.487125,
+          "commit_included": true,
+          "process_lifetime_peak_rss_bytes": 409419776
+        }
+      }
+    },
+    {
+      "case": "body",
+      "result": {
+        "indexed": 0,
+        "unchanged": 46,
+        "unsupported": 0,
+        "parse_errors": [],
+        "index_revision": 2,
+        "revision_created": false,
+        "stage_timings": {
+          "contract_version": 1,
+          "run_id": "019e9773-4948-4919-8f0a-f535f0ade523",
+          "lock_wait_ms": 0.00020800000000000001,
+          "source_load_decode_ms": 0.79,
+          "cache_parse_serialize_ms": 11.901042,
+          "cache_replace_ms": 4.2e-05,
+          "revision_publish_ms": 4105.510375,
+          "transaction_body_ms": 4118.326042,
+          "before_metrics_write_ms": 4118.326292,
+          "documents_loaded": 46,
+          "cache_hits": 46,
+          "cache_misses": 0,
+          "unsupported_documents": 0,
+          "parse_error_documents": 0,
+          "commit_included": false,
+          "metrics_write_included": false,
+          "embedding_fts_included": false
+        },
+        "resolution": {
+          "contract_version": 1,
+          "documents_total": 46,
+          "documents_resolved": 46,
+          "documents_reused": 0,
+          "reference_sites_resolved": 5987,
+          "reference_sites_reused": 0,
+          "rust_package_scopes": 20,
+          "project_fallback_scopes": 0,
+          "empty_reference_documents": 26,
+          "dependency_inputs_hashed": 920,
+          "invalid_cache_entries": 0,
+          "forced_full": true,
+          "cache_available": true,
+          "no_resolution_required": false,
+          "resolution_ms": 3775.98875,
+          "equivalent_to_existing": true
+        },
+        "completion": {
+          "contract_version": 1,
+          "native_total_ms": 4119.50275,
+          "commit_ms": 0.526375,
+          "metrics_write_ms": 0.6499159999999999,
+          "commit_included": true,
+          "process_lifetime_peak_rss_bytes": 486998016
+        }
+      }
+    },
+    {
+      "case": "signature",
+      "result": {
+        "indexed": 0,
+        "unchanged": 46,
+        "unsupported": 0,
+        "parse_errors": [],
+        "index_revision": 3,
+        "revision_created": false,
+        "stage_timings": {
+          "contract_version": 1,
+          "run_id": "6fdb26ac-3b84-4fe4-bb49-92450d57ce48",
+          "lock_wait_ms": 0.000209,
+          "source_load_decode_ms": 0.714792,
+          "cache_parse_serialize_ms": 11.726875,
+          "cache_replace_ms": 0.000125,
+          "revision_publish_ms": 4114.018917,
+          "transaction_body_ms": 4126.573292,
+          "before_metrics_write_ms": 4126.573542,
+          "documents_loaded": 46,
+          "cache_hits": 46,
+          "cache_misses": 0,
+          "unsupported_documents": 0,
+          "parse_error_documents": 0,
+          "commit_included": false,
+          "metrics_write_included": false,
+          "embedding_fts_included": false
+        },
+        "resolution": {
+          "contract_version": 1,
+          "documents_total": 46,
+          "documents_resolved": 46,
+          "documents_reused": 0,
+          "reference_sites_resolved": 5987,
+          "reference_sites_reused": 0,
+          "rust_package_scopes": 20,
+          "project_fallback_scopes": 0,
+          "empty_reference_documents": 26,
+          "dependency_inputs_hashed": 920,
+          "invalid_cache_entries": 0,
+          "forced_full": true,
+          "cache_available": true,
+          "no_resolution_required": false,
+          "resolution_ms": 3788.402667,
+          "equivalent_to_existing": true
+        },
+        "completion": {
+          "contract_version": 1,
+          "native_total_ms": 4127.773542,
+          "commit_ms": 0.543042,
+          "metrics_write_ms": 0.656916,
+          "commit_included": true,
+          "process_lifetime_peak_rss_bytes": 505643008
+        }
+      }
+    },
+    {
+      "case": "manifest_metadata",
+      "result": {
+        "indexed": 0,
+        "unchanged": 46,
+        "unsupported": 0,
+        "parse_errors": [],
+        "index_revision": 4,
+        "revision_created": false,
+        "stage_timings": {
+          "contract_version": 1,
+          "run_id": "034ecac4-f4f4-4f0d-8b91-7b1cddc267f5",
+          "lock_wait_ms": 0.00025,
+          "source_load_decode_ms": 0.67,
+          "cache_parse_serialize_ms": 12.686625,
+          "cache_replace_ms": 0.000125,
+          "revision_publish_ms": 4117.234209,
+          "transaction_body_ms": 4130.690375,
+          "before_metrics_write_ms": 4130.690791,
+          "documents_loaded": 46,
+          "cache_hits": 46,
+          "cache_misses": 0,
+          "unsupported_documents": 0,
+          "parse_error_documents": 0,
+          "commit_included": false,
+          "metrics_write_included": false,
+          "embedding_fts_included": false
+        },
+        "resolution": {
+          "contract_version": 1,
+          "documents_total": 46,
+          "documents_resolved": 46,
+          "documents_reused": 0,
+          "reference_sites_resolved": 5987,
+          "reference_sites_reused": 0,
+          "rust_package_scopes": 20,
+          "project_fallback_scopes": 0,
+          "empty_reference_documents": 26,
+          "dependency_inputs_hashed": 920,
+          "invalid_cache_entries": 0,
+          "forced_full": true,
+          "cache_available": true,
+          "no_resolution_required": false,
+          "resolution_ms": 3787.593042,
+          "equivalent_to_existing": true
+        },
+        "completion": {
+          "contract_version": 1,
+          "native_total_ms": 4131.723833,
+          "commit_ms": 0.372042,
+          "metrics_write_ms": 0.661,
+          "commit_included": true,
+          "process_lifetime_peak_rss_bytes": 531464192
+        }
+      }
+    }
+  ],
+  "compiler_checks": [
+    {
+      "case": "cold_ingest_and_index",
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--lib",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/Cargo.toml"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "    Checking memchr v2.8.3 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources)\nwarning: struct `SensibleMoveMask` is never constructed\n   --> src/vector.rs:132:19\n    |\n132 | pub(crate) struct SensibleMoveMask(u32);\n    |                   ^^^^^^^^^^^^^^^^\n    |\n    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\nwarning: method `get_for_offset` is never used\n   --> src/vector.rs:140:8\n    |\n134 | impl SensibleMoveMask {\n    | --------------------- method in this implementation\n...\n140 |     fn get_for_offset(self) -> u32 {\n    |        ^^^^^^^^^^^^^^\n\nwarning: `memchr` (lib) generated 2 warnings\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.21s\n"
+    },
+    {
+      "case": "warm_noop",
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--lib",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/Cargo.toml"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "warning: struct `SensibleMoveMask` is never constructed\n   --> src/vector.rs:132:19\n    |\n132 | pub(crate) struct SensibleMoveMask(u32);\n    |                   ^^^^^^^^^^^^^^^^\n    |\n    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\nwarning: method `get_for_offset` is never used\n   --> src/vector.rs:140:8\n    |\n134 | impl SensibleMoveMask {\n    | --------------------- method in this implementation\n...\n140 |     fn get_for_offset(self) -> u32 {\n    |        ^^^^^^^^^^^^^^\n\nwarning: `memchr` (lib) generated 2 warnings\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.00s\n"
+    },
+    {
+      "case": "body",
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--lib",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/Cargo.toml"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "    Checking memchr v2.8.3 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources)\nwarning: struct `SensibleMoveMask` is never constructed\n   --> src/vector.rs:132:19\n    |\n132 | pub(crate) struct SensibleMoveMask(u32);\n    |                   ^^^^^^^^^^^^^^^^\n    |\n    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\nwarning: method `get_for_offset` is never used\n   --> src/vector.rs:140:8\n    |\n134 | impl SensibleMoveMask {\n    | --------------------- method in this implementation\n...\n140 |     fn get_for_offset(self) -> u32 {\n    |        ^^^^^^^^^^^^^^\n\nwarning: `memchr` (lib) generated 2 warnings\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.14s\n"
+    },
+    {
+      "case": "signature",
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--lib",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/Cargo.toml"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "    Checking memchr v2.8.3 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources)\nwarning: struct `SensibleMoveMask` is never constructed\n   --> src/vector.rs:132:19\n    |\n132 | pub(crate) struct SensibleMoveMask(u32);\n    |                   ^^^^^^^^^^^^^^^^\n    |\n    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\nwarning: method `get_for_offset` is never used\n   --> src/vector.rs:140:8\n    |\n134 | impl SensibleMoveMask {\n    | --------------------- method in this implementation\n...\n140 |     fn get_for_offset(self) -> u32 {\n    |        ^^^^^^^^^^^^^^\n\nwarning: `memchr` (lib) generated 2 warnings\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.14s\n"
+    },
+    {
+      "case": "manifest_metadata",
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--lib",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/Cargo.toml"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "warning: struct `SensibleMoveMask` is never constructed\n   --> src/vector.rs:132:19\n    |\n132 | pub(crate) struct SensibleMoveMask(u32);\n    |                   ^^^^^^^^^^^^^^^^\n    |\n    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\nwarning: method `get_for_offset` is never used\n   --> src/vector.rs:140:8\n    |\n134 | impl SensibleMoveMask {\n    | --------------------- method in this implementation\n...\n140 |     fn get_for_offset(self) -> u32 {\n    |        ^^^^^^^^^^^^^^\n\nwarning: `memchr` (lib) generated 2 warnings\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.00s\n"
+    }
+  ],
+  "production_database_used": false,
+  "performance_qualified": false,
+  "limitations": [
+    "small real-library workload; no representative scale claim",
+    "mock embeddings (16 dimensions), local FTS/document writes and code graph; no model cost",
+    "startup, source-copy, compiler and equivalence audits excluded from timing",
+    "sampled worker RSS is a lower bound, not exact physical operation peak",
+    "full binding control is an internal algorithm control, not a competitor",
+    "manifest_metadata changes metadata, not Cargo feature/dependency semantics",
+    "release profile is supplied by an external manifest; this runner checks identity, not compiler provenance"
+  ],
+  "index_status": {
+    "calls": 1227,
+    "capabilities": {
+      "calls_and_value_references": "conservative_static_candidates",
+      "cpg": {
+        "available": false,
+        "reason": "backend_not_implemented"
+      },
+      "data_flow_slicing": false,
+      "graph_compute": {
+        "backend": "native_cpu",
+        "gpu_available": false,
+        "reason": "no_graph_gpu_backend",
+        "scope": "structural_graph_operations"
+      },
+      "inheritance": "partial_static",
+      "languages": [
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "rust"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "python"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "javascript"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "typescript"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "tsx"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "go"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "java"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "lua"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "ruby"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "csharp"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "perl"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "powershell"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "c"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "cpp"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "php"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "shell"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "css"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "html"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "sqlparser",
+          "language": "sql"
+        }
+      ],
+      "representative_precision_recall_verified": false,
+      "runtime_dispatch_verified": false,
+      "rust_receiver_typing": {
+        "backend": "captured_ast",
+        "compiler_verified": false,
+        "limitations": [
+          "complete_trait_solver_and_gats",
+          "custom_deref_and_index",
+          "macro_and_cfg_expansion",
+          "full_compiler_type_inference"
+        ],
+        "patterns": [
+          "declared_returns",
+          "method_chains",
+          "async_await",
+          "named_fields",
+          "arrays_slices_vec",
+          "standard_box_arc_rc",
+          "local_factory_initializers",
+          "explicit_function_type_arguments"
+        ],
+        "return_type_context": "declaration_document",
+        "runtime_dispatch_verified": false
+      },
+      "rust_trait_typing": {
+        "backend": "captured_ast",
+        "bound_receiver_targets": "trait_declarations_only",
+        "compiler_verified": false,
+        "limitations": [
+          "full_coherence_and_specialization",
+          "higher_ranked_and_generic_associated_types",
+          "complete_supertrait_and_trait_argument_inference",
+          "macro_cfg_and_target_configuration"
+        ],
+        "patterns": [
+          "cross_file_impl_owner",
+          "generic_impl_substitution",
+          "explicit_ufcs",
+          "generic_and_where_bounds",
+          "dyn_and_impl_trait_declarations",
+          "associated_type_projections",
+          "default_methods",
+          "inherent_precedence",
+          "explicit_ambiguity"
+        ],
+        "runtime_dispatch_verified": false
+      },
+      "slice": "bounded_structural_call_graph",
+      "sql_schema": "captured_migration_ddl_subset"
+    },
+    "capability": "static_syntax_bindings",
+    "cargo_targets": [
+      {
+        "cfg_evaluated": false,
+        "compiler_verified": false,
+        "complete": false,
+        "features_evaluated": false,
+        "kind": "lib",
+        "macro_expansion": false,
+        "manifest_hash": "b5bd1504739f618c38fe76508833ba3d754b3e5cd209a742d4835219c8167762",
+        "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/Cargo.toml",
+        "manifest_revision": 2,
+        "member_paths": [
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/arch/aarch64/memchr.rs",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/arch/aarch64/mod.rs",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/arch/aarch64/neon/memchr.rs",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/arch/aarch64/neon/mod.rs",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/arch/aarch64/neon/packedpair.rs",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/arch/all/memchr.rs",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/arch/all/mod.rs",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/arch/all/packedpair/default_rank.rs",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/arch/all/packedpair/mod.rs",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/arch/all/rabinkarp.rs",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/arch/all/shiftor.rs",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/arch/all/twoway.rs",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/arch/generic/memchr.rs",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/arch/generic/mod.rs",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/arch/generic/packedpair.rs",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/arch/mod.rs",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/cow.rs",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/ext.rs",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/lib.rs",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/memchr.rs",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/memmem/mod.rs",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/memmem/searcher.rs",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/vector.rs"
+        ],
+        "member_paths_truncated": false,
+        "name": "memchr",
+        "observed_member_paths_total": 23,
+        "package": "memchr",
+        "project": "bench",
+        "required_features_unselected": false,
+        "root_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/src/lib.rs",
+        "scope": "captured_source_syntax",
+        "target_id": "d0087ac9e46e83c43c241a8b1ea8a9690fde61f72e6582520511123dd75e795e"
+      }
+    ],
+    "cargo_targets_total": 1,
+    "cargo_targets_truncated": false,
+    "contract_version": 1,
+    "coverage": {
+      "available": true,
+      "evidence_limit": 50,
+      "evidence_truncated": false,
+      "extensions": {
+        "rs": 45,
+        "toml": 1
+      },
+      "fresh_documents": 46,
+      "indexable_documents": 46,
+      "parse_error_count": 0,
+      "source_documents": 46,
+      "stale_count": 0,
+      "unindexed_count": 0,
+      "unsupported_extension_categories": 0,
+      "unsupported_extensions_truncated": false,
+      "unsupported_is_not_parse_failure": true,
+      "unsupported_source_extensions": {}
+    },
+    "data_flow_slicing": false,
+    "filesystem_verified": false,
+    "index_rev": 4,
+    "observation_consistency": "single_read_transaction",
+    "observation_ms": 143.623167,
+    "parse_errors": [],
+    "policy_decisions": 163,
+    "project": "bench",
+    "quality": {
+      "binding_diagnostic_code_count": 0,
+      "binding_diagnostic_codes_truncated": false,
+      "binding_diagnostic_counts": {},
+      "chunks": {
+        "byte_budget_exhausted": false,
+        "bytes_inspected": 90761,
+        "dimension_mismatches": 0,
+        "dimensions": {
+          "16": 128
+        },
+        "examples": [],
+        "examples_truncated": false,
+        "invalid_vectors": 0,
+        "large_vectors_unmeasured": 0,
+        "long_text_unmeasured": 0,
+        "max_content_chars": 800,
+        "max_estimated_tokens": 251,
+        "norm_max": 1.0000001119185913,
+        "norm_min": 0.9999998922588765,
+        "norm_p50": 0.9999999938965187,
+        "oversized_estimated_tokens": 0,
+        "problem_rows": 0,
+        "sample_truncated": true,
+        "sampled": 128,
+        "tokenized": 128,
+        "total": 1362,
+        "unit_norm_vectors": 128,
+        "valid_vectors": 128,
+        "zero_vectors": 0
+      },
+      "docblocks": {
+        "available": true,
+        "compiler_or_rendered_semantics_verified": false,
+        "coverage": 0.7156177156177156,
+        "documented_symbols": 307,
+        "examined_symbols": 429,
+        "full_language_coverage_verified": false,
+        "observed_doc_facts": 307,
+        "scope": "supported_syntax_forms_in_fresh_scoped_symbols",
+        "truncated_segment_lists": 0,
+        "truncated_texts": 0,
+        "uninspected_symbols": 0
+      },
+      "embedding_identity": {
+        "available": true,
+        "configured_dims": 16,
+        "dims": 16,
+        "matches_config": true,
+        "model": "text-embedding-3-small",
+        "provider": "mock",
+        "scope": "corpus_global"
+      },
+      "exhaustive": false,
+      "fresh_code_files_without_definitions": 23,
+      "healthy": null,
+      "manifest_error_code": null,
+      "observed_checks_passed": true,
+      "problems": [],
+      "reference_resolution_counts": {
+        "resolved_static": 1051,
+        "unresolved": 4936
+      },
+      "sample_policy": {
+        "byte_budget": 4194304,
+        "limit": 128,
+        "max_chunk_tokens": 4096,
+        "max_text_chars": 16384,
+        "max_vector_bytes": 65536,
+        "order": "chunk_id",
+        "threshold_calibrated": false,
+        "token_counts_estimated": true
+      },
+      "signatures": {
+        "available": true,
+        "empty": 0,
+        "max_chars": 201,
+        "nonempty": 429,
+        "parameter_type_coverage": null,
+        "truncation_verified": false
+      },
+      "snapshot_error_code": null,
+      "unmeasured_checks": [
+        "semantic_precision_recall",
+        "runtime_dispatch",
+        "full_docblock_coverage",
+        "complete_parameter_types",
+        "index_commit_timing",
+        "index_failure_runs",
+        "per_project_index_timings"
+      ]
+    },
+    "resource_targets": {
+      "diagnostics": {
+        "binary_decoding_proven": false,
+        "fresh_targets": 0,
+        "hash_semantics": "decoded_stored_source_text",
+        "items": [],
+        "live_filesystem_checked": false,
+        "targets_total": 0,
+        "total": 0,
+        "truncated": false
+      },
+      "inventory_available": true,
+      "syntax_indexed": false
+    },
+    "retrieval": {
+      "lexical": {
+        "backend": "duckdb_bm25",
+        "chunks_generation": 50,
+        "configured": true,
+        "dirty": true,
+        "generation_gap": 50,
+        "index_generation": 0,
+        "rebuild_count": 1,
+        "scope": "corpus_global"
+      }
+    },
+    "runtime_dispatch_verified": false,
+    "rust_build_contexts": [
+      {
+        "available": true,
+        "cfg_flags": [
+          "debug_assertions",
+          "overflow_checks",
+          "target_has_atomic",
+          "target_has_atomic_load_store",
+          "target_has_reliable_f128",
+          "target_has_reliable_f16",
+          "target_has_reliable_f16_math",
+          "target_has_reliable_f16b",
+          "target_has_threads",
+          "target_thread_local",
+          "ub_checks",
+          "unix"
+        ],
+        "cfg_flags_total": 12,
+        "cfg_flags_truncated": false,
+        "cfg_values": {
+          "fmt_debug": [
+            "full"
+          ],
+          "panic": [
+            "unwind"
+          ],
+          "relocation_model": [
+            "pic"
+          ],
+          "target_abi": [
+            ""
+          ],
+          "target_arch": [
+            "aarch64"
+          ],
+          "target_endian": [
+            "little"
+          ],
+          "target_env": [
+            ""
+          ],
+          "target_family": [
+            "unix"
+          ],
+          "target_feature": [
+            "aes",
+            "crc",
+            "dit",
+            "dotprod",
+            "dpb",
+            "dpb2",
+            "fcma",
+            "fhm"
+          ],
+          "target_has_atomic": [
+            "128",
+            "16",
+            "32",
+            "64",
+            "8",
+            "ptr"
+          ],
+          "target_has_atomic_load_store": [
+            "128",
+            "16",
+            "32",
+            "64",
+            "8",
+            "ptr"
+          ],
+          "target_has_atomic_primitive_alignment": [
+            "128",
+            "16",
+            "32",
+            "64",
+            "8",
+            "ptr"
+          ],
+          "target_object_format": [
+            "mach-o"
+          ],
+          "target_os": [
+            "macos"
+          ],
+          "target_pointer_width": [
+            "64"
+          ],
+          "target_vendor": [
+            "apple"
+          ]
+        },
+        "cfg_values_truncated": true,
+        "compiler_verified": false,
+        "configuration_id": "9dd9d4967a21b2b32e4302f4d7ea3944b41794c97205430bea2f48a7429e4d3e",
+        "default_features": true,
+        "dependency_feature_forwarding_verified": true,
+        "disabled_conditions": 104,
+        "excluded_source_files": 22,
+        "features": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "features_total": 3,
+        "features_truncated": false,
+        "manifest_hash": "b5bd1504739f618c38fe76508833ba3d754b3e5cd209a742d4835219c8167762",
+        "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-b0j5hhd0/sources/Cargo.toml",
+        "manifest_revision": 2,
+        "multi_target_instantiation": false,
+        "project": "bench",
+        "scope": "one_explicit_compilation_target_per_package",
+        "target_kind": "lib",
+        "target_name": null,
+        "target_triple": "aarch64-apple-darwin",
+        "unknown_conditions": 0
+      }
+    ],
+    "rust_build_contexts_total": 1,
+    "rust_build_contexts_truncated": false,
+    "sql_tables": 0,
+    "sql_usages": 0,
+    "stage_timings": {
+      "available": true,
+      "commit_measured": false,
+      "embedding_fts_measured": false,
+      "index_rev": 4,
+      "latest_successful_run": {
+        "index_rev": 4,
+        "metrics": {
+          "before_metrics_write_ms": 4130.690791,
+          "cache_hits": 46,
+          "cache_misses": 0,
+          "cache_parse_serialize_ms": 12.686625,
+          "cache_replace_ms": 0.000125,
+          "commit_included": false,
+          "contract_version": 1,
+          "documents_loaded": 46,
+          "embedding_fts_included": false,
+          "lock_wait_ms": 0.00025,
+          "metrics_write_included": false,
+          "parse_error_documents": 0,
+          "revision_publish_ms": 4117.234209,
+          "run_id": "034ecac4-f4f4-4f0d-8b91-7b1cddc267f5",
+          "source_load_decode_ms": 0.67,
+          "transaction_body_ms": 4130.690375,
+          "unsupported_documents": 0
+        },
+        "recorded_at": "2026-10-26 03:28:22.94169",
+        "revision_created": false,
+        "run_id": "034ecac4-f4f4-4f0d-8b91-7b1cddc267f5",
+        "seq": 10
+      },
+      "mcp_queue_wait_measured": false,
+      "metrics_write_measured": false,
+      "publication_run": {
+        "index_rev": 4,
+        "metrics": {
+          "before_metrics_write_ms": 3922.908583,
+          "cache_hits": 45,
+          "cache_misses": 1,
+          "cache_parse_serialize_ms": 12.043667,
+          "cache_replace_ms": 0.960209,
+          "commit_included": false,
+          "contract_version": 1,
+          "documents_loaded": 46,
+          "embedding_fts_included": false,
+          "lock_wait_ms": 0.00025,
+          "metrics_write_included": false,
+          "parse_error_documents": 0,
+          "revision_publish_ms": 3909.087834,
+          "run_id": "98ff9b1b-87cc-4686-9b57-1c186dfae016",
+          "source_load_decode_ms": 0.750791,
+          "transaction_body_ms": 3922.908292,
+          "unsupported_documents": 0
+        },
+        "recorded_at": "2026-10-26 03:28:18.929184",
+        "revision_created": true,
+        "run_id": "98ff9b1b-87cc-4686-9b57-1c186dfae016",
+        "seq": 9
+      },
+      "reason": null,
+      "scope": "corpus_global",
+      "successful_committed_runs_only": true
+    },
+    "stale_documents": [],
+    "state": "observed_checks_passed",
+    "style_facts": 0,
+    "symbols": 429,
+    "unindexed_documents": [],
+    "unresolved_calls": 699,
+    "versions": {
+      "index_format": 70,
+      "package": "0.1.0",
+      "store_schema": 25
+    },
+    "view": "current_captured_sources_and_fresh_subset_of_revision_inputs"
+  },
+  "isolated_stderr": "",
+  "original_source_unchanged": true,
+  "binary_unchanged": true
+}

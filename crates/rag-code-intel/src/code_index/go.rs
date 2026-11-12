@@ -714,6 +714,7 @@ pub(super) fn resolve(
     candidates.sort_by_key(|s| &s.id);
     candidates.dedup_by_key(|s| &s.id);
     CallEdge {
+        context_evidence: None,
         reference: r.clone(),
         resolution: match candidates.len() {
             0 => "unresolved",
@@ -796,27 +797,52 @@ mod tests {
     }
     #[test]
     fn package_functions_receivers_and_interface_contracts_are_distinct() {
-        let s=snapshot(&[
-            ("/p/service.go","p","package main\ntype Service struct{}\nfunc (s *Service) Run() { helper() }\nfunc helper() {}\ntype Reader interface { Read() }\n"),
-            ("/p/main.go","p","package main\nfunc main() { helper() }\nfunc use(s *Service, r Reader) { s.Run(); r.Read() }\n"),
+        let s = snapshot(&[
+            (
+                "/p/service.go",
+                "p",
+                "package main\ntype Service struct{}\nfunc (s *Service) Run() { helper() }\nfunc helper() {}\ntype Reader interface { Read() }\n",
+            ),
+            (
+                "/p/main.go",
+                "p",
+                "package main\nfunc main() { helper() }\nfunc use(s *Service, r Reader) { s.Run(); r.Read() }\n",
+            ),
         ]);
         assert_eq!(target(&s, "helper"), vec!["helper"]);
         assert_eq!(target(&s, "s.Run"), vec!["Service::Run"]);
         assert_eq!(target(&s, "r.Read"), vec!["Reader::Read"]);
         assert_eq!(call(&s, "r.Read").resolution_basis, "go_interface_contract");
         assert!(s.entrypoints.iter().any(|e| e.kind == "conventional_main"));
-        assert!(s
-            .symbols
-            .iter()
-            .any(|s| s.name == "Reader" && s.kind == "type_spec"));
+        assert!(
+            s.symbols
+                .iter()
+                .any(|s| s.name == "Reader" && s.kind == "type_spec")
+        );
     }
     #[test]
     fn module_imports_use_real_package_name_and_do_not_guess_external_dependencies() {
-        let s=snapshot(&[
-            ("/p/go.mod","p","// module fake/path\nmodule example.org/app\n"),
-            ("/p/api/api.go","p","package renamed\nfunc Work() {}\nfunc private() {}\n"),
-            ("/p/main.go","p","package main\nimport \"example.org/app/api\"\nfunc main() { renamed.Work(); renamed.private() }"),
-            ("/p/alias.go","p","package main\nimport svc \"example.org/app/api\"\nimport ext \"external.org/api\"\nfunc use() {svc.Work();ext.Work()}"),
+        let s = snapshot(&[
+            (
+                "/p/go.mod",
+                "p",
+                "// module fake/path\nmodule example.org/app\n",
+            ),
+            (
+                "/p/api/api.go",
+                "p",
+                "package renamed\nfunc Work() {}\nfunc private() {}\n",
+            ),
+            (
+                "/p/main.go",
+                "p",
+                "package main\nimport \"example.org/app/api\"\nfunc main() { renamed.Work(); renamed.private() }",
+            ),
+            (
+                "/p/alias.go",
+                "p",
+                "package main\nimport svc \"example.org/app/api\"\nimport ext \"external.org/api\"\nfunc use() {svc.Work();ext.Work()}",
+            ),
         ]);
         assert_eq!(target(&s, "renamed.Work"), vec!["Work"]);
         assert_eq!(target(&s, "svc.Work"), vec!["Work"]);
@@ -825,7 +851,11 @@ mod tests {
     }
     #[test]
     fn shadowed_names_composite_receivers_and_pointer_method_expressions() {
-        let s=snapshot(&[("/p/a.go","p","package p\ntype Service struct{}\nfunc (s *Service) Run() {}\nfunc Work() {}\nfunc use(Work func()) { Work(); s := &Service{}; s.Run(); callback := Service.Run; _ = callback }\n")]);
+        let s = snapshot(&[(
+            "/p/a.go",
+            "p",
+            "package p\ntype Service struct{}\nfunc (s *Service) Run() {}\nfunc Work() {}\nfunc use(Work func()) { Work(); s := &Service{}; s.Run(); callback := Service.Run; _ = callback }\n",
+        )]);
         assert!(target(&s, "Work").is_empty());
         assert_eq!(target(&s, "s.Run"), vec!["Service::Run"]);
         let bound = s
@@ -845,14 +875,22 @@ mod tests {
     }
     #[test]
     fn tests_build_tags_other_projects_and_nested_modules_do_not_leak_targets() {
-        let s=snapshot(&[
-            ("/p/go.mod","p","module example.org/app"),
-            ("/p/main.go","p","package main\nimport api \"example.org/app/nested\"\nfunc main() { testOnly(); platform(); foreign(); api.Work() }"),
-            ("/p/main_test.go","p","package main\nfunc testOnly() {}\nfunc TestExample() {testOnly()}"),
-            ("/p/impl_linux.go","p","package main\nfunc platform() {}"),
-            ("/p/foreign.go","other","package main\nfunc foreign() {}"),
-            ("/p/nested/go.mod","p","module other.org/nested"),
-            ("/p/nested/a.go","p","package nested\nfunc Work() {}"),
+        let s = snapshot(&[
+            ("/p/go.mod", "p", "module example.org/app"),
+            (
+                "/p/main.go",
+                "p",
+                "package main\nimport api \"example.org/app/nested\"\nfunc main() { testOnly(); platform(); foreign(); api.Work() }",
+            ),
+            (
+                "/p/main_test.go",
+                "p",
+                "package main\nfunc testOnly() {}\nfunc TestExample() {testOnly()}",
+            ),
+            ("/p/impl_linux.go", "p", "package main\nfunc platform() {}"),
+            ("/p/foreign.go", "other", "package main\nfunc foreign() {}"),
+            ("/p/nested/go.mod", "p", "module other.org/nested"),
+            ("/p/nested/a.go", "p", "package nested\nfunc Work() {}"),
         ]);
         let production = s.calls.iter().filter(|r| r.reference.path == "/p/main.go");
         assert!(
@@ -860,14 +898,19 @@ mod tests {
             "{:?}",
             s.calls
         );
-        assert!(s
-            .calls
-            .iter()
-            .any(|r| r.reference.path.ends_with("_test.go") && !r.candidates.is_empty()));
+        assert!(
+            s.calls
+                .iter()
+                .any(|r| r.reference.path.ends_with("_test.go") && !r.candidates.is_empty())
+        );
     }
     #[test]
     fn aliases_interfaces_cycles_and_anonymous_owners_are_honest() {
-        let s=snapshot(&[("/p/a.go","p","package p\ntype Service struct{}\nfunc (s Service) Run() {}\ntype Alias = Service\ntype A = B\ntype B = A\nfunc helper() {}\nfunc use(a Alias,b A) { a.Run(); b.Run(); f := func(){helper()}; _ = f }" )]);
+        let s = snapshot(&[(
+            "/p/a.go",
+            "p",
+            "package p\ntype Service struct{}\nfunc (s Service) Run() {}\ntype Alias = Service\ntype A = B\ntype B = A\nfunc helper() {}\nfunc use(a Alias,b A) { a.Run(); b.Run(); f := func(){helper()}; _ = f }",
+        )]);
         assert_eq!(target(&s, "a.Run"), vec!["Service::Run"]);
         assert!(target(&s, "b.Run").is_empty());
         assert!(target(&s, "helper").is_empty());
@@ -911,7 +954,11 @@ mod tests {
     }
     #[test]
     fn local_types_and_constants_shadow_package_declarations() {
-        let s=snapshot(&[("/p/a.go","p","package p\ntype Name struct{}\nfunc Work() {}\nfunc use(){type Name int;const Work=1; _=Work;var v Name;_=v}\n")]);
+        let s = snapshot(&[(
+            "/p/a.go",
+            "p",
+            "package p\ntype Name struct{}\nfunc Work() {}\nfunc use(){type Name int;const Work=1; _=Work;var v Name;_=v}\n",
+        )]);
         let outer = s
             .symbols
             .iter()
@@ -951,7 +998,7 @@ mod tests {
     fn unindexed_and_stale_nested_manifests_block_parent_module_fallback() {
         use crate::models::Document;
         let dir = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&dir.path().join("boundaries.duckdb")).unwrap();
+        let store = Store::open(&dir.path().join("boundaries.duckdb")).unwrap();
         let doc = |id: &str, path: &str, content: &str| Document {
             id: id.into(),
             uri: format!("file://{path}"),
@@ -961,53 +1008,42 @@ mod tests {
             wing: Some("p".into()),
             ..Default::default()
         };
-        for d in [doc("root","/p/go.mod","module example.org/app"),doc("main","/p/main.go","package main\nimport nested \"example.org/app/nested\"\nfunc main(){nested.Work()}"),doc("api","/p/nested/a.go","package nested\nfunc Work(){}")]{store.documents().upsert_document(&d).unwrap();}
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        assert_eq!(
-            target(
-                &crate::code_index::CodeIndex::new(&store)
-                    .code_snapshot()
-                    .unwrap(),
-                "nested.Work"
+        for d in [
+            doc("root", "/p/go.mod", "module example.org/app"),
+            doc(
+                "main",
+                "/p/main.go",
+                "package main\nimport nested \"example.org/app/nested\"\nfunc main(){nested.Work()}",
             ),
+            doc("api", "/p/nested/a.go", "package nested\nfunc Work(){}"),
+        ] {
+            store.upsert_document(&d).unwrap();
+        }
+        store.index_code().unwrap();
+        assert_eq!(
+            target(&store.code_snapshot().unwrap(), "nested.Work"),
             vec!["Work"]
         );
         store
-            .documents()
             .upsert_document(&doc(
                 "boundary",
                 "/p/nested/go.mod",
                 "module other.org/nested",
             ))
             .unwrap();
-        let s = crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap();
+        let s = store.code_snapshot().unwrap();
         assert!(target(&s, "nested.Work").is_empty());
         assert!(s.unindexed_documents.contains(&"boundary".to_owned()));
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        assert!(target(
-            &crate::code_index::CodeIndex::new(&store)
-                .code_snapshot()
-                .unwrap(),
-            "nested.Work"
-        )
-        .is_empty());
+        store.index_code().unwrap();
+        assert!(target(&store.code_snapshot().unwrap(), "nested.Work").is_empty());
         store
-            .documents()
             .upsert_document(&doc(
                 "boundary",
                 "/p/nested/go.mod",
                 "module changed.org/nested",
             ))
             .unwrap();
-        let s = crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap();
+        let s = store.code_snapshot().unwrap();
         assert!(target(&s, "nested.Work").is_empty());
         assert!(s.stale_documents.contains(&"boundary".to_owned()));
     }

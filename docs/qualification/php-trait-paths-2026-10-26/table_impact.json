@@ -1,0 +1,22 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "production_database_touched": false,
+  "source_sql_executed": false,
+  "checks": [
+    "direct_readers_writers",
+    "ownerless_sql_preserved",
+    "indirect_code_chain",
+    "read_write_filters",
+    "independent_direct_budget",
+    "untruncated_owner_roots",
+    "project_disambiguation",
+    "schema_disambiguation",
+    "qualified_target",
+    "identifier_validation",
+    "warm_reuse",
+    "stale_exclusion",
+    "sync_refresh"
+  ],
+  "runtime_impact_proven": false
+}

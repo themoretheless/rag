@@ -247,45 +247,49 @@ mod tests {
     #[test]
     fn type_capture_upgrade_preserves_legacy_payload_and_does_not_report_new_metadata_as_ddl() {
         let root = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&root.path().join("types.duckdb")).unwrap();
+        let store = Store::open(&root.path().join("types.lin")).unwrap();
         let base = json!({"capture_format":3,"id":"legacy","connection":"alias","project":"p","dialect":"postgresql","schemas":["public"],"captured_ms":0,"code_index_revision":null,"target_fingerprint":"h","complete_within_visible_scope":true,"diagnostics":[],"inferred_relations":{"algorithm_version":1,"relations":[],"diagnostics":[],"counts":{},"truncated":false,"diagnostic_truncated":false},"tables":[{"schema":"public","name":"t","kind":"BASE TABLE","columns":[],"foreign_keys":[],"complete":true,"sample":null,"metadata":{"indexes":[],"constraints":[],"view":null,"complete":true,"diagnostics":[]}}]});
         let payload = base.to_string();
-        store.lock().unwrap().execute("INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",duckdb::params!["legacy","alias",0,payload]).unwrap();
+        store
+            .insert_external_db_snapshot("legacy", "alias", 0, &payload)
+            .unwrap();
         let q = Query {
             connection: "alias".into(),
             snapshot_id: Some("legacy".into()),
             table: Some("t".into()),
             ..Default::default()
         };
-        assert!(crate::external_db::ExternalDb::new(&store)
-            .external_db_query("db_table", &q)
-            .unwrap()["items"][0]["metadata"]["types"]
-            .is_null());
+        assert!(
+            store.external_db_query("db_table", &q).unwrap()["items"][0]["metadata"]["types"]
+                .is_null()
+        );
         let retained: String = store
-            .lock()
+            .read()
             .unwrap()
-            .query_row(
-                "SELECT payload FROM external_db_snapshots WHERE id='legacy'",
-                [],
-                |r| r.get(0),
-            )
+            .get_by_id("external_db_snapshots", "legacy")
+            .unwrap()
+            .map(|r| crate::db::lin_engine::cell_string(&r, "payload"))
             .unwrap();
         assert_eq!(retained, payload);
         let mut current = base;
         current["capture_format"] = json!(4);
         current["id"] = json!("new");
-        assert!(serde_json::from_value::<Snapshot>(current.clone())
-            .unwrap()
-            .validate_format()
-            .is_err());
+        assert!(
+            serde_json::from_value::<Snapshot>(current.clone())
+                .unwrap()
+                .validate_format()
+                .is_err()
+        );
         current["tables"][0]["metadata"]["types"] =
             json!({"definitions":[],"complete":true,"diagnostics":[]});
         serde_json::from_value::<Snapshot>(current.clone())
             .unwrap()
             .validate_format()
             .unwrap();
-        store.lock().unwrap().execute("INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",duckdb::params!["new","alias",1,current.to_string()]).unwrap();
-        let diff = crate::external_db::ExternalDb::new(&store)
+        store
+            .insert_external_db_snapshot("new", "alias", 1, &current.to_string())
+            .unwrap();
+        let diff = store
             .external_db_query(
                 "db_drift",
                 &Query {

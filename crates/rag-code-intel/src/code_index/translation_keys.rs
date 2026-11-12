@@ -68,7 +68,9 @@ pub(super) fn validate_key(key: &str) -> Result<()> {
         || key.chars().count() > MAX_KEY_CHARS
         || key.chars().any(char::is_control)
     {
-        return Err(AppError::config("translation key must be nonempty, at most 120 Unicode characters (480 UTF-8 bytes) and contain no control characters"));
+        return Err(AppError::config(
+            "translation key must be nonempty, at most 120 Unicode characters (480 UTF-8 bytes) and contain no control characters",
+        ));
     }
     Ok(())
 }
@@ -407,10 +409,12 @@ function render() {
         for fact in facts.items.iter().filter(|f| f.key != "escaped\\key") {
             assert_eq!(&src[fact.start_byte..fact.end_byte], fact.key);
         }
-        assert!(facts
-            .items
-            .iter()
-            .any(|f| f.key == "escaped\\key" && f.key_encoding == "php_single_quoted"));
+        assert!(
+            facts
+                .items
+                .iter()
+                .any(|f| f.key == "escaped\\key" && f.key_encoding == "php_single_quoted")
+        );
     }
     #[test]
     fn php_quoted_escapes_unicode_and_literal_dollars_are_decoded_not_guessed() {
@@ -457,10 +461,12 @@ function render() {
         let f = doc.translation_keys.unwrap();
         assert!(f.items.is_empty());
         assert_eq!(f.limit_reason.as_deref(), Some("source_byte_limit"));
-        assert!(parse("c", "/p/code.js", "const x='{{key}}';", 1)
-            .unwrap()
-            .translation_keys
-            .is_none());
+        assert!(
+            parse("c", "/p/code.js", "const x='{{key}}';", 1)
+                .unwrap()
+                .translation_keys
+                .is_none()
+        );
     }
 }
 
@@ -470,7 +476,6 @@ mod query_tests {
     use crate::models::Document;
     fn put(store: &Store, id: &str, path: &str, project: &str, content: &str) {
         store
-            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("doc://{id}"),
@@ -484,7 +489,7 @@ mod query_tests {
     #[test]
     fn key_query_links_template_and_php_candidates_with_project_freshness_and_count_guards() {
         let dir = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&dir.path().join("keys.duckdb")).unwrap();
+        let store = Store::open(&dir.path().join("keys.duckdb")).unwrap();
         put(
             &store,
             "php",
@@ -500,25 +505,23 @@ mod query_tests {
             "Привет %{reg.months} %{reg.months} @{reg.months} {{other.key}}",
         );
         put(&store, "foreign", "/q/view.html", "q", "%{reg.months}");
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        store.index_code().unwrap();
         let q = ReferenceQuery {
             key: Some("reg.months".into()),
             project: Some("p".into()),
             ..Default::default()
         };
-        let r = crate::code_index::CodeIndex::new(&store)
-            .code_references(&q)
-            .unwrap();
+        let r = store.code_references(&q).unwrap();
         assert_eq!(r["total"], 4, "{r}");
         assert_eq!(r["counts_by_kind"]["uses_key"], 4);
-        assert!(r["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|i| i["from"]["kind"] == "symbol" && i["from"]["name"] == "render"));
-        let limited = crate::code_index::CodeIndex::new(&store)
+        assert!(
+            r["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|i| i["from"]["kind"] == "symbol" && i["from"]["name"] == "render")
+        );
+        let limited = store
             .code_references(&ReferenceQuery {
                 selection: CodeQuery {
                     limit: Some(1),
@@ -534,7 +537,7 @@ mod query_tests {
         assert_eq!(limited["total"], 4);
         assert_eq!(limited["items"].as_array().unwrap().len(), 1);
         assert_eq!(limited["truncated"], true);
-        let ambiguous = crate::code_index::CodeIndex::new(&store)
+        let ambiguous = store
             .code_references(&ReferenceQuery {
                 key: Some("reg.months".into()),
                 selection: CodeQuery {
@@ -552,17 +555,11 @@ mod query_tests {
             "p",
             "<?php function render(){ Translate('other.key'); }",
         );
-        let stale = crate::code_index::CodeIndex::new(&store)
-            .code_references(&q)
-            .unwrap();
+        let stale = store.code_references(&q).unwrap();
         assert_eq!(stale["total"], 3);
         assert_eq!(stale["stale_documents"].as_array().unwrap().len(), 1);
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        let fresh = crate::code_index::CodeIndex::new(&store)
-            .code_references(&q)
-            .unwrap();
+        store.index_code().unwrap();
+        let fresh = store.code_references(&q).unwrap();
         assert_eq!(fresh["total"], 3);
         assert!(fresh["stale_documents"].as_array().unwrap().is_empty());
     }
@@ -575,9 +572,8 @@ mod cache_tests {
     #[test]
     fn missing_per_document_capability_is_stale_even_with_current_global_format() {
         let root = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&root.path().join("cache.duckdb")).unwrap();
+        let store = Store::open(&root.path().join("cache.duckdb")).unwrap();
         store
-            .documents()
             .upsert_document(&Document {
                 id: "a".into(),
                 uri: "doc://a".into(),
@@ -587,46 +583,20 @@ mod cache_tests {
                 ..Default::default()
             })
             .unwrap();
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        let payload: String = store
-            .lock()
-            .unwrap()
-            .query_row(
-                "SELECT payload FROM code_index_documents WHERE document_id='a'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        store.index_code().unwrap();
+        let payload = crate::code_index::test_get_code_doc_payload(&store, "a");
         let mut json: serde_json::Value = serde_json::from_str(&payload).unwrap();
         json.as_object_mut().unwrap().remove("translation_keys");
-        store
-            .lock()
-            .unwrap()
-            .execute(
-                "UPDATE code_index_documents SET payload=? WHERE document_id='a'",
-                [json.to_string()],
-            )
-            .unwrap();
+        crate::code_index::test_set_code_doc_payload(&store, "a", &json.to_string());
         let query = ReferenceQuery {
             key: Some("key".into()),
             project: Some("p".into()),
             ..Default::default()
         };
-        let stale = crate::code_index::CodeIndex::new(&store)
-            .code_references(&query)
-            .unwrap();
+        let stale = store.code_references(&query).unwrap();
         assert_eq!(stale["total"], 0);
         assert_eq!(stale["stale_documents"].as_array().unwrap().len(), 1);
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        assert_eq!(
-            crate::code_index::CodeIndex::new(&store)
-                .code_references(&query)
-                .unwrap()["total"],
-            1
-        );
+        store.index_code().unwrap();
+        assert_eq!(store.code_references(&query).unwrap()["total"], 1);
     }
 }

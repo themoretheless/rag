@@ -1,8 +1,8 @@
-//! Explicit cross-scope tunnel edges (create, list, follow, delete).
+//! Explicit cross-scope tunnel edges (create, list, follow, delete) over `lin`.
 
 use super::*;
 
-impl GraphRepo<'_> {
+impl Store {
     /// Create an explicit tunnel edge between two existing nodes.
     ///
     /// Tunnels are treated as undirected for dedup: a second call with the same
@@ -44,15 +44,19 @@ impl GraphRepo<'_> {
         }
 
         if let Some(existing) = self.find_tunnel_between(source_id, target_id)? {
-            let conn = self.store.lock()?;
+            let mut w = self.write()?;
             let ctx = context.map(str::trim).filter(|s| !s.is_empty());
-            conn.execute(
-                r#"
-                UPDATE graph_edges
-                SET weight = ?, context = ?
-                WHERE id = ? AND rel_type = ?
-                "#,
-                params![weight, ctx, existing.id, REL_TUNNEL],
+            let pred = lin::query::pred::and(
+                lin::query::pred::eq("id", existing.id.as_str()),
+                lin::query::pred::eq("rel_type", REL_TUNNEL),
+            );
+            w.update_where(
+                "graph_edges",
+                pred,
+                RecBuilder::new()
+                    .f64("weight", weight)
+                    .opt_str("context", ctx)
+                    .build(),
             )?;
             return Ok(GraphEdge {
                 id: existing.id,
@@ -83,37 +87,21 @@ impl GraphRepo<'_> {
     ///
     /// Ordered by `id` ascending. Empty graph → empty vec.
     pub fn list_tunnels(&self, node_id: Option<&str>) -> Result<Vec<GraphEdge>> {
-        let conn = self.store.lock()?;
+        let r = self.read()?;
         let node_id = node_id.map(str::trim).filter(|s| !s.is_empty());
+        let tunnel_rows = r.find_by_eq("graph_edges", "rel_type", REL_TUNNEL)?;
         let mut out = Vec::new();
-        if let Some(nid) = node_id {
-            let mut stmt = conn.prepare(
-                r#"
-                SELECT id, source_id, target_id, rel_type, weight, context
-                FROM graph_edges
-                WHERE rel_type = ?
-                  AND (source_id = ? OR target_id = ?)
-                ORDER BY id ASC
-                "#,
-            )?;
-            crate::db::rows::for_each_row(&mut stmt, params![REL_TUNNEL, nid, nid], |row| {
-                out.push(crate::db::rows::graph_edge(row)?);
-                Ok(())
-            })?;
-        } else {
-            let mut stmt = conn.prepare(
-                r#"
-                SELECT id, source_id, target_id, rel_type, weight, context
-                FROM graph_edges
-                WHERE rel_type = ?
-                ORDER BY id ASC
-                "#,
-            )?;
-            crate::db::rows::for_each_row(&mut stmt, params![REL_TUNNEL], |row| {
-                out.push(crate::db::rows::graph_edge(row)?);
-                Ok(())
-            })?;
+        for row in &tunnel_rows {
+            if let Some(nid) = node_id {
+                let matches_endpoint = cell_str(row, "source_id") == Some(nid)
+                    || cell_str(row, "target_id") == Some(nid);
+                if !matches_endpoint {
+                    continue;
+                }
+            }
+            out.push(rows::graph_edge(row)?);
         }
+        out.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(out)
     }
 
@@ -127,11 +115,12 @@ impl GraphRepo<'_> {
                 "delete_tunnel requires non-empty tunnel_id",
             ));
         }
-        let conn = self.store.lock()?;
-        let n = conn.execute(
-            "DELETE FROM graph_edges WHERE id = ? AND rel_type = ?",
-            params![tunnel_id, REL_TUNNEL],
-        )?;
+        let mut w = self.write()?;
+        let pred = lin::query::pred::and(
+            lin::query::pred::eq("id", tunnel_id),
+            lin::query::pred::eq("rel_type", REL_TUNNEL),
+        );
+        let n = w.delete_where("graph_edges", pred)?;
         Ok(n > 0)
     }
 
@@ -150,17 +139,17 @@ impl GraphRepo<'_> {
             ));
         }
 
-        let conn = self.store.lock()?;
-        if load_node_locked(&conn, node_id)?.is_none() {
+        let r = self.read()?;
+        if load_node_locked(&r, node_id)?.is_none() {
             return Ok(GraphView::default());
         }
 
         let visited = expand_frontier(node_id, depth, max_nodes as usize, |frontier, limit| {
-            discover_frontier_neighbors_locked(&conn, frontier, limit, Some(&[REL_TUNNEL]))
+            discover_frontier_neighbors_locked(&r, frontier, limit, Some(&[REL_TUNNEL]))
         })?;
 
-        let nodes = load_nodes_by_ids_locked(&conn, &visited)?;
-        let edges = load_edges_among_locked(&conn, &visited, Some(&[REL_TUNNEL]))?;
+        let nodes = load_nodes_by_ids_locked(&r, &visited)?;
+        let edges = load_edges_among_locked(&r, &visited, Some(&[REL_TUNNEL]))?;
         Ok(GraphView { nodes, edges })
     }
 
@@ -190,26 +179,17 @@ impl GraphRepo<'_> {
         }
 
         let mut edges = if let (Some(a), Some(b)) = (node_id, other_node_id) {
-            // Pair: tunnels between a and b (either direction).
-            let conn = self.store.lock()?;
-            let mut stmt = conn.prepare(
-                r#"
-                SELECT id, source_id, target_id, rel_type, weight, context
-                FROM graph_edges
-                WHERE rel_type = ?
-                  AND (
-                    (source_id = ? AND target_id = ?)
-                    OR (source_id = ? AND target_id = ?)
-                  )
-                ORDER BY id ASC
-                "#,
-            )?;
-
-            crate::db::rows::query_vec(
-                &mut stmt,
-                params![REL_TUNNEL, a, b, b, a],
-                crate::db::rows::graph_edge,
-            )?
+            let r = self.read()?;
+            let mut pair_edges = Vec::new();
+            for row in r.find_by_eq("graph_edges", "rel_type", REL_TUNNEL)? {
+                let s = cell_str(&row, "source_id");
+                let t = cell_str(&row, "target_id");
+                if (s == Some(a) && t == Some(b)) || (s == Some(b) && t == Some(a)) {
+                    pair_edges.push(rows::graph_edge(&row)?);
+                }
+            }
+            pair_edges.sort_by(|x, y| x.id.cmp(&y.id));
+            pair_edges
         } else {
             self.list_tunnels(node_id)?
         };
@@ -234,48 +214,40 @@ impl GraphRepo<'_> {
     }
 
     /// Which of `node_ids` are linked to a document in `wing`, in one query.
-    pub(in crate::db) fn nodes_in_wing(
-        &self,
-        node_ids: &[&str],
-        wing: &str,
-    ) -> Result<std::collections::HashSet<String>> {
+    pub(super) fn nodes_in_wing(&self, node_ids: &[&str], wing: &str) -> Result<HashSet<String>> {
         if node_ids.is_empty() {
-            return Ok(std::collections::HashSet::new());
+            return Ok(HashSet::new());
         }
-        let placeholders = crate::db::sql::in_placeholders(node_ids.len());
-        let conn = self.store.lock()?;
-        let mut stmt = conn.prepare(&format!(
-            "SELECT n.id FROM graph_nodes n JOIN documents d ON d.id = n.document_id \
-             WHERE d.wing = ? AND n.id IN ({placeholders})"
-        ))?;
-        let mut binds: Vec<&str> = vec![wing];
-        binds.extend_from_slice(node_ids);
-        let ids = crate::db::rows::query_vec(&mut stmt, params_from_iter(binds.iter()), |row| {
-            Ok(row.get::<_, String>(0)?)
-        })?;
-        Ok(ids.into_iter().collect())
+        let r = self.read()?;
+        let mut out = HashSet::new();
+        for &nid in node_ids {
+            let Some(node_row) = r.get_by_id("graph_nodes", nid)? else {
+                continue;
+            };
+            let Some(doc_id) = cell_nonempty_string(&node_row, "document_id") else {
+                continue;
+            };
+            if let Some(doc_row) = r.get_by_id("documents", &doc_id)? {
+                if cell_str(&doc_row, "wing") == Some(wing) {
+                    out.insert(nid.to_string());
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// Existing tunnel edge between two nodes (either direction), if any.
-    pub(in crate::db) fn find_tunnel_between(&self, a: &str, b: &str) -> Result<Option<GraphEdge>> {
-        let conn = self.store.lock()?;
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT id, source_id, target_id, rel_type, weight, context
-            FROM graph_edges
-            WHERE rel_type = ?
-              AND (
-                (source_id = ? AND target_id = ?)
-                OR (source_id = ? AND target_id = ?)
-              )
-            ORDER BY id ASC
-            LIMIT 1
-            "#,
-        )?;
-        let mut rows = stmt.query(params![REL_TUNNEL, a, b, b, a])?;
-        match rows.next()? {
-            Some(row) => Ok(Some(crate::db::rows::graph_edge(row)?)),
-            None => Ok(None),
+    pub(super) fn find_tunnel_between(&self, a: &str, b: &str) -> Result<Option<GraphEdge>> {
+        let r = self.read()?;
+        let mut matches = Vec::new();
+        for row in r.find_by_eq("graph_edges", "rel_type", REL_TUNNEL)? {
+            let s = cell_str(&row, "source_id");
+            let t = cell_str(&row, "target_id");
+            if (s == Some(a) && t == Some(b)) || (s == Some(b) && t == Some(a)) {
+                matches.push(rows::graph_edge(&row)?);
+            }
         }
+        matches.sort_by(|x, y| x.id.cmp(&y.id));
+        Ok(matches.into_iter().next())
     }
 }

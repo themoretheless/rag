@@ -6,7 +6,7 @@ use std::process::Command;
 
 use serde_json::{Map, Value};
 
-pub(crate) use crate::util::decode::{decode_text, DecodeError};
+pub(crate) use crate::util::decode::{DecodeError, decode_text};
 use thiserror::Error;
 
 #[derive(Debug, Error)]

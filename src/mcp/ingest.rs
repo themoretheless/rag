@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
-use rmcp::{tool, tool_router, ErrorData as McpError};
+use rmcp::{ErrorData as McpError, tool, tool_router};
 use serde::Serialize;
 
 use super::facade::RagServer;
@@ -17,14 +17,14 @@ use super::tools::{
     SyncSourcesParams, UpdateDocumentMetaParams,
 };
 use super::views::{DocumentDetail, SourceDetail};
-use crate::db::{DocumentCatalogFilter, DEFAULT_CATALOG_PAGE_SIZE, MAX_CATALOG_PAGE_SIZE};
+use crate::db::{DEFAULT_CATALOG_PAGE_SIZE, DocumentCatalogFilter, MAX_CATALOG_PAGE_SIZE};
 use crate::diagnostics::DiagnosticsService;
 use crate::error::AppError;
 use crate::ingest::{IngestCommand, IngestFileCommand};
 use crate::models::{DocumentFilter, Stats};
 use crate::retrieval::{self};
 use crate::source_sync::{
-    sync_sources_nonblocking, SourceSyncCommand, SourceSyncControl, SourceSyncOutcome,
+    SourceSyncCommand, SourceSyncControl, SourceSyncOutcome, sync_sources_nonblocking,
 };
 use crate::util::{non_blank, run_blocking};
 

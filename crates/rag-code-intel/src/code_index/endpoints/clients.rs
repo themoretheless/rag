@@ -224,7 +224,9 @@ mod tests {
     }
     #[test]
     fn client_endpoints_jquery_literal_and_settings_forms() {
-        let rows=extract("$.get('/get'); jQuery.post('/post', {method:'DELETE'}); $.getJSON('/json'); $.getScript('/script'); $.ajax({url:'/ajax',type:'patch'}); $.ajax('/two',{method:'PUT'}); $.get({url:'/settings'});");
+        let rows = extract(
+            "$.get('/get'); jQuery.post('/post', {method:'DELETE'}); $.getJSON('/json'); $.getScript('/script'); $.ajax({url:'/ajax',type:'patch'}); $.ajax('/two',{method:'PUT'}); $.get({url:'/settings'});",
+        );
         assert_eq!(rows.len(), 7, "{rows:?}");
         assert_eq!(rows[0].reference_kind, "js:jquery:get");
         assert_eq!(rows[0].request_method.as_deref(), Some("GET"));
@@ -242,7 +244,9 @@ mod tests {
     }
     #[test]
     fn client_endpoints_axios_configs_aliases_and_data_positions() {
-        let rows=extract("axios('/one',{method:'post'}); axios({url:'/object',method:'DELETE'}); axios.request({url:'/request',method:'HEAD'}); axios.get('/alias'); axios.post('/body',{url:'/not-target',method:'DELETE'}); axios.patchForm('/form',data,{method:'PATCH'});");
+        let rows = extract(
+            "axios('/one',{method:'post'}); axios({url:'/object',method:'DELETE'}); axios.request({url:'/request',method:'HEAD'}); axios.get('/alias'); axios.post('/body',{url:'/not-target',method:'DELETE'}); axios.patchForm('/form',data,{method:'PATCH'});",
+        );
         assert_eq!(rows.len(), 6, "{rows:?}");
         assert_eq!(rows[0].request_method.as_deref(), Some("POST"));
         assert_eq!(rows[2].request_method.as_deref(), Some("HEAD"));
@@ -255,20 +259,25 @@ mod tests {
     }
     #[test]
     fn client_endpoints_uncertain_method_does_not_erase_known_url() {
-        let rows=extract("$.ajax({url:'/missing'}); $.ajax({url:'/conflict',method:'GET',type:'POST'}); $.ajax({url:'/dynamic',method:verb}); $.ajax({url:'/duplicate',method:'GET',method:'GET'}); axios.get('/alias-conflict',{method:'POST'});");
+        let rows = extract(
+            "$.ajax({url:'/missing'}); $.ajax({url:'/conflict',method:'GET',type:'POST'}); $.ajax({url:'/dynamic',method:verb}); $.ajax({url:'/duplicate',method:'GET',method:'GET'}); axios.get('/alias-conflict',{method:'POST'});",
+        );
         assert_eq!(rows.len(), 5, "{rows:?}");
-        assert!(rows
-            .iter()
-            .all(|r| r.request_method.is_none() && r.request_method_basis.is_none()));
+        assert!(
+            rows.iter()
+                .all(|r| r.request_method.is_none() && r.request_method_basis.is_none())
+        );
     }
     #[test]
     fn client_endpoints_uncertain_url_and_unrelated_methods_are_excluded() {
-        let rows=extract("$.ajax({url:'/a',url:'/b'}); $.ajax({url:'/spread',...opts}); axios('/url',config); axios.get('/url',{url:'/override'}); $.get({url:dynamic}); $.get('/a'+id); $.get(`/a/${id}`); $.get('//external'); $.get('relative'); client.get('/custom'); const txt=\"$.get('/string')\"; // $.get('/comment')\naxios.request('/unsupported'); $.getJSON({url:'/unsupported'}); $.ajax({['url']:'/computed'});");
+        let rows = extract(
+            "$.ajax({url:'/a',url:'/b'}); $.ajax({url:'/spread',...opts}); axios('/url',config); axios.get('/url',{url:'/override'}); $.get({url:dynamic}); $.get('/a'+id); $.get(`/a/${id}`); $.get('//external'); $.get('relative'); client.get('/custom'); const txt=\"$.get('/string')\"; // $.get('/comment')\naxios.request('/unsupported'); $.getJSON({url:'/unsupported'}); $.ajax({['url']:'/computed'});",
+        );
         assert!(rows.is_empty(), "{rows:?}");
     }
     #[test]
     fn client_endpoints_inline_scripts_keep_original_offsets_and_no_inert_data() {
-        let source="<p>α</p>\n<script>\n$.get('/inline'); axios.post('/save',{});\n</script><script type='application/json'>$.get('/json')</script><script src='/external.js'>axios.get('/ignored')</script>";
+        let source = "<p>α</p>\n<script>\n$.get('/inline'); axios.post('/save',{});\n</script><script type='application/json'>$.get('/json')</script><script src='/external.js'>axios.get('/ignored')</script>";
         let doc = parse("html", "client.html", source, 1).unwrap();
         let rows: Vec<_> = doc
             .endpoints
@@ -291,10 +300,12 @@ mod tests {
             "a".repeat(4096)
         );
         assert_eq!(extract(&source).len(), 1);
-        assert!(parse("py", "client.py", "jQuery.get('/python')", 1)
-            .unwrap()
-            .endpoints
-            .is_empty());
+        assert!(
+            parse("py", "client.py", "jQuery.get('/python')", 1)
+                .unwrap()
+                .endpoints
+                .is_empty()
+        );
     }
     #[test]
     fn client_endpoints_do_not_invent_server_registrations_or_handlers() {

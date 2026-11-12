@@ -7,7 +7,7 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&dir.path().join("infra.duckdb")).unwrap();
+        let store = Store::open(&dir.path().join("infra.duckdb")).unwrap();
         let root = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
             .join("tests/fixtures/code-intelligence/infrastructure");
         let mut sources = BTreeMap::new();
@@ -35,14 +35,11 @@ impl Fixture {
         for (path, source) in &fixture.sources {
             fixture.put("p", path, source, 1);
         }
-        crate::code_index::CodeIndex::new(&fixture.store)
-            .index_code()
-            .unwrap();
+        fixture.store.index_code().unwrap();
         fixture
     }
     fn put(&self, project: &str, path: &str, source: &str, revision: i64) {
         self.store
-            .documents()
             .upsert_document(&crate::models::Document {
                 id: format!("{project}:{path}"),
                 source_file: Some(format!("/{project}/{path}")),
@@ -59,7 +56,7 @@ impl Fixture {
         for (k, v) in extra.as_object().unwrap() {
             q[k] = v.clone();
         }
-        crate::code_index::CodeIndex::new(&self.store)
+        self.store
             .code_infrastructure(&serde_json::from_value::<InfrastructureQuery>(q).unwrap())
             .unwrap()
     }
@@ -121,13 +118,14 @@ fn service_image_multistage_executable_code_paths_have_exact_source_support() {
     .unwrap();
     let paths = result["paths"].as_array().unwrap();
     assert!(
-        paths.iter().any(|p| json!(p["nodes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|n| n["kind"].as_str().unwrap())
-            .collect::<Vec<_>>())
-            == expected["service_to_main_kinds"]),
+        paths.iter().any(|p| json!(
+            p["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|n| n["kind"].as_str().unwrap())
+                .collect::<Vec<_>>()
+        ) == expected["service_to_main_kinds"]),
         "{result}"
     );
     let path = &paths[0];
@@ -154,11 +152,13 @@ fn service_image_multistage_executable_code_paths_have_exact_source_support() {
     assert_eq!(lines, BTreeSet::from([3, 4, 7]));
     let graph = f.query(json!({}));
     let wrong = f.node("kubernetes_workload", "wrong-namespace");
-    assert!(!graph["edges"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|e| e["relation"] == "selector_maps_to" && e["target"] == wrong));
+    assert!(
+        !graph["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["relation"] == "selector_maps_to" && e["target"] == wrong)
+    );
     let job = f.node("ci_job", "image-build");
     let script = f.node("source_file", "/p/scripts/check.sh");
     assert_eq!(f.query(json!({"from":job,"to":script}))["status"], "paths");
@@ -178,18 +178,18 @@ fn stale_bridge_and_manifest_are_excluded_but_frozen_revision_is_retained() {
     );
     let stale = f.path(json!({}));
     assert_eq!(stale["status"], "no_path_in_examined_graph", "{stale}");
-    assert!(stale["diagnostics"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|d| d["code"] == "stale_or_unavailable_captured_input"));
+    assert!(
+        stale["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["code"] == "stale_or_unavailable_captured_input")
+    );
     assert_eq!(
         f.path(json!({"index_revision":revision}))["status"],
         "paths"
     );
-    crate::code_index::CodeIndex::new(&f.store)
-        .index_code()
-        .unwrap();
+    f.store.index_code().unwrap();
     f.put(
         "p",
         "Cargo.toml",
@@ -197,11 +197,13 @@ fn stale_bridge_and_manifest_are_excluded_but_frozen_revision_is_retained() {
         2,
     );
     let current = f.query(json!({}));
-    assert!(!current["nodes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|n| n["kind"] == "code_symbol"));
+    assert!(
+        !current["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n["kind"] == "code_symbol")
+    );
 }
 #[test]
 fn cross_project_images_require_explicit_scope_and_path_limits_remain_visible() {
@@ -209,21 +211,23 @@ fn cross_project_images_require_explicit_scope_and_path_limits_remain_visible() 
     for (path, source) in &f.sources {
         f.put("other", path, source, 1);
     }
-    crate::code_index::CodeIndex::new(&f.store)
-        .index_code()
-        .unwrap();
+    f.store.index_code().unwrap();
     let local = f.query(json!({}));
-    assert!(!local["edges"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|e| e["relation"] == "cross_project_exact_image_candidate"));
+    assert!(
+        !local["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["relation"] == "cross_project_exact_image_candidate")
+    );
     let linked = f.query(json!({"linked_projects":["other"]}));
-    assert!(linked["edges"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|e| e["relation"] == "cross_project_exact_image_candidate"));
+    assert!(
+        linked["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["relation"] == "cross_project_exact_image_candidate")
+    );
     assert_eq!(
         f.query(json!({"from":"main","to":"main","linked_projects":["other"]}))["status"],
         "ambiguous_endpoints"
@@ -248,7 +252,7 @@ fn dynamic_invalid_and_unmodeled_container_forms_never_keep_old_code_binding() {
     ] {
         let f = Fixture::new();
         f.put("p", "Dockerfile", docker, 2);
-        crate::code_index::CodeIndex::new(&f.store).index_code().unwrap();
+        f.store.index_code().unwrap();
         let g = f.query(json!({}));
         assert!(
             !g["nodes"]
@@ -266,16 +270,16 @@ fn dynamic_invalid_and_unmodeled_container_forms_never_keep_old_code_binding() {
         "services: {api: {image: '${SECRET}', build: {context: ., target: [runtime]}}}",
         2,
     );
-    crate::code_index::CodeIndex::new(&f.store)
-        .index_code()
-        .unwrap();
+    f.store.index_code().unwrap();
     let g = f.query(json!({}));
     assert!(!serde_json::to_string(&g).unwrap().contains("SECRET"));
-    assert!(!g["nodes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|n| n["kind"] == "compose_service" && n["name"] == "${SECRET}"));
+    assert!(
+        !g["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n["kind"] == "compose_service" && n["name"] == "${SECRET}")
+    );
 }
 
 #[test]
@@ -286,9 +290,7 @@ fn duplicate_resources_unpublished_sources_and_standalone_context_are_explicit()
         f.sources["service.yaml"], f.sources["service.yaml"]
     );
     f.put("p", "service.yaml", &duplicate, 2);
-    crate::code_index::CodeIndex::new(&f.store)
-        .index_code()
-        .unwrap();
+    f.store.index_code().unwrap();
     assert_eq!(
         f.query(json!({"from":"public-api","to":"main"}))["status"],
         "ambiguous_endpoints"
@@ -300,20 +302,20 @@ fn duplicate_resources_unpublished_sources_and_standalone_context_are_explicit()
         1,
     );
     let g = f.query(json!({}));
-    assert!(g["diagnostics"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|d| d["code"] == "source_not_published_in_selected_revision"));
+    assert!(
+        g["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["code"] == "source_not_published_in_selected_revision")
+    );
     f.put(
         "p",
         "standalone.dockerfile",
         "FROM scratch\nCOPY . /app\nENTRYPOINT [\"/app/src/main.rs\"]\n",
         1,
     );
-    crate::code_index::CodeIndex::new(&f.store)
-        .index_code()
-        .unwrap();
+    f.store.index_code().unwrap();
     let g = f.query(json!({}));
     let stage = g["nodes"]
         .as_array()
@@ -329,11 +331,11 @@ fn duplicate_resources_unpublished_sources_and_standalone_context_are_explicit()
         .iter()
         .find(|e| e["source"] == stage["id"] && e["relation"] == "default_execution_candidate")
         .unwrap();
-    assert!(!g["edges"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|e| e["source"] == execution["target"] && e["relation"] == "references_source_file"));
+    assert!(
+        !g["edges"].as_array().unwrap().iter().any(
+            |e| e["source"] == execution["target"] && e["relation"] == "references_source_file"
+        )
+    );
 }
 
 #[test]
@@ -344,9 +346,7 @@ fn docker_stage_limit_rejects_overflow_without_publishing_a_partial_stage() {
             .map(|i| format!("FROM scratch AS stage{i}\n"))
             .collect::<String>();
         f.put("p", "budget.dockerfile", &source, count);
-        crate::code_index::CodeIndex::new(&f.store)
-            .index_code()
-            .unwrap();
+        f.store.index_code().unwrap();
         let graph = f.query(json!({}));
         let overflow = graph["diagnostics"].as_array().unwrap().iter().any(|d| {
             d["path"] == "/p/budget.dockerfile" && d["code"] == "docker_instruction_or_stage_limit"

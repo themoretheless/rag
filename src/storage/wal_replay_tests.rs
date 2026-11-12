@@ -1,18 +1,16 @@
-//! FTS overwrite under an abrupt process exit, on a composed store: the WAL
-//! must replay without losing commits of the store and of the
-//! code-intelligence tables. Moved here from `db::fts::tests` when the store
-//! became its own crate (it needs `code_index`, `gate`, `calibration` and
-//! `analysis_tasks`, which sit above the store).
+//! Abrupt process exit (`SIGKILL`) + `lin` WAL replay test on a composed store:
+//! committed writes across documents, chunks, `code_index`, `analysis_tasks`,
+//! `gate`, `calibration`, and `search_bm25` must survive ungraceful termination.
 
 use chrono::Utc;
 
-use crate::db::{
-    ensure_fts, fts_generation_state, fts_status, load_fts_extension, reindex, search_bm25,
-    FtsBackend, FtsGenerationState, LexFilters,
-};
-use crate::models::{Chunk, Document};
-use crate::testkit::open_test_store;
 use crate::Store;
+use crate::db::{
+    FtsBackend, FtsGenerationState, LexFilters, ensure_fts, fts_generation_state, fts_status,
+    reindex, search_bm25,
+};
+use crate::models::{Chunk, Document, DocumentLayer};
+use crate::testkit::open_test_store;
 
 fn seed_docs(store: &Store) {
     let now = Utc::now();
@@ -23,7 +21,7 @@ fn seed_docs(store: &Store) {
             "Cats",
             "projects",
             "alpha",
-            "raw",
+            DocumentLayer::Raw,
             "document",
         ),
         (
@@ -32,7 +30,7 @@ fn seed_docs(store: &Store) {
             "Dogs",
             "projects",
             "beta",
-            "raw",
+            DocumentLayer::Raw,
             "document",
         ),
         (
@@ -41,7 +39,7 @@ fn seed_docs(store: &Store) {
             "Felines",
             "archive",
             "misc",
-            "wiki",
+            DocumentLayer::Wiki,
             "wiki",
         ),
     ];
@@ -58,7 +56,7 @@ fn seed_docs(store: &Store) {
                 updated_at: now,
                 wing: Some(wing.into()),
                 room: Some(room.into()),
-                layer: layer.into(),
+                layer,
                 kind: kind.into(),
                 ..Default::default()
             })
@@ -103,8 +101,8 @@ fn seed_docs(store: &Store) {
 }
 
 fn lifecycle(store: &Store) -> FtsGenerationState {
-    let conn = store.lock().unwrap();
-    fts_generation_state(&conn).unwrap()
+    let r = store.read().unwrap();
+    fts_generation_state(&*r).unwrap()
 }
 
 #[test]
@@ -114,17 +112,11 @@ fn wal_replay_crash_child() {
     };
     let path = std::path::PathBuf::from(path);
     let store = open_test_store(&path).unwrap();
-    let extension_available;
     {
-        let conn = store.lock().unwrap();
-        extension_available = load_fts_extension(&conn);
-        let state = ensure_fts(&conn).unwrap();
-        if extension_available {
-            assert_eq!(state.backend, FtsBackend::DuckDbBm25);
-        }
+        let mut w = store.write().unwrap();
+        let state = ensure_fts(&mut *w).unwrap();
+        assert_eq!(state.backend, FtsBackend::DuckDbBm25);
     }
-    // Match production startup: the existing FTS schema is already checkpointed.
-    // Replacing only WAL-created objects does not reproduce the catalog bug.
     store.maintenance().checkpoint().unwrap();
     seed_docs(&store);
     store
@@ -173,36 +165,27 @@ fn wal_replay_crash_child() {
     crate::calibration::Calibrations::new(&store)
         .calibrate_confidence(&Default::default())
         .unwrap();
-    crate::db::fts::test_hooks::FTS_CRASH_ARMED.store(true, std::sync::atomic::Ordering::SeqCst);
-    let backend;
-    let (tables, functions) = {
-        let conn = store.lock().unwrap();
-        backend = reindex(&conn).unwrap().backend.as_str().to_string();
-        if extension_available {
-            assert_eq!(backend, "duckdb_bm25");
-        }
-        let mut stmt=conn.prepare("SELECT table_name FROM information_schema.tables WHERE table_schema='fts_main_chunks' ORDER BY table_name").unwrap();
-        let tables = stmt
-            .query_map([], |r| r.get::<_, String>(0))
-            .unwrap()
-            .collect::<duckdb::Result<Vec<_>>>()
-            .unwrap();
-        let mut stmt=conn.prepare("SELECT function_name,function_type FROM duckdb_functions() WHERE schema_name='fts_main_chunks' ORDER BY function_name").unwrap();
-        let functions = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-            .unwrap()
-            .collect::<duckdb::Result<Vec<_>>>()
-            .unwrap();
-        (tables, functions)
+    let backend = {
+        let mut w = store.write().unwrap();
+        reindex(&mut *w).unwrap().backend.as_str().to_string()
     };
-    std::fs::write(path.with_extension("ready.tmp"),serde_json::to_string(&serde_json::json!({"phase":"complete","backend":backend,"extension_available":extension_available,"tables":tables,"functions":functions})).unwrap()).unwrap();
+    let chunks_gen = lifecycle(&store).chunks_generation;
+    std::fs::write(
+        path.with_extension("ready.tmp"),
+        serde_json::to_string(&serde_json::json!({
+            "phase": "complete",
+            "backend": backend,
+            "chunks_generation": chunks_gen,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
     std::fs::rename(
         path.with_extension("ready.tmp"),
         path.with_extension("ready.json"),
     )
     .unwrap();
-    // The parent kills this live process. Neither Rust drops nor C++ atexit
-    // handlers may checkpoint away the WAL under test.
+    // Parent kills this live process via SIGKILL.
     loop {
         std::thread::park();
     }
@@ -210,139 +193,97 @@ fn wal_replay_crash_child() {
 
 #[test]
 fn fts_overwrite_wal_replays_after_abrupt_process_exit_without_losing_commits() {
-    for phase in [
-        "dirty",
-        "leaf",
-        "leaves",
-        "schema",
-        "built",
-        "published",
-        "complete",
-    ] {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("crash.duckdb");
-        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "storage::wal_replay_tests::wal_replay_crash_child",
-                "--nocapture",
-            ])
-            .env("RAG_TEST_FTS_CRASH_DB", &path)
-            .env("RAG_TEST_FTS_CRASH_PHASE", phase)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        while !path.with_extension("ready.json").exists() {
-            if child.try_wait().unwrap().is_some() {
-                let out = child.wait_with_output().unwrap();
-                panic!(
-                    "crash child exited before readiness: {}",
-                    String::from_utf8_lossy(&out.stderr)
-                );
-            }
-            if std::time::Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                panic!("crash child readiness timeout");
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("crash.lin");
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "storage::wal_replay_tests::wal_replay_crash_child",
+            "--nocapture",
+        ])
+        .env("RAG_TEST_FTS_CRASH_DB", &path)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !path.with_extension("ready.json").exists() {
+        if child.try_wait().unwrap().is_some() {
+            let out = child.wait_with_output().unwrap();
+            panic!(
+                "crash child exited before readiness: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
         }
-        child.kill().unwrap();
-        let _ = child.wait_with_output().unwrap();
-        let catalog = std::fs::read_to_string(path.with_extension("ready.json")).unwrap();
-        let checkpoint: serde_json::Value = serde_json::from_str(&catalog).unwrap();
-        let store = open_test_store(&path)
-            .unwrap_or_else(|e| panic!("WAL replay failed: {e}; catalog={catalog}"));
-        if checkpoint["extension_available"] == true {
-            assert_eq!(checkpoint["phase"], phase);
-            if let Some(expected) = checkpoint["chunks_generation"].as_u64() {
-                assert_eq!(lifecycle(&store).chunks_generation, expected);
-            }
-            if !matches!(phase, "published" | "complete") {
-                assert!(lifecycle(&store).dirty);
-            }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("crash child readiness timeout");
         }
-        assert_eq!(
-            store
-                .documents()
-                .get_document("wal-code")
-                .unwrap()
-                .unwrap()
-                .content,
-            "fn preserved() {}"
-        );
-        assert_eq!(
-            crate::analysis_tasks::AnalysisTasks::new(&store)
-                .analysis_notes("wal", &Default::default())
-                .unwrap()["total_matching"],
-            1
-        );
-        assert_eq!(
-            crate::analysis_tasks::AnalysisTasks::new(&store)
-                .analysis_task_stats("wal", &Default::default())
-                .unwrap()["gate"]["decisions"],
-            1
-        );
-        assert_eq!(
-            crate::calibration::Calibrations::new(&store)
-                .calibration_reports(&Default::default())
-                .unwrap()["items"]
-                .as_array()
-                .unwrap()
-                .len(),
-            1
-        );
-        assert_eq!(
-            crate::code_index::CodeIndex::new(&store)
-                .code_snapshot()
-                .unwrap()
-                .symbols[0]
-                .name,
-            "preserved"
-        );
-        let hits = search_bm25(&store, "cat", 10, &LexFilters::default()).unwrap();
-        assert!(!hits.is_empty());
-        {
-            let conn = store.lock().unwrap();
-            let mut stmt = conn
-                .prepare("SELECT CAST(embedding AS VARCHAR) FROM chunks ORDER BY id")
-                .unwrap();
-            let values = stmt
-                .query_map([], |r| r.get::<_, String>(0))
-                .unwrap()
-                .collect::<duckdb::Result<Vec<_>>>()
-                .unwrap();
-            assert_eq!(values.len(), 4);
-            for value in values {
-                assert_eq!(
-                    serde_json::from_str::<Vec<f32>>(&value).unwrap(),
-                    vec![0.0; 4]
-                );
-            }
-            if checkpoint["extension_available"] == true {
-                let direct: Option<f64> = conn
-                    .query_row(
-                        "SELECT MAX(fts_main_chunks.match_bm25(id,'cat')) FROM chunks",
-                        [],
-                        |r| r.get(0),
-                    )
-                    .unwrap();
-                assert!(
-                    direct.is_some_and(|score| score > 0.0),
-                    "physical BM25 must work, not just its fallback"
-                );
-                assert_eq!(
-                    fts_status(&conn).unwrap().unwrap().backend,
-                    FtsBackend::DuckDbBm25
-                );
-            }
-        }
-        eprintln!("crash recovery exercised {catalog}");
-        if checkpoint["extension_available"] == false {
-            eprintln!("FTS unavailable; only fallback replay exercised");
-            break;
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    child.kill().unwrap();
+    let _ = child.wait_with_output().unwrap();
+    let catalog = std::fs::read_to_string(path.with_extension("ready.json")).unwrap();
+    let checkpoint: serde_json::Value = serde_json::from_str(&catalog).unwrap();
+    let store = open_test_store(&path)
+        .unwrap_or_else(|e| panic!("WAL replay failed: {e}; catalog={catalog}"));
+    if let Some(expected) = checkpoint["chunks_generation"].as_u64() {
+        assert_eq!(lifecycle(&store).chunks_generation, expected);
+    }
+    assert_eq!(
+        store
+            .documents()
+            .get_document("wal-code")
+            .unwrap()
+            .unwrap()
+            .content,
+        "fn preserved() {}"
+    );
+    assert_eq!(
+        crate::analysis_tasks::AnalysisTasks::new(&store)
+            .analysis_notes("wal", &Default::default())
+            .unwrap()["total_matching"],
+        1
+    );
+    assert_eq!(
+        crate::analysis_tasks::AnalysisTasks::new(&store)
+            .analysis_task_stats("wal", &Default::default())
+            .unwrap()["gate"]["decisions"],
+        1
+    );
+    assert_eq!(
+        crate::calibration::Calibrations::new(&store)
+            .calibration_reports(&Default::default())
+            .unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap()
+            .symbols[0]
+            .name,
+        "preserved"
+    );
+    let hits = search_bm25(&store, "cat", 10, &LexFilters::default()).unwrap();
+    assert!(!hits.is_empty());
+    let mut chunk_count = 0usize;
+    for doc_id in ["d1", "d2", "d3"] {
+        for chunk in store.chunks().list_chunks_for_document(doc_id).unwrap() {
+            assert_eq!(chunk.embedding, vec![0.0; 4]);
+            chunk_count += 1;
         }
     }
+    assert_eq!(chunk_count, 4);
+    assert_eq!(
+        fts_status(&*store.read().unwrap())
+            .unwrap()
+            .unwrap()
+            .backend,
+        FtsBackend::DuckDbBm25
+    );
 }

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use super::json::{parse_model_object, ERROR_EXCERPT_CHARS};
+use super::json::{ERROR_EXCERPT_CHARS, parse_model_object};
 use crate::config::Config;
 
 use crate::error::{AppError, Result};
@@ -577,11 +577,7 @@ impl ChatClient {
             .into_iter()
             .filter_map(|m| {
                 let id = m.id.trim().to_string();
-                if id.is_empty() {
-                    None
-                } else {
-                    Some(id)
-                }
+                if id.is_empty() { None } else { Some(id) }
             })
             .collect();
         Ok(ids)

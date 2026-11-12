@@ -5,9 +5,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{Config, EmbeddingProviderKind};
+use crate::db::Store;
 use crate::db::schema::SCHEMA_VERSION;
 use crate::db::store::embedding_manifest_matches_config;
-use crate::db::Store;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
 use crate::ingest::{IngestCommand, IngestService};

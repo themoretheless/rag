@@ -1,18 +1,21 @@
 [package]
 name = "rag-code-intel"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 rust-version = "1.95"
 description = "Code intelligence of rag-mcp: code index, external DB checks, gate, calibration, analysis tasks"
 license = "MIT"
 publish = false
 
+[lints]
+workspace = true
+
 [dependencies]
 anyhow = { workspace = true }
 blake3 = { workspace = true }
 chrono = { workspace = true }
-duckdb = { workspace = true }
 futures-util = "0.3"
+lin = { workspace = true }
 rag-mcp-core = { workspace = true }
 rag-store-duckdb = { workspace = true }
 # Only `reqwest::Url` (drift source paths); same requirement as the root crate.

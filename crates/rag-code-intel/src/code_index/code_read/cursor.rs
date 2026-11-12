@@ -78,6 +78,41 @@ impl View {
             view: hash.finalize().to_hex().to_string(),
         })
     }
+    pub fn seal_selected(&mut self, spans: &[Span], unresolved: &[String]) -> Result<()> {
+        let mut selected: Vec<_> = spans.iter().collect();
+        selected.sort_by(|a, b| {
+            (
+                &a.document,
+                a.start,
+                a.end,
+                a.symbol.as_ref().map(|s| &s.id),
+                &a.via,
+            )
+                .cmp(&(
+                    &b.document,
+                    b.start,
+                    b.end,
+                    b.symbol.as_ref().map(|s| &s.id),
+                    &b.via,
+                ))
+        });
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"rag-code-selected-view-1");
+        hash.update(self.view.as_bytes());
+        for span in selected {
+            hash.update(&serde_json::to_vec(&(
+                &span.document,
+                span.start,
+                span.end,
+                span.symbol.as_ref().map(|s| &s.id),
+                &span.via,
+            ))?);
+        }
+        let missing: BTreeSet<_> = unresolved.iter().collect();
+        hash.update(&serde_json::to_vec(&missing)?);
+        self.view = hash.finalize().to_hex().to_string();
+        Ok(())
+    }
     pub fn encode(&self, p: Position) -> String {
         format!("cr1:{}:{}:{}:{}", self.query, self.view, p.span, p.byte)
     }

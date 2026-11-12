@@ -6,15 +6,15 @@ use std::sync::Arc;
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
-use rmcp::{tool, tool_router, ErrorData as McpError};
+use rmcp::{ErrorData as McpError, tool, tool_router};
 
 use super::facade::RagServer;
 use super::tools::{BackupDbParams, ExportBundleParams, ExportVaultParams, ImportBundleParams};
 use crate::config::Config;
 use crate::db::recovery::{
-    decode_recovery_bundle, encode_recovery_bundle, preflight_recovery_bundle,
-    preflight_recovery_bundle_reembed, publish_recovery_artifact, read_recovery_bundle_file,
-    BundleExportReport, ConflictPolicy, RecoveryBundle, BUNDLE_VERSION,
+    BUNDLE_VERSION, BundleExportReport, ConflictPolicy, RecoveryBundle, decode_recovery_bundle,
+    encode_recovery_bundle, preflight_recovery_bundle, preflight_recovery_bundle_reembed,
+    publish_recovery_artifact, read_recovery_bundle_file,
 };
 use crate::db::store::embedding_manifest_from_config;
 use crate::embeddings::EmbeddingProvider;

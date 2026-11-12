@@ -646,16 +646,21 @@ mod tests {
     }
     #[test]
     fn conditional_denial_does_not_make_later_allow_fail_closed() {
-        let s=snapshot(&[("p.py","def policy(role):\n    if role == 'blocked':\n        return False\n    return True\n\ndef handler():\n    return policy('employee')\n")]);
+        let s = snapshot(&[(
+            "p.py",
+            "def policy(role):\n    if role == 'blocked':\n        return False\n    return True\n\ndef handler():\n    return policy('employee')\n",
+        )]);
         let r = s.policy_trace(&query("policy")).unwrap();
         assert_eq!(r["default_behavior"], "allow", "{r}");
         assert_eq!(r["fail_closed"], false);
         assert_eq!(r["allows"].as_array().unwrap().len(), 1);
         assert_eq!(r["denies"].as_array().unwrap().len(), 1);
-        assert!(r["allows"][0]["conditions"][0]
-            .as_str()
-            .unwrap()
-            .contains("not (role"));
+        assert!(
+            r["allows"][0]["conditions"][0]
+                .as_str()
+                .unwrap()
+                .contains("not (role")
+        );
         assert_eq!(r["callers"].as_array().unwrap().len(), 1);
     }
     #[test]
@@ -729,8 +734,16 @@ function broken($a) { switch ($a) { default: break; case 'view': return true; } 
     }
     #[test]
     fn boolean_literals_ternaries_tail_expressions_and_ambiguous_targets() {
-        let s=snapshot(&[("p.rs","fn policy(admin: bool) -> bool { if admin { return true; } false }"),
-        ("p.js","function choice(admin) { return admin ? true : false; } function policy() { return true; }")]);
+        let s = snapshot(&[
+            (
+                "p.rs",
+                "fn policy(admin: bool) -> bool { if admin { return true; } false }",
+            ),
+            (
+                "p.js",
+                "function choice(admin) { return admin ? true : false; } function policy() { return true; }",
+            ),
+        ]);
         assert_eq!(s.policy_trace(&query("policy")).unwrap()["ambiguous"], true);
         let mut q = query("policy");
         q.path = Some("p.rs".into());
@@ -744,7 +757,10 @@ function broken($a) { switch ($a) { default: break; case 'view': return true; } 
     }
     #[test]
     fn action_filter_keeps_computed_case_labels() {
-        let s=snapshot(&[("p.php","<?php function policy($a,$b) {switch($a) {case 'prefix'.$b: return true; default: return false;}}")]);
+        let s = snapshot(&[(
+            "p.php",
+            "<?php function policy($a,$b) {switch($a) {case 'prefix'.$b: return true; default: return false;}}",
+        )]);
         let mut q = query("policy");
         q.action = Some("approve".into());
         let r = s.policy_trace(&q).unwrap();
@@ -767,20 +783,27 @@ function broken($a) { switch ($a) { default: break; case 'view': return true; } 
     }
 
     #[test]
-    fn php_methods_parse_but_namespace_calls_fail_closed() {
-        let s=snapshot(&[("p.php", "<?php namespace One; function policy() {return false;} function handler() {return policy();} class Gate { public function allows() { return true; } }")]);
-        assert!(s.calls.iter().all(|c| c.candidates.is_empty()));
-        assert!(s
-            .calls
-            .iter()
-            .any(|c| c.resolution_basis == "PHP_NAMESPACE_BINDING_UNMODELED"));
-        let r = s.policy_trace(&query("Gate::allows")).unwrap();
+    fn php_methods_and_namespace_candidates_preserve_policy_evidence() {
+        let s = snapshot(&[(
+            "p.php",
+            "<?php namespace One; function policy() {return false;} function handler() {return policy();} class Gate { public function allows() { return true; } }",
+        )]);
+        assert!(s.calls.iter().any(|c| !c.candidates.is_empty()));
+        assert!(
+            s.calls
+                .iter()
+                .all(|c| c.resolution_basis != "PHP_NAMESPACE_BINDING_UNMODELED")
+        );
+        let r = s.policy_trace(&query("One\\Gate::allows")).unwrap();
         assert_eq!(r["default_behavior"], "allow", "{r}");
     }
 
     #[test]
     fn unmodeled_finally_and_loops_do_not_claim_fail_closed() {
-        let s=snapshot(&[("p.js","function policy() { try { return false; } finally { return true; } } function loop() { while (x) { return true; } return false; }")]);
+        let s = snapshot(&[(
+            "p.js",
+            "function policy() { try { return false; } finally { return true; } } function loop() { while (x) { return true; } return false; }",
+        )]);
         for name in ["policy", "loop"] {
             let r = s.policy_trace(&query(name)).unwrap();
             assert_eq!(r["default_behavior"], "unknown", "{r}");

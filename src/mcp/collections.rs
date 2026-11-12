@@ -4,7 +4,7 @@ use crate::mcp::error::mcp_error;
 use chrono::Utc;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
-use rmcp::{tool, tool_router, ErrorData as McpError};
+use rmcp::{ErrorData as McpError, tool, tool_router};
 use uuid::Uuid;
 
 use super::facade::RagServer;

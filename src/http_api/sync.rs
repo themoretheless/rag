@@ -3,24 +3,24 @@
 use std::sync::Arc;
 
 use axum::{
+    Json, Router,
     extract::{Query, State},
     response::IntoResponse,
     routing::{get, post},
-    Json, Router,
 };
 use serde::Deserialize;
 use serde_json::json;
 
 use crate::db::sync::{
-    validate_wiki_change, SyncChange, SyncChangeInput, SyncIdentity, WikiSyncWrite,
+    SyncChange, SyncChangeInput, SyncIdentity, WikiSyncWrite, validate_wiki_change,
 };
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
 use crate::wiki::{self, WikiWriteCommand, WriteWikiOpts};
 
 use super::{
-    error::{api_err, api_ok},
     HttpState,
+    error::{api_err, api_ok},
 };
 
 /// Whole-request timeout for database sync HTTP calls to peers.
@@ -97,7 +97,7 @@ async fn push(State(st): State<HttpState>, Json(body): Json<PushBody>) -> impl I
         Ok(_) => {
             return api_err(AppError::forbidden(
                 "replica does not accept primary push operations",
-            ))
+            ));
         }
         Err(error) => return api_err(error),
     }
@@ -176,7 +176,7 @@ async fn apply_change_with(
         WikiSyncWrite::Local(_) => {
             return Err(AppError::invalid(
                 "transport requires incoming sync provenance",
-            ))
+            ));
         }
     };
     let payload = validate_wiki_change(change)?;

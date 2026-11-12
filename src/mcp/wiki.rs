@@ -3,7 +3,7 @@
 use crate::mcp::error::mcp_error;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
-use rmcp::{tool, tool_router, ErrorData as McpError};
+use rmcp::{ErrorData as McpError, tool, tool_router};
 use serde::Serialize;
 
 use crate::db::store::MAX_OPS_LOG_PAGE;
@@ -20,7 +20,7 @@ use super::tools::{
     UpdateIndexEntryParams, UpdateSchemaParams, WakeUpParams, WriteWikiPageParams,
 };
 use crate::db::search::{
-    acquire_corpus_search_guard, search_with_corpus_guard, DiversityMode, SearchQuery,
+    DiversityMode, SearchQuery, acquire_corpus_search_guard, search_with_corpus_guard,
 };
 use crate::db::store::WikiPageMetaFilter;
 use crate::db::{DEFAULT_CATALOG_PAGE_SIZE, MAX_CATALOG_PAGE_SIZE};

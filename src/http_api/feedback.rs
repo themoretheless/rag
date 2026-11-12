@@ -1,8 +1,8 @@
 //! Explicitly saved, human-labelled search questions; never automatic query logging.
 use super::{
+    HttpState,
     error::{api_err, api_ok},
     retrieval::SearchBody,
-    HttpState,
 };
 use crate::{
     db::Store,
@@ -10,13 +10,13 @@ use crate::{
     util::content_hash,
 };
 use axum::{
+    Json, Router,
     extract::{Query, State},
     response::Response,
     routing::{get, post},
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 /// Search-feedback rows per page.
 const FEEDBACK_PAGE_SIZE: usize = 50;
@@ -526,16 +526,20 @@ mod tests {
     #[tokio::test]
     async fn negative_questions_are_not_counted_as_positive_recall() {
         let (st, doc) = fixture().await;
-        assert!(capture(
-            &st.store,
-            input(uuid::Uuid::new_v4().to_string(), vec![], false)
-        )
-        .is_err());
-        assert!(capture(
-            &st.store,
-            input(uuid::Uuid::new_v4().to_string(), vec![doc], true)
-        )
-        .is_err());
+        assert!(
+            capture(
+                &st.store,
+                input(uuid::Uuid::new_v4().to_string(), vec![], false)
+            )
+            .is_err()
+        );
+        assert!(
+            capture(
+                &st.store,
+                input(uuid::Uuid::new_v4().to_string(), vec![doc], true)
+            )
+            .is_err()
+        );
         let item = capture(
             &st.store,
             input(uuid::Uuid::new_v4().to_string(), vec![], true),
@@ -556,16 +560,14 @@ mod tests {
         let path = st.config.db_path.clone();
         drop(st);
         let store = crate::testkit::open_test_store(&path).unwrap();
-        let count: i64 = store
-            .lock()
-            .unwrap()
-            .query_row(
-                "SELECT COUNT(*) FROM search_feedback WHERE id=?",
-                [item.id],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(count, 1);
+        let present = crate::db::payload_kv::get_payload_raw(
+            &store,
+            crate::db::payload_kv::PayloadTable::SearchFeedback,
+            &item.id,
+        )
+        .unwrap()
+        .is_some();
+        assert!(present);
         eprintln!("feedback fixture: {}", path.display());
     }
     #[tokio::test]
@@ -575,15 +577,14 @@ mod tests {
         capture(&st.store, input(id.clone(), vec![doc], false)).unwrap();
         let report = run_one(st.clone(), id.clone(), None, false).await.unwrap();
         assert_eq!(report["status"], "evaluated");
-        let conn = st.store.lock().unwrap();
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM eval_runs", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(count, 1);
-        let payload: String = conn
-            .query_row("SELECT payload FROM eval_runs LIMIT 1", [], |r| r.get(0))
-            .unwrap();
-        let stored: Value = serde_json::from_str(&payload).unwrap();
+        let pairs = crate::db::payload_kv::list_payload_pairs(
+            &st.store,
+            crate::db::payload_kv::PayloadTable::EvalRuns,
+        )
+        .unwrap();
+        assert_eq!(pairs.len(), 1);
+        let payload = &pairs[0].1;
+        let stored: Value = serde_json::from_str(payload).unwrap();
         assert_eq!(stored["kind"], "feedback_run");
         assert_eq!(stored["question_id"], id);
         assert_eq!(stored["result"]["recall"], 1.0);
@@ -605,17 +606,18 @@ mod tests {
         .unwrap();
         assert_eq!(report["kind"], "feedback_compare");
         assert!(!report["regressions"].as_array().unwrap().is_empty());
-        assert!(report["regressions"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|r| r["question_id"] == id && r["metric"] == "recall"));
-        let count: i64 = st
-            .store
-            .lock()
-            .unwrap()
-            .query_row("SELECT COUNT(*) FROM eval_runs", [], |r| r.get(0))
-            .unwrap();
+        assert!(
+            report["regressions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["question_id"] == id && r["metric"] == "recall")
+        );
+        let count = crate::db::payload_kv::count_payloads(
+            &st.store,
+            crate::db::payload_kv::PayloadTable::EvalRuns,
+        )
+        .unwrap();
         assert_eq!(count, 1);
     }
 }

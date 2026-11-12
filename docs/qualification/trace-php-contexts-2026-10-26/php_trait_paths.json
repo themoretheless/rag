@@ -1,0 +1,28 @@
+{
+  "passed": true,
+  "versions": {
+    "index_format": 80,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "checks": [
+    "incompatible-consumers-pruned",
+    "all-compatible-context-states-retained",
+    "nested-inherited-trait-frames",
+    "callable-values-not-calls",
+    "reference-and-all-modes",
+    "depth-and-output-caps",
+    "entry-frame-evidence",
+    "SQL-table-impact-correlation",
+    "SQL-write-read-filter-isolation",
+    "warm-reuse",
+    "full-cache-equivalence",
+    "stale-host-exclusion",
+    "entry-change-refresh",
+    "frozen-entry-diff",
+    "project-isolation"
+  ],
+  "runtime_context_correlation_proven": false,
+  "source_applications_executed": false,
+  "production_database_touched": false
+}

@@ -1,5 +1,5 @@
 use super::*;
-use crate::db::fts::tokenize;
+use crate::db::lin_engine::LinWriter;
 use crate::models::Chunk;
 use crate::models::Document;
 use chrono::Utc;
@@ -231,8 +231,8 @@ fn search_lex_and_hybrid_with_store() {
         updated_at: now,
         ..Default::default()
     };
-    store.documents().upsert_document(&doc1).unwrap();
-    store.documents().upsert_document(&doc2).unwrap();
+    store.upsert_document(&doc1).unwrap();
+    store.upsert_document(&doc2).unwrap();
 
     let chunks = vec![
         Chunk {
@@ -266,15 +266,15 @@ fn search_lex_and_hybrid_with_store() {
             metadata_json: "{}".into(),
         },
     ];
-    store.chunks().insert_chunks(&chunks).unwrap();
+    store.insert_chunks(&chunks).unwrap();
 
     // Production lexical path (DuckDB BM25, or the TF fallback without FTS).
-    let lex = fts::search_bm25_with_stemmer(
+    let lex = search_lex(
         &store,
         "cats xylophone",
         10,
         &LexFilters::default(),
-        Some("porter"),
+        "porter",
     )
     .unwrap();
     assert!(!lex.is_empty());
@@ -349,7 +349,6 @@ fn recency_half_life_boosts_newer_document() {
     let now = Utc::now();
     for (id, age_days) in [("old", 120), ("new", 0)] {
         store
-            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("uri://{id}"),
@@ -362,7 +361,6 @@ fn recency_half_life_boosts_newer_document() {
             })
             .unwrap();
         store
-            .chunks()
             .insert_chunks(&[Chunk {
                 id: format!("chunk-{id}"),
                 document_id: id.into(),
@@ -442,13 +440,12 @@ fn search_vec_respects_wing_room_source_and_archived() {
         status: "archived".into(),
         ..Default::default()
     };
-    store.documents().upsert_document(&active).unwrap();
-    store.documents().upsert_document(&other_wing).unwrap();
-    store.documents().upsert_document(&archived).unwrap();
+    store.upsert_document(&active).unwrap();
+    store.upsert_document(&other_wing).unwrap();
+    store.upsert_document(&archived).unwrap();
 
     let emb = vec![1.0f32, 0.0, 0.0];
     store
-        .chunks()
         .insert_chunks(&[
             Chunk {
                 id: "c-active".into(),
@@ -528,13 +525,16 @@ fn search_vec_respects_wing_room_source_and_archived() {
         let chunk_ids = snapshot
             .chunks
             .iter()
-            .map(|chunk| &*chunk.id)
+            .map(|chunk| chunk.id.as_str())
             .collect::<Vec<_>>();
         assert_eq!(chunk_ids, expected);
         assert_eq!(documents.only_ids().unwrap().len(), expected.len());
     }
     assert!(
-        global_snapshot(&store).is_none(),
+        !vector_snapshots()
+            .lock()
+            .unwrap()
+            .contains_key(&store.backend_key()),
         "scoped searches must not populate the global snapshot cache"
     );
 
@@ -553,11 +553,32 @@ fn search_vec_respects_wing_room_source_and_archived() {
     assert!(ids.contains(&"active"));
     assert!(ids.contains(&"other"));
     assert!(!ids.contains(&"arch"));
-    assert_eq!(
-        global_snapshot(&store).unwrap().chunks.len(),
-        3,
-        "the implicit active-status filter alone must retain the global cache path"
-    );
+    if store.read().unwrap().disk_v2().is_some() {
+        assert!(
+            !vector_snapshots()
+                .lock()
+                .unwrap()
+                .contains_key(&store.backend_key()),
+            "DiskEngineV2 searches out-of-core + L1 HotTierCache without materializing a full-corpus RAM vector snapshot"
+        );
+        let stats = store.read().unwrap().disk_v2().unwrap().hot_cache_stats();
+        assert!(
+            stats.vec_query_misses >= 1 || stats.vec_query_hits >= 1,
+            "L1 hot vector query cache should track vector queries"
+        );
+    } else {
+        assert_eq!(
+            vector_snapshots()
+                .lock()
+                .unwrap()
+                .get(&store.backend_key())
+                .unwrap()
+                .chunks
+                .len(),
+            3,
+            "the implicit active-status filter alone must retain the global cache path on in-memory stores"
+        );
+    }
     // Unscoped reads list only the hidden documents, not the active corpus.
     let (_, unscoped) = vector_search_inputs(&store, &LexFilters::default()).unwrap();
     match &unscoped {
@@ -601,7 +622,13 @@ fn search_vec_respects_wing_room_source_and_archived() {
         vec!["active"]
     );
     assert_eq!(
-        global_snapshot(&store).unwrap().chunks.len(),
+        vector_snapshots()
+            .lock()
+            .unwrap()
+            .get(&store.backend_key())
+            .unwrap()
+            .chunks
+            .len(),
         3,
         "a scoped read must not replace the global snapshot"
     );
@@ -687,9 +714,8 @@ fn scoped_vector_search_ranks_inside_scope_before_top_k() {
         updated_at: now,
         ..Default::default()
     };
-    store.documents().upsert_document(&target).unwrap();
+    store.upsert_document(&target).unwrap();
     store
-        .chunks()
         .insert_chunks(&[Chunk {
             id: "chunk-target".into(),
             document_id: target.id.clone(),
@@ -716,9 +742,8 @@ fn scoped_vector_search_ranks_inside_scope_before_top_k() {
             updated_at: now,
             ..Default::default()
         };
-        store.documents().upsert_document(&document).unwrap();
+        store.upsert_document(&document).unwrap();
         store
-            .chunks()
             .insert_chunks(&[Chunk {
                 id: format!("chunk-{id}"),
                 document_id: id,
@@ -786,9 +811,8 @@ fn vector_snapshot_refreshes_after_chunk_generation_changes() {
         content: "first".into(),
         ..Default::default()
     };
-    store.documents().upsert_document(&document).unwrap();
+    store.upsert_document(&document).unwrap();
     store
-        .chunks()
         .insert_chunks(&[Chunk {
             id: "before".into(),
             document_id: document.id.clone(),
@@ -804,12 +828,11 @@ fn vector_snapshot_refreshes_after_chunk_generation_changes() {
     let first = search_chunks(&store, &[1.0, 0.0], 1, None).unwrap();
     assert_eq!(first[0].chunk_id, "before");
     let first_generation = {
-        let conn = store.lock().unwrap();
-        fts::chunks_generation(&conn).unwrap()
+        let r = store.read().unwrap();
+        fts::chunks_generation(&*r).unwrap()
     };
 
     store
-        .chunks()
         .replace_chunks_for_document(
             &document.id,
             &[Chunk {
@@ -825,76 +848,123 @@ fn vector_snapshot_refreshes_after_chunk_generation_changes() {
         )
         .unwrap();
     let second_generation = {
-        let conn = store.lock().unwrap();
-        fts::chunks_generation(&conn).unwrap()
+        let r = store.read().unwrap();
+        fts::chunks_generation(&*r).unwrap()
     };
     assert!(second_generation > first_generation);
 
     let second = search_chunks(&store, &[0.0, 1.0], 1, None).unwrap();
     assert_eq!(second[0].chunk_id, "after");
     assert_eq!(second[0].content, "after content");
-    let cached_generation = global_snapshot(&store).unwrap().generation;
-    assert_eq!(cached_generation, second_generation);
+    if store.read().unwrap().disk_v2().is_some() {
+        assert!(
+            !vector_snapshots()
+                .lock()
+                .unwrap()
+                .contains_key(&store.backend_key()),
+            "DiskEngineV2 must not materialize a full-corpus RAM vector snapshot"
+        );
+    } else {
+        let cached_generation = vector_snapshots()
+            .lock()
+            .unwrap()
+            .get(&store.backend_key())
+            .unwrap()
+            .generation;
+        assert_eq!(cached_generation, second_generation);
+    }
 }
 
 #[test]
 fn vector_snapshot_refreshes_after_embedding_only_update() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("vector-embedding-only-generation.duckdb");
-    let store = Store::open(&path).expect("open");
-    for (document_id, chunk_id, embedding) in [
-        ("a-target", "chunk-target", vec![1.0, 0.0]),
-        ("z-rival", "chunk-rival", vec![0.0, 1.0]),
-    ] {
+    for in_memory in [false, true] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("vector-embedding-only-generation.duckdb");
+        let store = if in_memory {
+            Store::open_in_memory().expect("open_in_memory")
+        } else {
+            Store::open(&path).expect("open")
+        };
+        for (document_id, chunk_id, embedding) in [
+            ("a-target", "chunk-target", vec![1.0, 0.0]),
+            ("z-rival", "chunk-rival", vec![0.0, 1.0]),
+        ] {
+            store
+                .upsert_document(&Document {
+                    id: document_id.into(),
+                    uri: format!("uri://{document_id}"),
+                    title: document_id.into(),
+                    content: "unchanged searchable text".into(),
+                    ..Default::default()
+                })
+                .unwrap();
+            store
+                .insert_chunks(&[Chunk {
+                    id: chunk_id.into(),
+                    document_id: document_id.into(),
+                    chunk_index: 0,
+                    content: "unchanged searchable text".into(),
+                    embedding,
+                    char_start: 0,
+                    char_end: 25,
+                    metadata_json: "{}".into(),
+                }])
+                .unwrap();
+        }
+
+        let before = search_chunks(&store, &[0.0, 1.0], 2, None).unwrap();
+        assert_eq!(before[0].document_id, "z-rival");
+        let gen_before = {
+            let r = store.read().unwrap();
+            fts::chunks_generation(&*r).unwrap()
+        };
+        if !in_memory {
+            assert!(
+                !vector_snapshots()
+                    .lock()
+                    .unwrap()
+                    .contains_key(&store.backend_key()),
+                "DiskEngineV2 must not materialize a full-corpus RAM vector snapshot"
+            );
+        } else {
+            let cached_before = vector_snapshots()
+                .lock()
+                .unwrap()
+                .get(&store.backend_key())
+                .unwrap()
+                .generation;
+            assert_eq!(cached_before, gen_before);
+        }
+
+        let document = store.get_document("a-target").unwrap().unwrap();
+        let chunks = store.list_chunks_for_document(&document.id).unwrap();
         store
-            .documents()
-            .upsert_document(&Document {
-                id: document_id.into(),
-                uri: format!("uri://{document_id}"),
-                title: document_id.into(),
-                content: "unchanged searchable text".into(),
-                ..Default::default()
-            })
+            .update_chunk_embeddings_atomic(
+                &document.id,
+                document.revision,
+                &chunks,
+                &[vec![0.0, 1.0]],
+                None,
+            )
             .unwrap();
-        store
-            .chunks()
-            .insert_chunks(&[Chunk {
-                id: chunk_id.into(),
-                document_id: document_id.into(),
-                chunk_index: 0,
-                content: "unchanged searchable text".into(),
-                embedding,
-                char_start: 0,
-                char_end: 25,
-                metadata_json: "{}".into(),
-            }])
-            .unwrap();
+
+        let after = search_chunks(&store, &[0.0, 1.0], 2, None).unwrap();
+        assert_eq!(after[0].document_id, "a-target");
+        let gen_after = {
+            let r = store.read().unwrap();
+            fts::chunks_generation(&*r).unwrap()
+        };
+        assert!(gen_after > gen_before);
+        if in_memory {
+            let cached_after = vector_snapshots()
+                .lock()
+                .unwrap()
+                .get(&store.backend_key())
+                .unwrap()
+                .generation;
+            assert_eq!(cached_after, gen_after);
+        }
     }
-
-    let before = search_chunks(&store, &[0.0, 1.0], 2, None).unwrap();
-    assert_eq!(before[0].document_id, "z-rival");
-    let cached_before = global_snapshot(&store).unwrap().generation;
-
-    let document = store.documents().get_document("a-target").unwrap().unwrap();
-    let chunks = store
-        .chunks()
-        .list_chunks_for_document(&document.id)
-        .unwrap();
-    store
-        .chunks()
-        .update_chunk_embeddings_atomic(
-            &document.id,
-            document.revision,
-            &chunks,
-            &[vec![0.0, 1.0]],
-            None,
-        )
-        .unwrap();
-
-    let after = search_chunks(&store, &[0.0, 1.0], 2, None).unwrap();
-    assert_eq!(after[0].document_id, "a-target");
-    let cached_after = global_snapshot(&store).unwrap().generation;
-    assert!(cached_after > cached_before);
 }
 
 #[tokio::test]
@@ -910,9 +980,8 @@ async fn active_corpus_mutation_rejects_all_search_modes_and_releases_cleanly() 
         wing: Some("project".into()),
         ..Default::default()
     };
-    store.documents().upsert_document(&document).unwrap();
+    store.upsert_document(&document).unwrap();
     store
-        .chunks()
         .insert_chunks(&[Chunk {
             id: "project-chunk".into(),
             document_id: document.id.clone(),
@@ -924,9 +993,8 @@ async fn active_corpus_mutation_rejects_all_search_modes_and_releases_cleanly() 
             metadata_json: "{}".into(),
         }])
         .unwrap();
-    store.maintenance().ensure_fts("porter").unwrap();
+    store.ensure_fts("porter").unwrap();
     store
-        .chunks()
         .insert_chunks(&[Chunk {
             id: "project-chunk-new".into(),
             document_id: document.id.clone(),
@@ -940,16 +1008,12 @@ async fn active_corpus_mutation_rejects_all_search_modes_and_releases_cleanly() 
         .unwrap();
 
     let lifecycle_before = {
-        let conn = store.lock().unwrap();
-        fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        fts::fts_generation_state(&*r).unwrap()
     };
     assert!(lifecycle_before.dirty);
 
-    let sync_guard = store
-        .corpus_lane()
-        .corpus_mutation_lane()
-        .write_owned()
-        .await;
+    let sync_guard = store.corpus_mutation_lane().write_owned().await;
     let hybrid_query = SearchQuery {
         mode: SearchMode::Hybrid,
         top_k: 5,
@@ -984,18 +1048,23 @@ async fn active_corpus_mutation_rejects_all_search_modes_and_releases_cleanly() 
         assert!(!message.contains(&path.display().to_string()));
     }
     let lifecycle_while_busy = {
-        let conn = store.lock().unwrap();
-        fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        fts::fts_generation_state(&*r).unwrap()
     };
     assert_eq!(lifecycle_while_busy, lifecycle_before);
-    assert!(global_snapshot(&store).is_none());
+    assert!(
+        !vector_snapshots()
+            .lock()
+            .unwrap()
+            .contains_key(&store.backend_key())
+    );
 
     drop(sync_guard);
     let hits = search(&store, &hybrid_query).unwrap();
     assert!(hits.iter().any(|hit| hit.chunk_id == "project-chunk-new"));
     let lifecycle_after = {
-        let conn = store.lock().unwrap();
-        fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        fts::fts_generation_state(&*r).unwrap()
     };
     assert!(!lifecycle_after.dirty);
     assert_eq!(
@@ -1011,10 +1080,12 @@ fn query_guards_and_multi_rrf_are_deterministic() {
         query_text: Some("  ".into()),
         ..SearchQuery::default()
     };
-    assert!(validate_query(&empty)
-        .unwrap_err()
-        .to_string()
-        .contains("must not be empty"));
+    assert!(
+        validate_query(&empty)
+            .unwrap_err()
+            .to_string()
+            .contains("must not be empty")
+    );
     let too_long = SearchQuery {
         mode: SearchMode::Lex,
         query_text: Some("x".repeat(MAX_QUERY_CHARS + 1)),
@@ -1025,10 +1096,12 @@ fn query_guards_and_multi_rrf_are_deterministic() {
         top_k: MAX_TOP_K + 1,
         ..SearchQuery::default()
     };
-    assert!(validate_query(&too_many)
-        .unwrap_err()
-        .to_string()
-        .contains("hard cap"));
+    assert!(
+        validate_query(&too_many)
+            .unwrap_err()
+            .to_string()
+            .contains("hard cap")
+    );
 
     let lists = vec![
         vec![sample_hit("b", "d2", 1.0), sample_hit("a", "d1", 1.0)],
@@ -1041,12 +1114,14 @@ fn query_guards_and_multi_rrf_are_deterministic() {
         second.iter().map(|h| &h.chunk_id).collect::<Vec<_>>()
     );
     assert_eq!(first[0].chunk_id, "a");
-    assert!(first[0]
-        .explanation
-        .as_ref()
-        .unwrap()
-        .reasons
-        .contains(&"multi_query_rrf".into()));
+    assert!(
+        first[0]
+            .explanation
+            .as_ref()
+            .unwrap()
+            .reasons
+            .contains(&"multi_query_rrf".into())
+    );
 }
 
 #[test]
@@ -1065,7 +1140,7 @@ fn field_boosts_explain_title_uri_heading_pin_and_document_boost() {
         updated_at: Utc::now(),
         ..Default::default()
     };
-    store.documents().upsert_document(&document).unwrap();
+    store.upsert_document(&document).unwrap();
     let mut hits = vec![SearchHit {
         chunk_id: "c".into(),
         document_id: "d".into(),
@@ -1106,7 +1181,7 @@ fn search_context_budget_includes_expansion_and_zero_returns_no_hits() {
         content: "expanded context".into(),
         ..Default::default()
     };
-    store.documents().upsert_document(&doc).unwrap();
+    store.upsert_document(&doc).unwrap();
     let chunks: Vec<Chunk> = (0..3)
         .map(|i| Chunk {
             id: format!("budget-chunk-{i}"),
@@ -1119,7 +1194,7 @@ fn search_context_budget_includes_expansion_and_zero_returns_no_hits() {
             metadata_json: r#"{"heading_path":["Budget"]}"#.into(),
         })
         .collect();
-    store.chunks().insert_chunks(&chunks).unwrap();
+    store.insert_chunks(&chunks).unwrap();
     for budget in [0, 1, 32] {
         let query = SearchQuery {
             top_k: 1,
@@ -1152,7 +1227,6 @@ fn diversity_refill_recovers_second_document_in_every_mode_without_scope_leaks()
         ("foreign", "other", 80),
     ] {
         store
-            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("doc://{id}"),
@@ -1182,7 +1256,7 @@ fn diversity_refill_recovers_second_document_in_every_mode_without_scope_leaks()
                 metadata_json: "{}".into(),
             })
             .collect();
-        store.chunks().insert_chunks(&chunks).unwrap();
+        store.insert_chunks(&chunks).unwrap();
     }
     for mode in [SearchMode::Vec, SearchMode::Lex, SearchMode::Hybrid] {
         let query = SearchQuery {
@@ -1233,7 +1307,6 @@ fn diversity_refill_stops_at_bound_with_an_explicit_reason() {
     let root = tempfile::tempdir().unwrap();
     let store = Store::open(&root.path().join("diversity-cap.duckdb")).unwrap();
     store
-        .documents()
         .upsert_document(&Document {
             id: "dominant".into(),
             uri: "doc://dominant".into(),
@@ -1254,7 +1327,7 @@ fn diversity_refill_stops_at_bound_with_an_explicit_reason() {
             metadata_json: "{}".into(),
         })
         .collect();
-    store.chunks().insert_chunks(&chunks).unwrap();
+    store.insert_chunks(&chunks).unwrap();
     let query = SearchQuery {
         top_k: 2,
         query_embedding: Some(vec![1.0, 0.0]),
@@ -1266,9 +1339,11 @@ fn diversity_refill_stops_at_bound_with_an_explicit_reason() {
     let hits = search(&store, &query).unwrap();
     assert_eq!(hits.len(), 1);
     let explanation = hits[0].explanation.as_ref().unwrap();
-    assert!(explanation
-        .reasons
-        .contains(&"diversity_candidate_cap_reached".into()));
+    assert!(
+        explanation
+            .reasons
+            .contains(&"diversity_candidate_cap_reached".into())
+    );
     assert!(explanation.vec_ms.unwrap() > 0.0);
     let scoped = search(
         &store,
@@ -1278,12 +1353,14 @@ fn diversity_refill_stops_at_bound_with_an_explicit_reason() {
         },
     )
     .unwrap();
-    assert!(!scoped[0]
-        .explanation
-        .as_ref()
-        .unwrap()
-        .reasons
-        .contains(&"diversity_candidate_refill".into()));
+    assert!(
+        !scoped[0]
+            .explanation
+            .as_ref()
+            .unwrap()
+            .reasons
+            .contains(&"diversity_candidate_refill".into())
+    );
 }
 
 #[test]
@@ -1293,7 +1370,6 @@ fn scoped_vector_cache_sees_documents_moved_into_the_scope() {
     let now = Utc::now();
     for (id, wing) in [("inside", "research"), ("outside", "ops")] {
         store
-            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("uri://{id}"),
@@ -1307,7 +1383,6 @@ fn scoped_vector_cache_sees_documents_moved_into_the_scope() {
             })
             .unwrap();
         store
-            .chunks()
             .insert_chunks(&[Chunk {
                 id: format!("c-{id}"),
                 document_id: id.into(),
@@ -1342,7 +1417,6 @@ fn scoped_vector_cache_sees_documents_moved_into_the_scope() {
 
     // A metadata-only move does not advance the chunk generation.
     store
-        .documents()
         .update_document_placement(
             "outside",
             &crate::models::PlacementUpdate {
@@ -1363,7 +1437,6 @@ fn refreshed_vector_snapshot_matches_a_full_rebuild() {
     let now = Utc::now();
     let add = |id: &str, vectors: &[[f32; 2]]| {
         store
-            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("uri://{id}"),
@@ -1389,10 +1462,7 @@ fn refreshed_vector_snapshot_matches_a_full_rebuild() {
                 metadata_json: "{}".into(),
             })
             .collect();
-        store
-            .chunks()
-            .replace_chunks_for_document(id, &chunks)
-            .unwrap();
+        store.replace_chunks_for_document(id, &chunks).unwrap();
     };
     for index in 0..6 {
         add(
@@ -1401,31 +1471,37 @@ fn refreshed_vector_snapshot_matches_a_full_rebuild() {
         );
     }
     let previous = {
-        let conn = store.lock().unwrap();
-        let generation = fts::chunks_generation(&conn).unwrap();
-        build_vector_snapshot(&conn, generation).unwrap()
+        let r = store.read().unwrap();
+        let generation = fts::chunks_generation(&*r).unwrap();
+        build_vector_snapshot(&*r, generation).unwrap()
     };
 
     // New document, replaced chunks, and an in-place embedding change.
     add("doc-new", &[[0.5, 0.5]]);
     add("doc2", &[[3.0, 4.0]]);
     {
-        let conn = store.lock().unwrap();
+        let mut w = store.write().unwrap();
         // An unscoped write: logged as "unknown", so the refresh lists all.
-        fts::mark_fts_dirty(&conn).unwrap();
+        fts::mark_fts_dirty(&mut *w).unwrap();
         // Chunk writers maintain the digest alongside the JSON.
-        conn.execute(
-            "UPDATE chunks SET embedding = [0.0,2.0]::FLOAT[], embedding_digest = ? \
-             WHERE id = 'doc4-1'",
-            [crate::db::store::embedding_digest("[0.0,2.0]")],
+        w.update_where(
+            "chunks",
+            lin::query::pred::eq("id", "doc4-1"),
+            crate::db::lin_engine::RecBuilder::new()
+                .str("embedding_json", "[0.0,2.0]")
+                .i64(
+                    "embedding_digest",
+                    crate::db::store::embedding_digest("[0.0,2.0]"),
+                )
+                .build(),
         )
         .unwrap();
     }
 
-    let conn = store.lock().unwrap();
-    let generation = fts::chunks_generation(&conn).unwrap();
-    let refreshed = refresh_vector_snapshot(&conn, &previous, generation, None).unwrap();
-    let rebuilt = build_vector_snapshot(&conn, generation).unwrap();
+    let r = store.read().unwrap();
+    let generation = fts::chunks_generation(&*r).unwrap();
+    let refreshed = refresh_vector_snapshot(&*r, &previous, generation, None).unwrap();
+    let rebuilt = build_vector_snapshot(&*r, generation).unwrap();
     let view = |snapshot: &VectorSnapshot| {
         snapshot
             .chunks
@@ -1433,7 +1509,7 @@ fn refreshed_vector_snapshot_matches_a_full_rebuild() {
             .map(|chunk| {
                 (
                     chunk.id.clone(),
-                    snapshot.document_id(chunk).to_owned(),
+                    chunk.document_id.clone(),
                     chunk.chunk_index,
                     chunk.vector.to_vec(),
                 )
@@ -1451,7 +1527,6 @@ fn scoped_vector_snapshot_refresh_matches_a_scoped_rebuild() {
     let now = Utc::now();
     let add = |id: &str, wing: &str, vectors: &[[f32; 2]]| {
         store
-            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("uri://{id}"),
@@ -1478,10 +1553,7 @@ fn scoped_vector_snapshot_refresh_matches_a_scoped_rebuild() {
                 metadata_json: "{}".into(),
             })
             .collect();
-        store
-            .chunks()
-            .replace_chunks_for_document(id, &chunks)
-            .unwrap();
+        store.replace_chunks_for_document(id, &chunks).unwrap();
     };
     for index in 0..8 {
         let wing = if index % 2 == 0 { "alpha" } else { "beta" };
@@ -1496,17 +1568,17 @@ fn scoped_vector_snapshot_refresh_matches_a_scoped_rebuild() {
         ..Default::default()
     };
     let (scoped_previous, global_previous) = {
-        let conn = store.lock().unwrap();
+        let r = store.read().unwrap();
         (
-            build_vector_snapshot_with_filters(&conn, 1, Some(&filters)).unwrap(),
-            build_vector_snapshot(&conn, 1).unwrap(),
+            build_vector_snapshot_with_filters(&*r, 1, Some(&filters)).unwrap(),
+            build_vector_snapshot(&*r, 1).unwrap(),
         )
     };
     add("doc-new", "alpha", &[[0.5, 0.5]]);
     add("doc2", "alpha", &[[3.0, 4.0]]);
 
-    let conn = store.lock().unwrap();
-    let rebuilt = build_vector_snapshot_with_filters(&conn, 2, Some(&filters)).unwrap();
+    let r = store.read().unwrap();
+    let rebuilt = build_vector_snapshot_with_filters(&*r, 2, Some(&filters)).unwrap();
     let view = |snapshot: &VectorSnapshot| {
         snapshot
             .chunks
@@ -1515,14 +1587,13 @@ fn scoped_vector_snapshot_refresh_matches_a_scoped_rebuild() {
             .collect::<Vec<_>>()
     };
     for previous in [&scoped_previous, &global_previous] {
-        let refreshed = refresh_vector_snapshot(&conn, previous, 2, Some(&filters)).unwrap();
+        let refreshed = refresh_vector_snapshot(&*r, previous, 2, Some(&filters)).unwrap();
         assert_eq!(view(&refreshed), view(&rebuilt));
     }
 }
 
 fn vector_test_document(store: &Store, id: &str, layer: &str, embedding: Vec<f32>) {
     store
-        .documents()
         .upsert_document(&Document {
             id: id.into(),
             uri: format!("uri://{id}"),
@@ -1533,7 +1604,6 @@ fn vector_test_document(store: &Store, id: &str, layer: &str, embedding: Vec<f32
         })
         .unwrap();
     store
-        .chunks()
         .insert_chunks(&[Chunk {
             id: format!("c-{id}"),
             document_id: id.into(),
@@ -1555,7 +1625,6 @@ fn unscoped_vector_search_skips_orphan_chunks_without_losing_hits() {
     vector_test_document(&store, "far", "raw", vec![0.0, 1.0]);
     // A chunk whose document row is gone, scoring above every real chunk.
     store
-        .chunks()
         .insert_chunks(&[Chunk {
             id: "c-orphan".into(),
             document_id: "missing".into(),
@@ -1584,9 +1653,8 @@ fn unscoped_vector_search_skips_orphan_chunks_without_losing_hits() {
     let warm = search_vec(&store, &[1.0, 0.0], 1, &LexFilters::default()).unwrap();
     assert_eq!(ids(&warm), vec!["late"]);
     {
-        let conn = store.lock().unwrap();
-        conn.execute("DELETE FROM documents WHERE id = 'late'", [])
-            .unwrap();
+        let mut w = store.write().unwrap();
+        w.delete_by_id("documents", "late").unwrap();
     }
     let hits = search_vec(&store, &[1.0, 0.0], 3, &LexFilters::default()).unwrap();
     assert_eq!(ids(&hits)[..2], ["near".to_string(), "far".to_string()]);
@@ -1596,7 +1664,6 @@ fn unscoped_vector_search_skips_orphan_chunks_without_losing_hits() {
     // Creating the missing document row does not bump the chunk generation;
     // the cached snapshot must still serve the orphan's chunk once it has one.
     store
-        .documents()
         .upsert_document(&Document {
             id: "missing".into(),
             uri: "uri://missing".into(),
@@ -1624,9 +1691,15 @@ fn layer_only_vector_scope_lists_the_smaller_side() {
     vector_test_document(&store, "wiki0", "wiki", vec![1.0, 0.0]);
     vector_test_document(&store, "nolayer", "raw", vec![1.0, 0.0]);
     {
-        let conn = store.lock().unwrap();
-        conn.execute("UPDATE documents SET layer = NULL WHERE id = 'nolayer'", [])
-            .unwrap();
+        let mut w = store.write().unwrap();
+        w.update_where(
+            "documents",
+            lin::query::pred::eq("id", "nolayer"),
+            crate::db::lin_engine::RecBuilder::new()
+                .opt_str("layer", None)
+                .build(),
+        )
+        .unwrap();
     }
     let layer = |value: &str| LexFilters {
         layer: Some(value.into()),
@@ -1683,7 +1756,6 @@ fn change_log_refresh_matches_a_full_rebuild_and_falls_back_when_unscoped() {
     };
     for (n, doc) in ["a", "b", "c", "d"].iter().enumerate() {
         store
-            .documents()
             .upsert_document(&Document {
                 id: (*doc).into(),
                 uri: format!("uri://{doc}"),
@@ -1693,14 +1765,13 @@ fn change_log_refresh_matches_a_full_rebuild_and_falls_back_when_unscoped() {
             })
             .unwrap();
         store
-            .chunks()
             .insert_chunks(&[chunk(doc, 0, n as f32 / 10.0), chunk(doc, 1, 0.5)])
             .unwrap();
     }
     let snapshot = |store: &Store| {
-        let conn = store.lock().unwrap();
-        let generation = fts::chunks_generation(&conn).unwrap();
-        build_vector_snapshot(&conn, generation).unwrap()
+        let r = store.read().unwrap();
+        let generation = fts::chunks_generation(&*r).unwrap();
+        build_vector_snapshot(&*r, generation).unwrap()
     };
     let view = |snapshot: &VectorSnapshot| {
         snapshot
@@ -1709,7 +1780,7 @@ fn change_log_refresh_matches_a_full_rebuild_and_falls_back_when_unscoped() {
             .map(|c| {
                 (
                     c.id.clone(),
-                    snapshot.document_id(c).to_owned(),
+                    c.document_id.clone(),
                     c.chunk_index,
                     c.embedding_hash,
                     c.vector.to_vec(),
@@ -1721,12 +1792,10 @@ fn change_log_refresh_matches_a_full_rebuild_and_falls_back_when_unscoped() {
 
     // Scoped writes: replace, delete, insert, re-embed.
     store
-        .chunks()
         .replace_chunks_for_document("a", &[chunk("a", 0, 0.9), chunk("a", 2, 0.3)])
         .unwrap();
-    store.documents().delete_document("b").unwrap();
+    store.delete_document("b").unwrap();
     store
-        .documents()
         .upsert_document(&Document {
             id: "e".into(),
             uri: "uri://e".into(),
@@ -1735,16 +1804,10 @@ fn change_log_refresh_matches_a_full_rebuild_and_falls_back_when_unscoped() {
             ..Default::default()
         })
         .unwrap();
-    store.chunks().insert_chunks(&[chunk("e", 0, 0.7)]).unwrap();
-    let c_chunks = store.chunks().list_chunks_for_document("c").unwrap();
-    let c_revision = store
-        .documents()
-        .get_document("c")
-        .unwrap()
-        .unwrap()
-        .revision;
+    store.insert_chunks(&[chunk("e", 0, 0.7)]).unwrap();
+    let c_chunks = store.list_chunks_for_document("c").unwrap();
+    let c_revision = store.get_document("c").unwrap().unwrap().revision;
     store
-        .chunks()
         .update_chunk_embeddings_atomic(
             "c",
             c_revision,
@@ -1755,240 +1818,37 @@ fn change_log_refresh_matches_a_full_rebuild_and_falls_back_when_unscoped() {
         .unwrap();
 
     {
-        let conn = store.lock().unwrap();
-        let generation = fts::chunks_generation(&conn).unwrap();
-        let documents = fts::changed_documents_since(&conn, previous.generation, generation)
+        let r = store.read().unwrap();
+        let generation = fts::chunks_generation(&*r).unwrap();
+        let documents = fts::changed_documents_since(&*r, previous.generation, generation)
             .unwrap()
             .expect("every generation logged with its documents");
         let mut documents: Vec<_> = documents.into_iter().collect();
         documents.sort();
         assert_eq!(documents, vec!["a", "b", "c", "e"]);
-        let refreshed = refresh_vector_snapshot(&conn, &previous, generation, None).unwrap();
-        let rebuilt = build_vector_snapshot(&conn, generation).unwrap();
+        let refreshed = refresh_vector_snapshot(&*r, &previous, generation, None).unwrap();
+        let rebuilt = build_vector_snapshot(&*r, generation).unwrap();
         assert_eq!(view(&refreshed), view(&rebuilt));
     }
 
-    // An unscoped write (raw SQL plus plain mark_fts_dirty) forces a full listing.
+    // An unscoped write (raw mutation plus plain mark_fts_dirty) forces a full listing.
     let previous = snapshot(&store);
     {
-        let conn = store.lock().unwrap();
-        fts::mark_fts_dirty(&conn).unwrap();
-        conn.execute("DELETE FROM chunks WHERE document_id = 'd'", [])
+        let mut w = store.write().unwrap();
+        fts::mark_fts_dirty(&mut *w).unwrap();
+        w.delete_where("chunks", lin::query::pred::eq("document_id", "d"))
             .unwrap();
-        let generation = fts::chunks_generation(&conn).unwrap();
+        let generation = fts::chunks_generation(&*w).unwrap();
         assert!(
-            fts::changed_documents_since(&conn, previous.generation, generation)
+            fts::changed_documents_since(&*w, previous.generation, generation)
                 .unwrap()
                 .is_none()
         );
-        let refreshed = refresh_vector_snapshot(&conn, &previous, generation, None).unwrap();
-        let rebuilt = build_vector_snapshot(&conn, generation).unwrap();
+        let refreshed = refresh_vector_snapshot(&*w, &previous, generation, None).unwrap();
+        let rebuilt = build_vector_snapshot(&*w, generation).unwrap();
         assert_eq!(view(&refreshed), view(&rebuilt));
-        assert!(refreshed
-            .chunks
-            .iter()
-            .all(|c| refreshed.document_id(c) != "d"));
+        assert!(refreshed.chunks.iter().all(|c| c.document_id != "d"));
     }
-}
-
-#[test]
-fn snapshot_skips_chunks_with_unusable_vectors_instead_of_failing() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let store = Store::open(&dir.path().join("bad-vectors.duckdb")).expect("open");
-    store
-        .documents()
-        .upsert_document(&Document {
-            id: "a".into(),
-            uri: "uri://a".into(),
-            title: "a".into(),
-            content: "a".into(),
-            ..Default::default()
-        })
-        .unwrap();
-    let chunks: Vec<Chunk> = (0..4)
-        .map(|index| Chunk {
-            id: format!("a-{index}"),
-            document_id: "a".into(),
-            chunk_index: index,
-            content: format!("a {index}"),
-            embedding: vec![1.0, index as f32],
-            char_start: 0,
-            char_end: 1,
-            metadata_json: "{}".into(),
-        })
-        .collect();
-    store.chunks().insert_chunks(&chunks).unwrap();
-    let previous = {
-        let conn = store.lock().unwrap();
-        let generation = fts::chunks_generation(&conn).unwrap();
-        build_vector_snapshot(&conn, generation).unwrap()
-    };
-    let conn = store.lock().unwrap();
-    conn.execute_batch(
-        "UPDATE chunks SET embedding = [CAST('nan' AS FLOAT), 1.0], embedding_digest = 11 WHERE id = 'a-0';
-         UPDATE chunks SET embedding = [CAST(NULL AS FLOAT), 1.0], embedding_digest = 12 WHERE id = 'a-1';
-         UPDATE chunks SET embedding = [CAST('inf' AS FLOAT), 1.0], embedding_digest = 13 WHERE id = 'a-2';",
-    )
-    .unwrap();
-    fts::mark_embeddings_changed_for(&conn, Some(&["a"])).unwrap();
-    let generation = fts::chunks_generation(&conn).unwrap();
-    let ids = |snapshot: &VectorSnapshot| {
-        snapshot
-            .chunks
-            .iter()
-            .map(|chunk| chunk.id.to_string())
-            .collect::<Vec<_>>()
-    };
-    let rebuilt = build_vector_snapshot(&conn, generation).expect("full build tolerates bad rows");
-    assert_eq!(ids(&rebuilt), vec!["a-3"]);
-    let refreshed = refresh_vector_snapshot(&conn, &previous, generation, None)
-        .expect("refresh tolerates bad rows");
-    assert_eq!(ids(&refreshed), vec!["a-3"]);
-}
-
-fn two_dim_chunk(doc: &str, index: i32, value: f32) -> Chunk {
-    Chunk {
-        id: format!("{doc}-{index}"),
-        document_id: doc.into(),
-        chunk_index: index,
-        content: format!("{doc} {index}"),
-        embedding: vec![value, 1.0 - value],
-        char_start: 0,
-        char_end: 1,
-        metadata_json: "{}".into(),
-    }
-}
-
-fn plain_document(store: &Store, id: &str) {
-    store
-        .documents()
-        .upsert_document(&Document {
-            id: id.into(),
-            uri: format!("uri://{id}"),
-            title: id.into(),
-            content: id.into(),
-            ..Default::default()
-        })
-        .unwrap();
-}
-
-#[test]
-fn change_log_refresh_compacts_the_document_table_after_mass_deletes() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let store = Store::open(&dir.path().join("compact.duckdb")).expect("open");
-    let ids: Vec<String> = (0..100).map(|n| format!("doc{n:03}")).collect();
-    for (n, id) in ids.iter().enumerate() {
-        plain_document(&store, id);
-        store
-            .chunks()
-            .insert_chunks(&[two_dim_chunk(id, 0, n as f32 / 100.0)])
-            .unwrap();
-    }
-    let snapshot = |store: &Store| {
-        let conn = store.lock().unwrap();
-        let generation = fts::chunks_generation(&conn).unwrap();
-        build_vector_snapshot(&conn, generation).unwrap()
-    };
-    let mut previous = snapshot(&store);
-    assert_eq!(previous.documents.ids.len(), 100);
-    // A few deletes keep the table (still mostly live) ...
-    for id in &ids[..10] {
-        store.documents().delete_document(id).unwrap();
-    }
-    {
-        let conn = store.lock().unwrap();
-        let generation = fts::chunks_generation(&conn).unwrap();
-        previous = refresh_vector_snapshot(&conn, &previous, generation, None).unwrap();
-    }
-    assert_eq!(
-        previous.documents.ids.len(),
-        100,
-        "below the threshold: kept"
-    );
-    // ... a mass delete compacts it.
-    for id in &ids[10..80] {
-        store.documents().delete_document(id).unwrap();
-    }
-    let conn = store.lock().unwrap();
-    let generation = fts::chunks_generation(&conn).unwrap();
-    assert!(
-        fts::changed_documents_since(&conn, previous.generation, generation)
-            .unwrap()
-            .is_some()
-    );
-    let refreshed = refresh_vector_snapshot(&conn, &previous, generation, None).unwrap();
-    assert_eq!(refreshed.documents.ids.len(), 20);
-    assert_eq!(refreshed.documents.index.len(), 20);
-    let view = |snapshot: &VectorSnapshot| {
-        snapshot
-            .chunks
-            .iter()
-            .map(|c| {
-                (
-                    c.id.to_string(),
-                    snapshot.document_id(c).to_owned(),
-                    c.vector.to_vec(),
-                )
-            })
-            .collect::<Vec<_>>()
-    };
-    let rebuilt = build_vector_snapshot(&conn, generation).unwrap();
-    assert_eq!(view(&refreshed), view(&rebuilt));
-}
-
-#[test]
-fn change_log_refresh_keeps_a_re_parented_chunk_once() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let store = Store::open(&dir.path().join("reparent.duckdb")).expect("open");
-    for doc in ["a", "b"] {
-        plain_document(&store, doc);
-        store
-            .chunks()
-            .insert_chunks(&[two_dim_chunk(doc, 0, 0.1), two_dim_chunk(doc, 1, 0.4)])
-            .unwrap();
-    }
-    let previous = {
-        let conn = store.lock().unwrap();
-        let generation = fts::chunks_generation(&conn).unwrap();
-        build_vector_snapshot(&conn, generation).unwrap()
-    };
-    let conn = store.lock().unwrap();
-    // Move a-1 to document b with a new vector; the change log names only b.
-    conn.execute_batch(
-        "UPDATE chunks SET document_id = 'b', chunk_index = 2, embedding = [0.9, 0.1], \
-         embedding_digest = 99 WHERE id = 'a-1'",
-    )
-    .unwrap();
-    fts::mark_embeddings_changed_for(&conn, Some(&["b"])).unwrap();
-    let generation = fts::chunks_generation(&conn).unwrap();
-    let refreshed = refresh_vector_snapshot(&conn, &previous, generation, None).unwrap();
-    let view = |snapshot: &VectorSnapshot| {
-        snapshot
-            .chunks
-            .iter()
-            .map(|c| {
-                (
-                    c.id.to_string(),
-                    snapshot.document_id(c).to_owned(),
-                    c.vector.to_vec(),
-                )
-            })
-            .collect::<Vec<_>>()
-    };
-    let ids: Vec<String> = view(&refreshed).into_iter().map(|row| row.0).collect();
-    let mut unique = ids.clone();
-    unique.sort();
-    unique.dedup();
-    assert_eq!(ids.len(), unique.len(), "a chunk id appears once: {ids:?}");
-    let moved = view(&refreshed)
-        .into_iter()
-        .find(|row| row.0 == "a-1")
-        .unwrap();
-    assert_eq!(moved.1, "b", "the newest copy wins");
-    assert_eq!(
-        view(&refreshed),
-        view(&build_vector_snapshot(&conn, generation).unwrap())
-    );
 }
 
 fn parent_fixture_store() -> (tempfile::TempDir, Store) {
@@ -2001,7 +1861,7 @@ fn parent_fixture_store() -> (tempfile::TempDir, Store) {
         content: "leader body leaf one leaf two".into(),
         ..Default::default()
     };
-    store.documents().upsert_document(&doc).unwrap();
+    store.upsert_document(&doc).unwrap();
     let chunk = |id: &str, index: i32, content: &str, metadata: &str| Chunk {
         id: id.into(),
         document_id: doc.id.clone(),
@@ -2013,7 +1873,6 @@ fn parent_fixture_store() -> (tempfile::TempDir, Store) {
         metadata_json: metadata.into(),
     };
     store
-        .chunks()
         .insert_chunks(&[
             chunk("c0", 0, "leader body", "{}"),
             chunk("c1", 1, "leaf one", r#"{"parent_chunk_id":"c0"}"#),
@@ -2039,22 +1898,16 @@ fn context_expansion_parse_accepts_parent() {
 #[test]
 fn insert_chunks_mirrors_parent_column_from_metadata() {
     let (_root, store) = parent_fixture_store();
-    let conn = store.lock().unwrap();
-    let linked: Option<String> = conn
-        .query_row(
-            "SELECT parent_chunk_id FROM chunks WHERE id = 'c1'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
+    let r = store.read().unwrap();
+    let linked = r
+        .get_by_id("chunks", "c1")
+        .unwrap()
+        .and_then(|row| crate::db::lin_engine::cell_opt_string(&row, "parent_chunk_id"));
     assert_eq!(linked.as_deref(), Some("c0"));
-    let plain: Option<String> = conn
-        .query_row(
-            "SELECT parent_chunk_id FROM chunks WHERE id = 'c0'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
+    let plain = r
+        .get_by_id("chunks", "c0")
+        .unwrap()
+        .and_then(|row| crate::db::lin_engine::cell_opt_string(&row, "parent_chunk_id"));
     assert_eq!(plain, None);
 }
 
@@ -2110,9 +1963,8 @@ fn expand_parent_without_parent_keeps_own_body() {
         content: "standalone chunk".into(),
         ..Default::default()
     };
-    store.documents().upsert_document(&doc).unwrap();
+    store.upsert_document(&doc).unwrap();
     store
-        .chunks()
         .insert_chunks(&[Chunk {
             id: "solo".into(),
             document_id: doc.id.clone(),
@@ -2137,442 +1989,4 @@ fn expand_parent_without_parent_keeps_own_body() {
     let context = hits[0].context.as_ref().unwrap();
     assert_eq!(context.len(), 1);
     assert_eq!(context[0].chunk_id, "solo");
-}
-
-#[test]
-fn neighbor_context_windows_are_read_once_and_overlap_correctly() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let store = Store::open(&dir.path().join("neighbors.duckdb")).unwrap();
-    for doc in ["a", "b"] {
-        store
-            .documents()
-            .upsert_document(&Document {
-                id: doc.into(),
-                uri: format!("uri://{doc}"),
-                title: doc.into(),
-                content: doc.into(),
-                ..Default::default()
-            })
-            .unwrap();
-        let chunks: Vec<Chunk> = (0..5)
-            .map(|index| Chunk {
-                id: format!("{doc}{index}"),
-                document_id: doc.into(),
-                chunk_index: index,
-                content: format!("{doc} body {index}"),
-                embedding: vec![1.0, 0.0],
-                char_start: 0,
-                char_end: 1,
-                metadata_json: "{}".into(),
-            })
-            .collect();
-        store
-            .chunks()
-            .replace_chunks_for_document(doc, &chunks)
-            .unwrap();
-    }
-    let hit = |doc: &str, index: i32| SearchHit {
-        chunk_id: format!("{doc}{index}"),
-        document_id: doc.into(),
-        chunk_index: index,
-        ..Default::default()
-    };
-    // Overlapping windows in "a", an edge window in "b".
-    let mut hits = vec![hit("a", 1), hit("a", 2), hit("b", 4)];
-    attach_context(&store, &mut hits, Some(ContextExpansion::Neighbors), 1).unwrap();
-    let context = |hit: &SearchHit| {
-        hit.context
-            .as_ref()
-            .unwrap()
-            .iter()
-            .map(|chunk| chunk.chunk_id.clone())
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(context(&hits[0]), ["a0", "a1", "a2"]);
-    assert_eq!(context(&hits[1]), ["a1", "a2", "a3"]);
-    assert_eq!(context(&hits[2]), ["b3", "b4"]);
-    assert_eq!(hits[1].content, "a body 1\na body 2\na body 3");
-}
-
-fn build_vector_snapshot(
-    conn: &duckdb::Connection,
-    generation: u64,
-) -> Result<Arc<VectorSnapshot>> {
-    Ok(Arc::new(read_full(conn, generation, None)?.finish()?))
-}
-
-fn build_vector_snapshot_with_filters(
-    conn: &duckdb::Connection,
-    generation: u64,
-    filters: Option<&LexFilters>,
-) -> Result<Arc<VectorSnapshot>> {
-    Ok(Arc::new(read_full(conn, generation, filters)?.finish()?))
-}
-
-fn refresh_vector_snapshot(
-    conn: &duckdb::Connection,
-    previous: &Arc<VectorSnapshot>,
-    generation: u64,
-    filters: Option<&LexFilters>,
-) -> Result<Arc<VectorSnapshot>> {
-    Ok(Arc::new(
-        read_refresh(conn, previous, generation, filters)?.finish()?,
-    ))
-}
-
-impl VectorDocumentScope {
-    fn contains(&self, document_id: &str) -> bool {
-        match self {
-            Self::Excluding(ids) => !ids.contains(document_id),
-            Self::Only(ids) => ids.contains(document_id),
-        }
-    }
-}
-
-fn global_snapshot(store: &Store) -> Option<Arc<VectorSnapshot>> {
-    store.vector_cache().lock().unwrap().global.clone()
-}
-
-// ---------------------------------------------------------------------------
-// Timing baselines for docs/refactor/BASELINE.md.
-//
-// Ignored by default so the regular test run does not grow. Run them one at a
-// time (they share the machine, not state):
-//
-//   cargo test --lib -- --ignored timing_ --nocapture --test-threads=1
-//
-// Each test prints one `TIMING ...` line; copy the numbers into BASELINE.md.
-// ---------------------------------------------------------------------------
-
-const TIMING_DOCS_DEFAULT: usize = 2000;
-
-/// Corpus size; `RAG_TIMING_DOCS` overrides it for larger-corpus runs.
-fn timing_docs() -> usize {
-    std::env::var("RAG_TIMING_DOCS")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(TIMING_DOCS_DEFAULT)
-}
-const TIMING_CHUNKS_PER_DOC: usize = 4;
-const TIMING_DIMS: usize = 32;
-const TIMING_QUERIES: usize = 50;
-const TIMING_VOCABULARY: usize = 400;
-
-/// Deterministic pseudo-random stream (no `rand` dependency in the crate).
-fn timing_next(state: &mut u64) -> u64 {
-    *state = state
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1442695040888963407);
-    *state >> 33
-}
-
-fn timing_embedding(seed: u64) -> Vec<f32> {
-    let mut state = seed.wrapping_add(1);
-    (0..TIMING_DIMS)
-        .map(|_| (timing_next(&mut state) % 2001) as f32 / 1000.0 - 1.0)
-        .collect()
-}
-
-fn timing_text(seed: u64, words: usize) -> String {
-    let mut state = seed.wrapping_add(7);
-    (0..words)
-        .map(|_| format!("term{}", timing_next(&mut state) % TIMING_VOCABULARY as u64))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn timing_document(index: usize) -> (Document, Vec<Chunk>) {
-    let id = format!("timing-doc-{index}");
-    let now = Utc::now();
-    let chunks: Vec<Chunk> = (0..TIMING_CHUNKS_PER_DOC)
-        .map(|chunk_index| {
-            let seed = (index * TIMING_CHUNKS_PER_DOC + chunk_index) as u64;
-            let content = timing_text(seed, 40);
-            Chunk {
-                id: format!("{id}-c{chunk_index}"),
-                document_id: id.clone(),
-                chunk_index: chunk_index as i32,
-                char_start: 0,
-                char_end: content.len() as i32,
-                content,
-                embedding: timing_embedding(seed),
-                metadata_json: "{}".into(),
-            }
-        })
-        .collect();
-    let document = Document {
-        id: id.clone(),
-        uri: format!("timing://{index}"),
-        title: format!("Timing document {index}"),
-        content: chunks
-            .iter()
-            .map(|chunk| chunk.content.as_str())
-            .collect::<Vec<_>>()
-            .join("\n"),
-        metadata_json: "{}".into(),
-        created_at: now,
-        updated_at: now,
-        ..Default::default()
-    };
-    (document, chunks)
-}
-
-/// Seed the corpus through the public write path; returns the elapsed time.
-fn seed_timing_corpus(store: &Store) -> std::time::Duration {
-    let started = Instant::now();
-    for index in 0..timing_docs() {
-        let (document, chunks) = timing_document(index);
-        store.documents().upsert_document(&document).unwrap();
-        store
-            .chunks()
-            .replace_chunks_for_document(&document.id, &chunks)
-            .unwrap();
-    }
-    started.elapsed()
-}
-
-fn timing_percentile(sorted_ms: &[f64], percentile: f64) -> f64 {
-    let rank = ((sorted_ms.len() as f64 - 1.0) * percentile).round() as usize;
-    sorted_ms[rank]
-}
-
-/// Cold = first vector search on a fresh store path (snapshot build under the
-/// Store mutex); warm = the same query against the cached snapshot.
-///
-/// Run: `cargo test --lib -- --ignored timing_vector_snapshot_cold_vs_warm --nocapture`
-#[test]
-#[ignore = "timing baseline; run explicitly, see the section comment"]
-fn timing_vector_snapshot_cold_vs_warm() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let store = Store::open(&dir.path().join("timing-snapshot.duckdb")).expect("open");
-    seed_timing_corpus(&store);
-    let db_path = dir.path().join("timing-snapshot.duckdb");
-    {
-        let conn = store.lock().unwrap();
-        conn.execute_batch("CHECKPOINT").unwrap();
-    }
-    let db_bytes = std::fs::metadata(&db_path).unwrap().len();
-    let query = timing_embedding(u64::MAX / 3);
-
-    let started = Instant::now();
-    let cold_hits = search_chunks(&store, &query, 10, None).unwrap();
-    let cold_ms = elapsed_ms(started);
-    assert_eq!(cold_hits.len(), 10);
-
-    let mut warm: Vec<f64> = (0..TIMING_QUERIES)
-        .map(|_| {
-            let started = Instant::now();
-            let hits = search_chunks(&store, &query, 10, None).unwrap();
-            assert_eq!(hits.len(), 10);
-            elapsed_ms(started)
-        })
-        .collect();
-    warm.sort_by(f64::total_cmp);
-    println!(
-        "TIMING vector_snapshot docs={} chunks={} dims={TIMING_DIMS} db_bytes={db_bytes} cold_ms={cold_ms:.1} warm_p50_ms={:.2} warm_p95_ms={:.2}",
-        timing_docs(),
-        timing_docs() * TIMING_CHUNKS_PER_DOC,
-        timing_percentile(&warm, 0.50),
-        timing_percentile(&warm, 0.95),
-    );
-}
-
-/// Hybrid (vector + lexical + RRF) latency over distinct queries, after one
-/// warm-up query that pays for the vector snapshot and the FTS index.
-///
-/// Run: `cargo test --lib -- --ignored timing_hybrid_search_p50_p95 --nocapture`
-#[test]
-#[ignore = "timing baseline; run explicitly, see the section comment"]
-fn timing_hybrid_search_p50_p95() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let store = Store::open(&dir.path().join("timing-hybrid.duckdb")).expect("open");
-    seed_timing_corpus(&store);
-    let fts_ready = store.maintenance().ensure_fts("porter").is_ok();
-    let run = |seed: u64| {
-        let hits = search(
-            &store,
-            &SearchQuery {
-                mode: SearchMode::Hybrid,
-                top_k: 10,
-                query_text: Some(timing_text(seed, 3)),
-                query_embedding: Some(timing_embedding(seed)),
-                ..SearchQuery::default()
-            },
-        )
-        .unwrap();
-        assert!(!hits.is_empty());
-    };
-    run(1_000_000);
-
-    let mut latencies: Vec<f64> = (0..TIMING_QUERIES as u64)
-        .map(|query| {
-            let started = Instant::now();
-            run(2_000_000 + query);
-            elapsed_ms(started)
-        })
-        .collect();
-    latencies.sort_by(f64::total_cmp);
-    println!(
-        "TIMING hybrid_search docs={} chunks={} queries={TIMING_QUERIES} fts_ready={fts_ready} p50_ms={:.2} p95_ms={:.2} max_ms={:.2}",
-        timing_docs(),
-        timing_docs() * TIMING_CHUNKS_PER_DOC,
-        timing_percentile(&latencies, 0.50),
-        timing_percentile(&latencies, 0.95),
-        latencies[latencies.len() - 1],
-    );
-}
-
-/// Write-path throughput: `upsert_document` + `replace_chunks_for_document`
-/// per document, first as inserts and then as updates of the same ids.
-///
-/// Run: `cargo test --lib -- --ignored timing_document_upsert_throughput --nocapture`
-#[test]
-#[ignore = "timing baseline; run explicitly, see the section comment"]
-fn timing_document_upsert_throughput() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let store = Store::open(&dir.path().join("timing-upsert.duckdb")).expect("open");
-    let insert = seed_timing_corpus(&store);
-    let update = seed_timing_corpus(&store);
-    assert_eq!(store.maintenance().stats().unwrap().0, timing_docs() as u64);
-    println!(
-        "TIMING document_upsert docs={} chunks_per_doc={TIMING_CHUNKS_PER_DOC} insert_s={:.2} insert_docs_per_s={:.0} update_s={:.2} update_docs_per_s={:.0}",
-        timing_docs(),
-        insert.as_secs_f64(),
-        timing_docs() as f64 / insert.as_secs_f64(),
-        update.as_secs_f64(),
-        timing_docs() as f64 / update.as_secs_f64(),
-    );
-}
-
-/// Vector search latency while another thread keeps writing documents (each
-/// write advances the chunk generation, so searches refresh the snapshot),
-/// plus the writer's latency per document.
-///
-/// Run: `cargo test --lib -- --ignored timing_concurrent_search_and_write --nocapture`
-#[test]
-#[ignore = "timing baseline; run explicitly, see the section comment"]
-fn timing_concurrent_search_and_write() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let store = Store::open(&dir.path().join("timing-concurrent.duckdb")).expect("open");
-    seed_timing_corpus(&store);
-    let query = timing_embedding(u64::MAX / 5);
-    assert_eq!(search_chunks(&store, &query, 10, None).unwrap().len(), 10);
-    let stop = std::sync::atomic::AtomicBool::new(false);
-    let (searches, writes) = std::thread::scope(|scope| {
-        let writer = scope.spawn(|| {
-            let mut latencies = Vec::new();
-            let base = timing_docs();
-            for index in 0..TIMING_QUERIES {
-                let (document, chunks) = timing_document(base + index);
-                let started = Instant::now();
-                store.documents().upsert_document(&document).unwrap();
-                store
-                    .chunks()
-                    .replace_chunks_for_document(&document.id, &chunks)
-                    .unwrap();
-                latencies.push(elapsed_ms(started));
-            }
-            stop.store(true, std::sync::atomic::Ordering::SeqCst);
-            latencies
-        });
-        let mut searches = Vec::new();
-        while !stop.load(std::sync::atomic::Ordering::SeqCst) {
-            let started = Instant::now();
-            assert_eq!(search_chunks(&store, &query, 10, None).unwrap().len(), 10);
-            searches.push(elapsed_ms(started));
-        }
-        (searches, writer.join().unwrap())
-    });
-    let mut searches = searches;
-    let mut writes = writes;
-    searches.sort_by(f64::total_cmp);
-    writes.sort_by(f64::total_cmp);
-    println!(
-        "TIMING concurrent docs={} searches={} search_p50_ms={:.2} search_p95_ms={:.2} write_p50_ms={:.2} write_p95_ms={:.2}",
-        timing_docs(),
-        searches.len(),
-        timing_percentile(&searches, 0.50),
-        timing_percentile(&searches, 0.95),
-        timing_percentile(&writes, 0.50),
-        timing_percentile(&writes, 0.95),
-    );
-}
-
-/// Vector search right after a one-document write: the snapshot refresh the
-/// write forces, without a concurrent writer.
-///
-/// Run: `cargo test --lib -- --ignored timing_vector_refresh_after_write --nocapture`
-#[test]
-#[ignore = "timing baseline; run explicitly, see the section comment"]
-fn timing_vector_refresh_after_write() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let store = Store::open(&dir.path().join("timing-refresh.duckdb")).expect("open");
-    seed_timing_corpus(&store);
-    let query = timing_embedding(u64::MAX / 7);
-    assert_eq!(search_chunks(&store, &query, 10, None).unwrap().len(), 10);
-    let base = timing_docs();
-    let mut latencies: Vec<f64> = (0..TIMING_QUERIES)
-        .map(|index| {
-            let (document, chunks) = timing_document(base + index);
-            store.documents().upsert_document(&document).unwrap();
-            store
-                .chunks()
-                .replace_chunks_for_document(&document.id, &chunks)
-                .unwrap();
-            let started = Instant::now();
-            assert_eq!(search_chunks(&store, &query, 10, None).unwrap().len(), 10);
-            elapsed_ms(started)
-        })
-        .collect();
-    latencies.sort_by(f64::total_cmp);
-    println!(
-        "TIMING vector_refresh docs={} p50_ms={:.2} p95_ms={:.2}",
-        timing_docs(),
-        timing_percentile(&latencies, 0.50),
-        timing_percentile(&latencies, 0.95),
-    );
-}
-
-/// Hybrid search with neighbour context (`context_expansion = Neighbors`,
-/// radius 1) over distinct queries: the context read per returned hit.
-///
-/// Run: `cargo test --lib -- --ignored timing_hybrid_search_neighbors --nocapture`
-#[test]
-#[ignore = "timing baseline; run explicitly, see the section comment"]
-fn timing_hybrid_search_neighbors() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let store = Store::open(&dir.path().join("timing-neighbors.duckdb")).expect("open");
-    seed_timing_corpus(&store);
-    let fts_ready = store.maintenance().ensure_fts("porter").is_ok();
-    let run = |seed: u64| {
-        let hits = search(
-            &store,
-            &SearchQuery {
-                mode: SearchMode::Hybrid,
-                top_k: 10,
-                query_text: Some(timing_text(seed, 3)),
-                query_embedding: Some(timing_embedding(seed)),
-                context_expansion: Some(ContextExpansion::Neighbors),
-                neighbor_chunks: 1,
-                ..SearchQuery::default()
-            },
-        )
-        .unwrap();
-        assert!(!hits.is_empty());
-    };
-    run(1_000_000);
-    let mut latencies: Vec<f64> = (0..TIMING_QUERIES as u64)
-        .map(|query| {
-            let started = Instant::now();
-            run(3_000_000 + query);
-            elapsed_ms(started)
-        })
-        .collect();
-    latencies.sort_by(f64::total_cmp);
-    println!(
-        "TIMING hybrid_neighbors docs={} queries={TIMING_QUERIES} fts_ready={fts_ready} p50_ms={:.2} p95_ms={:.2}",
-        timing_docs(),
-        timing_percentile(&latencies, 0.50),
-        timing_percentile(&latencies, 0.95),
-    );
 }

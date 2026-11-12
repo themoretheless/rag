@@ -5,13 +5,13 @@
 use std::io::Write;
 use std::sync::Arc;
 
+use rag_mcp::Config;
 use rag_mcp::config::EmbeddingProviderKind;
 use rag_mcp::db::search::search_chunks;
 use rag_mcp::embeddings::MockEmbedder;
 use rag_mcp::ingest::{IngestFileCommand, IngestService};
 use rag_mcp::models::SearchMode;
 use rag_mcp::testkit::open_temp_store;
-use rag_mcp::Config;
 
 const DIMS: usize = 32;
 

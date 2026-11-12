@@ -228,11 +228,13 @@ pub(super) fn query(snapshot: &CodeSnapshot, q: &CodeQuery, limit: usize) -> ser
             .or_insert((d.path, d.project, 0usize));
         entry.2 += 1;
     }
-    result["direct_occurrences"] = serde_json::json!(direct
-        .iter()
-        .take(limit)
-        .map(|d| &d.proof)
-        .collect::<Vec<_>>());
+    result["direct_occurrences"] = serde_json::json!(
+        direct
+            .iter()
+            .take(limit)
+            .map(|d| &d.proof)
+            .collect::<Vec<_>>()
+    );
     result["direct_total"] = direct.len().into();
     result["direct_truncated"] = (direct.len() > limit).into();
     result["direct_owner_symbols"] = owners.len().into();
@@ -270,7 +272,6 @@ mod tests {
     use crate::models::Document;
     fn put(store: &Store, id: &str, path: &str, project: &str, body: &str) {
         store
-            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("doc://{id}"),
@@ -282,15 +283,13 @@ mod tests {
             .unwrap();
     }
     fn run(store: &Store, q: &CodeQuery) -> serde_json::Value {
-        crate::code_index::CodeIndex::new(store)
+        store
             .code_snapshot_in_project(q.impact_project.as_deref())
             .unwrap()
             .query("impact", q)
     }
     fn names(store: &Store, result: &serde_json::Value) -> BTreeSet<String> {
-        let snapshot = crate::code_index::CodeIndex::new(store)
-            .code_snapshot()
-            .unwrap();
+        let snapshot = store.code_snapshot().unwrap();
         result["items"]
             .as_array()
             .unwrap()
@@ -307,8 +306,14 @@ mod tests {
     #[test]
     fn key_impact_seeds_all_php_owners_and_ownerless_template_files_before_limits() {
         let root = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&root.path().join("key.duckdb")).unwrap();
-        put(&store,"php","/p/api.php","p","<?php function render(){Translate('key');} function serve(){render();} function main(){serve();}");
+        let store = Store::open(&root.path().join("key.duckdb")).unwrap();
+        put(
+            &store,
+            "php",
+            "/p/api.php",
+            "p",
+            "<?php function render(){Translate('key');} function serve(){render();} function main(){serve();}",
+        );
         put(&store, "view", "/p/view.html", "p", "%{key}");
         put(
             &store,
@@ -317,9 +322,7 @@ mod tests {
             "p",
             "<iframe src='view.html'></iframe>",
         );
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        store.index_code().unwrap();
         let q = CodeQuery {
             impact_key: Some("key".into()),
             impact_project: Some("p".into()),
@@ -360,7 +363,7 @@ mod tests {
     #[test]
     fn route_impact_seeds_source_owners_not_registered_handler_candidates() {
         let root = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&root.path().join("url.duckdb")).unwrap();
+        let store = Store::open(&root.path().join("url.duckdb")).unwrap();
         put(
             &store,
             "api",
@@ -382,9 +385,7 @@ mod tests {
             "p",
             "<a href='/items'>Link</a>",
         );
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        store.index_code().unwrap();
         let q = CodeQuery {
             impact_route: Some("/items".into()),
             impact_project: Some("p".into()),
@@ -425,7 +426,7 @@ mod tests {
     #[test]
     fn literal_identity_disambiguation_precedes_path_kind_and_stale_bridges_are_excluded() {
         let root = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&root.path().join("scope.duckdb")).unwrap();
+        let store = Store::open(&root.path().join("scope.duckdb")).unwrap();
         put(
             &store,
             "a",
@@ -447,9 +448,7 @@ mod tests {
             "q",
             "%{key}<a href='/items'>Link</a>",
         );
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        store.index_code().unwrap();
         let ambiguous = run(
             &store,
             &CodeQuery {
@@ -479,18 +478,18 @@ mod tests {
         let stale = run(&store, &q);
         assert!(stale["file_impact"]["items"].as_array().unwrap().is_empty());
         assert_eq!(stale["stale_documents"].as_array().unwrap().len(), 1);
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        assert!(run(&store, &q)["file_impact"]["items"]
-            .as_array()
-            .unwrap()
-            .is_empty());
+        store.index_code().unwrap();
+        assert!(
+            run(&store, &q)["file_impact"]["items"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
     }
     #[test]
     fn sql_impact_identity_includes_schema_only_candidates_before_source_and_access_filters() {
         let root = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&root.path().join("sql.duckdb")).unwrap();
+        let store = Store::open(&root.path().join("sql.duckdb")).unwrap();
         put(
             &store,
             "read",
@@ -505,9 +504,7 @@ mod tests {
             "p",
             "CREATE TABLE admin.logs(id INT);",
         );
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        store.index_code().unwrap();
         let q = CodeQuery {
             impact_table: Some("logs".into()),
             impact_project: Some("p".into()),
@@ -558,12 +555,14 @@ mod tests {
         ] {
             assert!(validate(&q).is_some());
         }
-        assert!(validate(&CodeQuery {
-            impact_file: Some("/p/a".into()),
-            impact_document_id: Some("a".into()),
-            ..Default::default()
-        })
-        .is_none());
+        assert!(
+            validate(&CodeQuery {
+                impact_file: Some("/p/a".into()),
+                impact_document_id: Some("a".into()),
+                ..Default::default()
+            })
+            .is_none()
+        );
     }
 }
 
@@ -573,7 +572,6 @@ mod extra_tests {
     use crate::models::Document;
     fn put(store: &Store, id: &str, path: &str, body: &str) {
         store
-            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("doc://{id}"),
@@ -587,23 +585,23 @@ mod extra_tests {
     #[test]
     fn every_owner_remains_a_seed_when_direct_output_is_truncated() {
         let dir = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&dir.path().join("roots.duckdb")).unwrap();
-        put(&store,"a","/p/a.php","<?php function one(){Translate('key');} function two(){Translate('key');} function use_one(){one();} function use_two(){two();}");
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        let r = crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap()
-            .query(
-                "impact",
-                &CodeQuery {
-                    impact_key: Some("key".into()),
-                    impact_project: Some("p".into()),
-                    limit: Some(1),
-                    ..Default::default()
-                },
-            );
+        let store = Store::open(&dir.path().join("roots.duckdb")).unwrap();
+        put(
+            &store,
+            "a",
+            "/p/a.php",
+            "<?php function one(){Translate('key');} function two(){Translate('key');} function use_one(){one();} function use_two(){two();}",
+        );
+        store.index_code().unwrap();
+        let r = store.code_snapshot().unwrap().query(
+            "impact",
+            &CodeQuery {
+                impact_key: Some("key".into()),
+                impact_project: Some("p".into()),
+                limit: Some(1),
+                ..Default::default()
+            },
+        );
         assert_eq!(r["direct_total"], 2);
         assert_eq!(r["direct_owner_symbols"], 2);
         assert_eq!(r["code_impact"]["matched_symbols"], 2);
@@ -612,7 +610,7 @@ mod extra_tests {
     #[test]
     fn parse_error_callers_cannot_bridge_literal_impact_to_otherwise_valid_files() {
         let dir = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&dir.path().join("errors.duckdb")).unwrap();
+        let store = Store::open(&dir.path().join("errors.duckdb")).unwrap();
         put(
             &store,
             "client",
@@ -631,20 +629,15 @@ mod extra_tests {
             "/p/outer.js",
             "import {bridge} from './broken.js'; export function outer(){bridge();}",
         );
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        let r = crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap()
-            .query(
-                "impact",
-                &CodeQuery {
-                    impact_route: Some("/items".into()),
-                    impact_project: Some("p".into()),
-                    ..Default::default()
-                },
-            );
+        store.index_code().unwrap();
+        let r = store.code_snapshot().unwrap().query(
+            "impact",
+            &CodeQuery {
+                impact_route: Some("/items".into()),
+                impact_project: Some("p".into()),
+                ..Default::default()
+            },
+        );
         assert_eq!(r["parse_errors"].as_array().unwrap().len(), 1, "{r}");
         assert!(r["items"].as_array().unwrap().is_empty(), "{r}");
         assert!(
@@ -661,10 +654,9 @@ mod selector_tests {
     #[test]
     fn long_captured_endpoint_target_roundtrips_references_symbol_and_impact() {
         let dir = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&dir.path().join("long-url.duckdb")).unwrap();
+        let store = Store::open(&dir.path().join("long-url.duckdb")).unwrap();
         let url = format!("/{}", "x".repeat(3000));
         store
-            .documents()
             .upsert_document(&Document {
                 id: "a".into(),
                 uri: "doc://a".into(),
@@ -674,10 +666,8 @@ mod selector_tests {
                 ..Default::default()
             })
             .unwrap();
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        let references = crate::code_index::CodeIndex::new(&store)
+        store.index_code().unwrap();
+        let references = store
             .code_references(&ReferenceQuery {
                 route: Some(url.clone()),
                 project: Some("p".into()),
@@ -685,7 +675,7 @@ mod selector_tests {
             })
             .unwrap();
         assert_eq!(references["total"], 1);
-        let node = crate::code_index::CodeIndex::new(&store)
+        let node = store
             .code_symbols(&SymbolQuery {
                 name: Some(format!("route:{url}")),
                 project: Some("p".into()),
@@ -694,10 +684,7 @@ mod selector_tests {
             .unwrap();
         let q: CodeQuery =
             serde_json::from_value(node["items"][0]["impact_target"].clone()).unwrap();
-        let impact = crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap()
-            .query("impact", &q);
+        let impact = store.code_snapshot().unwrap().query("impact", &q);
         assert_eq!(impact["direct_total"], 1);
     }
 }

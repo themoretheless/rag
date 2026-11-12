@@ -1,0 +1,22 @@
+{
+  "passed": true,
+  "index_format": 79,
+  "checks": [
+    "staged-and-working-context-paths",
+    "shared-body-per-class-witnesses",
+    "step-context-and-source-provenance",
+    "read-only-index-and-source",
+    "determinism",
+    "pinned-commit-independence",
+    "context-swap-binding-change",
+    "byte-ID-movement-not-binding-change",
+    "incompatible-caller-exclusion",
+    "depth-output-caps",
+    "no-persistent-index-needed"
+  ],
+  "runtime_context_correlation_proven": false,
+  "production_repository_touched": false,
+  "production_database_touched": false,
+  "source_applications_executed": false,
+  "binary_sha256": "649c0ae92fbd252f17c1775ffe14f7eaabc0bead039403c3372440b1f083b18d"
+}

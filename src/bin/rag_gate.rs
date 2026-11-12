@@ -1,9 +1,9 @@
 //! Opt-in PreToolUse adapter. Installation/activation is deliberately external.
 use rag_mcp::{
-    gate::{self, Decision, Mode},
     Config,
+    gate::{self, Decision, Mode},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::{Read, Write};
 async fn remote(config: &Config, p: &gate::Payload, mode: Mode) -> anyhow::Result<Value> {
     let mut addr: std::net::SocketAddr = config.http_bind.as_ref().unwrap().parse()?;
@@ -90,7 +90,7 @@ async fn run(mode: Mode) -> anyhow::Result<Value> {
     if config.http_bind.is_some() {
         return remote(&config, &p, mode).await;
     }
-    if !config.db_path.is_file() {
+    if !config.db_path.exists() {
         let d = Decision {
             verdict: if mode == Mode::Off { "off" } else { "allow" }.into(),
             rule: "no_local_database".into(),

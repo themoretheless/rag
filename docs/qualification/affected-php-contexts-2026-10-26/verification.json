@@ -1,0 +1,43 @@
+{
+  "status": "passed",
+  "workspace": {
+    "passed": 1607,
+    "failed": 0,
+    "ignored": 1
+  },
+  "mcp_exit_codes": {
+    "affected_php_contexts": 0,
+    "affected_tests": 0,
+    "table_impact": 0,
+    "php_trait_paths": 0,
+    "trace_php_contexts": 0,
+    "git_php_contexts": 0
+  },
+  "binary_sha256_before": "d2708746b5cf1121f4668f5ff30ae0d1e212308bf013a09c5476c9a2f448eac2",
+  "binary_sha256_after": "d2708746b5cf1121f4668f5ff30ae0d1e212308bf013a09c5476c9a2f448eac2",
+  "source_hashes_before": {
+    "src/code_index.rs": "4fd4a26fbc333511f4565c9fedeff99e42285089bd3728fe6c038a350d2d39f5",
+    "src/code_index/affected_tests.rs": "cf207a0ab6e82535a782f8a5d1202ee1062f605e3d30eece01f7b72b316e4da3",
+    "src/code_index/impact.rs": "38f47bccc518eb87c8fa627040a336ebe9bf62156093f418ee82abd53dd7c9c4",
+    "src/code_index/impact/context_walk.rs": "bcacadc8bfa85662c262068f0f00530fc0e69950b32bd45c18864451c41c94c7",
+    "src/code_index/php_names/phpunit.rs": "e450d9c638a686ea94a3c3326051bbc520edddeecd7218f197db5021c57010ea",
+    "src/code_index/git_impact.rs": "61c1953b2e9e577a68701c4c4153561acb471e0d4fb2b4ea985b641858461639",
+    "src/mcp/analysis.rs": "32bae1ff409a1919d67a44f2c1100912dc23ad7c2d14c35cfb4d3cf74e6cf48f",
+    "scripts/smoke_affected_php_contexts.py": "d718e25498899e533f147abf75fc8eea6a125ce5eea2075a6565451e94f126fd"
+  },
+  "source_hashes_after": {
+    "src/code_index.rs": "4fd4a26fbc333511f4565c9fedeff99e42285089bd3728fe6c038a350d2d39f5",
+    "src/code_index/affected_tests.rs": "cf207a0ab6e82535a782f8a5d1202ee1062f605e3d30eece01f7b72b316e4da3",
+    "src/code_index/impact.rs": "38f47bccc518eb87c8fa627040a336ebe9bf62156093f418ee82abd53dd7c9c4",
+    "src/code_index/impact/context_walk.rs": "bcacadc8bfa85662c262068f0f00530fc0e69950b32bd45c18864451c41c94c7",
+    "src/code_index/php_names/phpunit.rs": "e450d9c638a686ea94a3c3326051bbc520edddeecd7218f197db5021c57010ea",
+    "src/code_index/git_impact.rs": "61c1953b2e9e577a68701c4c4153561acb471e0d4fb2b4ea985b641858461639",
+    "src/mcp/analysis.rs": "32bae1ff409a1919d67a44f2c1100912dc23ad7c2d14c35cfb4d3cf74e6cf48f",
+    "scripts/smoke_affected_php_contexts.py": "d718e25498899e533f147abf75fc8eea6a125ce5eea2075a6565451e94f126fd"
+  },
+  "shared_checkout": true,
+  "frozen_source_checkout": false,
+  "PHP_or_SQL_executed": false,
+  "production_database_touched": false,
+  "full_RAGRAF_parity_proven": false
+}

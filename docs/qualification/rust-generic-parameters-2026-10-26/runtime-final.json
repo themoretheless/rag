@@ -1,0 +1,291 @@
+{
+  "status": "passed",
+  "binary_sha256": "1650abf294d2bc57585c5fd053556d9c39bf417950ab89cec3970aaa5adb89c3",
+  "source": "pub trait Mark { fn mark(self) -> usize; }\nimpl<T> Mark for *const T { fn mark(self) -> usize { 11 } }\nimpl<T> Mark for *mut T { fn mark(self) -> usize { 22 } }\npub fn constant<T>(p: *const T) -> usize { p.mark() }\npub fn mutable<U>(q: *mut U) -> usize { q.mark() }\npub fn cast<V>(r: *mut V) -> usize { (r as *const V).mark() }\n#[test] fn values() {\n    let mut value = 0_u8;\n    let p = &mut value as *mut u8;\n    assert_eq!([constant(p), mutable(p), cast(p)], [11, 22, 11]);\n}\n",
+  "source_sha256": "ffcf3808bfec67469597393b3dc38916a3dbb76afa9e032dbc72099ee4fd3611",
+  "selected": [
+    {
+      "caller": "constant",
+      "expression": "p.mark",
+      "expected_owner": "*const T",
+      "expected_line": 2,
+      "edge": {
+        "candidates": [
+          "a7c6d9dd-d663-45ac-9879-96736775230a:71:mark"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "caller": "a7c6d9dd-d663-45ac-9879-96736775230a:161:constant",
+          "column": 46,
+          "content_hash": "04b6953cc33442ebddd4228d37f8c29ef1a2d3cf22a423e32d6b7bd09200c2df",
+          "document_id": "a7c6d9dd-d663-45ac-9879-96736775230a",
+          "expression": "p.mark",
+          "is_call": true,
+          "line": 4,
+          "name": "mark",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-generic-parameters-jwns7p5o/source/src/lib.rs",
+          "revision": 1,
+          "start_byte": 204
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "content_hash": "04b6953cc33442ebddd4228d37f8c29ef1a2d3cf22a423e32d6b7bd09200c2df",
+        "document_id": "a7c6d9dd-d663-45ac-9879-96736775230a",
+        "documentation_examined": true,
+        "end_byte": 100,
+        "end_line": 2,
+        "id": "a7c6d9dd-d663-45ac-9879-96736775230a:71:mark",
+        "kind": "function_item",
+        "name": "mark",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-generic-parameters-jwns7p5o/source/src/lib.rs",
+        "qualified_name": "*const T::mark",
+        "revision": 1,
+        "signature": "fn mark(self) -> usize",
+        "start_byte": 71,
+        "start_line": 2
+      }
+    },
+    {
+      "caller": "mutable",
+      "expression": "q.mark",
+      "expected_owner": "*mut T",
+      "expected_line": 3,
+      "edge": {
+        "candidates": [
+          "a7c6d9dd-d663-45ac-9879-96736775230a:129:mark"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "caller": "a7c6d9dd-d663-45ac-9879-96736775230a:215:mutable",
+          "column": 43,
+          "content_hash": "04b6953cc33442ebddd4228d37f8c29ef1a2d3cf22a423e32d6b7bd09200c2df",
+          "document_id": "a7c6d9dd-d663-45ac-9879-96736775230a",
+          "expression": "q.mark",
+          "is_call": true,
+          "line": 5,
+          "name": "mark",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-generic-parameters-jwns7p5o/source/src/lib.rs",
+          "revision": 1,
+          "start_byte": 255
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "content_hash": "04b6953cc33442ebddd4228d37f8c29ef1a2d3cf22a423e32d6b7bd09200c2df",
+        "document_id": "a7c6d9dd-d663-45ac-9879-96736775230a",
+        "documentation_examined": true,
+        "end_byte": 158,
+        "end_line": 3,
+        "id": "a7c6d9dd-d663-45ac-9879-96736775230a:129:mark",
+        "kind": "function_item",
+        "name": "mark",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-generic-parameters-jwns7p5o/source/src/lib.rs",
+        "qualified_name": "*mut T::mark",
+        "revision": 1,
+        "signature": "fn mark(self) -> usize",
+        "start_byte": 129,
+        "start_line": 3
+      }
+    },
+    {
+      "caller": "cast",
+      "expression": "(r as *const V).mark",
+      "expected_owner": "*const T",
+      "expected_line": 2,
+      "edge": {
+        "candidates": [
+          "a7c6d9dd-d663-45ac-9879-96736775230a:71:mark"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "caller": "a7c6d9dd-d663-45ac-9879-96736775230a:266:cast",
+          "column": 54,
+          "content_hash": "04b6953cc33442ebddd4228d37f8c29ef1a2d3cf22a423e32d6b7bd09200c2df",
+          "document_id": "a7c6d9dd-d663-45ac-9879-96736775230a",
+          "expression": "(r as *const V).mark",
+          "is_call": true,
+          "line": 6,
+          "name": "mark",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-generic-parameters-jwns7p5o/source/src/lib.rs",
+          "revision": 1,
+          "start_byte": 303
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "content_hash": "04b6953cc33442ebddd4228d37f8c29ef1a2d3cf22a423e32d6b7bd09200c2df",
+        "document_id": "a7c6d9dd-d663-45ac-9879-96736775230a",
+        "documentation_examined": true,
+        "end_byte": 100,
+        "end_line": 2,
+        "id": "a7c6d9dd-d663-45ac-9879-96736775230a:71:mark",
+        "kind": "function_item",
+        "name": "mark",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-generic-parameters-jwns7p5o/source/src/lib.rs",
+        "qualified_name": "*const T::mark",
+        "revision": 1,
+        "signature": "fn mark(self) -> usize",
+        "start_byte": 71,
+        "start_line": 2
+      }
+    }
+  ],
+  "indexed": {
+    "indexed": 2,
+    "unchanged": 0,
+    "unsupported": 0,
+    "parse_errors": [],
+    "index_revision": 1,
+    "revision_created": true,
+    "stage_timings": {
+      "contract_version": 1,
+      "run_id": "493bd38e-38f2-4530-83a4-d00938d61f32",
+      "lock_wait_ms": 0.000875,
+      "source_load_decode_ms": 5.903917,
+      "cache_parse_serialize_ms": 5.247166999999999,
+      "cache_replace_ms": 15.661041,
+      "revision_publish_ms": 35.342999999999996,
+      "transaction_body_ms": 62.688041,
+      "before_metrics_write_ms": 62.689167000000005,
+      "documents_loaded": 2,
+      "cache_hits": 0,
+      "cache_misses": 2,
+      "unsupported_documents": 0,
+      "parse_error_documents": 0,
+      "commit_included": false,
+      "metrics_write_included": false,
+      "embedding_fts_included": false
+    },
+    "resolution": {
+      "contract_version": 1,
+      "documents_total": 2,
+      "documents_resolved": 2,
+      "documents_reused": 0,
+      "reference_sites_resolved": 20,
+      "reference_sites_reused": 0,
+      "rust_package_scopes": 1,
+      "project_fallback_scopes": 0,
+      "empty_reference_documents": 1,
+      "dependency_inputs_hashed": 2,
+      "invalid_cache_entries": 0,
+      "forced_full": false,
+      "cache_available": false,
+      "no_resolution_required": false,
+      "resolution_ms": 2.504,
+      "equivalent_to_existing": null
+    },
+    "completion": {
+      "contract_version": 1,
+      "native_total_ms": 68.72370799999999,
+      "commit_ms": 2.385,
+      "metrics_write_ms": 3.649459,
+      "commit_included": true,
+      "process_lifetime_peak_rss_bytes": 139771904
+    }
+  },
+  "warm": {
+    "indexed": 0,
+    "unchanged": 2,
+    "unsupported": 0,
+    "parse_errors": [],
+    "index_revision": 1,
+    "revision_created": false,
+    "stage_timings": {
+      "contract_version": 1,
+      "run_id": "fca05c7b-de5b-4a22-a250-c9297237d5c3",
+      "lock_wait_ms": 0.000917,
+      "source_load_decode_ms": 2.330833,
+      "cache_parse_serialize_ms": 1.082583,
+      "cache_replace_ms": 0.00175,
+      "revision_publish_ms": 2.037084,
+      "transaction_body_ms": 5.753625,
+      "before_metrics_write_ms": 5.754709,
+      "documents_loaded": 2,
+      "cache_hits": 2,
+      "cache_misses": 0,
+      "unsupported_documents": 0,
+      "parse_error_documents": 0,
+      "commit_included": false,
+      "metrics_write_included": false,
+      "embedding_fts_included": false
+    },
+    "resolution": {
+      "contract_version": 1,
+      "documents_total": 0,
+      "documents_resolved": 0,
+      "documents_reused": 0,
+      "reference_sites_resolved": 0,
+      "reference_sites_reused": 0,
+      "rust_package_scopes": 0,
+      "project_fallback_scopes": 0,
+      "empty_reference_documents": 0,
+      "dependency_inputs_hashed": 0,
+      "invalid_cache_entries": 0,
+      "forced_full": false,
+      "cache_available": false,
+      "no_resolution_required": true,
+      "resolution_ms": 0.0,
+      "equivalent_to_existing": null
+    },
+    "completion": {
+      "contract_version": 1,
+      "native_total_ms": 9.425958999999999,
+      "commit_ms": 1.1344580000000002,
+      "metrics_write_ms": 2.5361670000000003,
+      "commit_included": true,
+      "process_lifetime_peak_rss_bytes": 143753216
+    }
+  },
+  "index_format": 76,
+  "compiler": {
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--manifest-path",
+      "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-generic-parameters-jwns7p5o/source/Cargo.toml"
+    ],
+    "exit_code": 0,
+    "stdout": "\nrunning 1 test\ntest values ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+    "stderr": "   Compiling generic-parameters v0.1.0 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-generic-parameters-jwns7p5o/source)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.52s\n     Running unittests src/lib.rs (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-generic-parameters-jwns7p5o/cargo-target/debug/build/generic-parameters/4ad8e42bc776b926/out/generic_parameters-4ad8e42bc776b926)\n   Doc-tests generic_parameters\n"
+  },
+  "negative_compiler_controls": [
+    {
+      "source": "trait Mark { fn mark(self); }\nimpl<T> Mark for *const T { fn mark(self) {} }\nfn run<T: ?Sized>(p: *const T) { p.mark(); }",
+      "command": [
+        "rustc",
+        "--edition=2021",
+        "--crate-type=lib",
+        "--emit=metadata",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-generic-parameters-jwns7p5o/negative_inline.rs",
+        "-o",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-generic-parameters-jwns7p5o/negative_inline.rmeta"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "error[E0599]: the method `mark` exists for raw pointer `*const T`, but its trait bounds were not satisfied\n --> /private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-generic-parameters-jwns7p5o/negative_inline.rs:3:36\n  |\n3 | fn run<T: ?Sized>(p: *const T) { p.mark(); }\n  |                                    ^^^^ method cannot be called on `*const T` due to unsatisfied trait bounds\n  |\nnote: trait bound `T: Sized` was not satisfied\n --> /private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-generic-parameters-jwns7p5o/negative_inline.rs:2:6\n  |\n2 | impl<T> Mark for *const T { fn mark(self) {} }\n  |      ^  ----     --------\n  |      |\n  |      unsatisfied trait bound introduced here\nhelp: consider relaxing the type parameter's implicit `Sized` bound\n  |\n2 | impl<T: ?Sized> Mark for *const T { fn mark(self) {} }\n  |       ++++++++\nhelp: consider restricting the type parameter to satisfy the trait bound\n  |\n3 | fn run<T: ?Sized>(p: *const T) where T: Sized { p.mark(); }\n  |                                ++++++++++++++\n\nerror: aborting due to 1 previous error\n\nFor more information about this error, try `rustc --explain E0599`.\n"
+    },
+    {
+      "source": "trait Mark { fn mark(self); }\nimpl<T> Mark for *const T { fn mark(self) {} }\nfn run<T>(p: *const T) where T: ?Sized { p.mark(); }",
+      "command": [
+        "rustc",
+        "--edition=2021",
+        "--crate-type=lib",
+        "--emit=metadata",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-generic-parameters-jwns7p5o/negative_where.rs",
+        "-o",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-generic-parameters-jwns7p5o/negative_where.rmeta"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "error[E0599]: the method `mark` exists for raw pointer `*const T`, but its trait bounds were not satisfied\n --> /private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-generic-parameters-jwns7p5o/negative_where.rs:3:44\n  |\n3 | fn run<T>(p: *const T) where T: ?Sized { p.mark(); }\n  |                                            ^^^^ method cannot be called on `*const T` due to unsatisfied trait bounds\n  |\nnote: trait bound `T: Sized` was not satisfied\n --> /private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-generic-parameters-jwns7p5o/negative_where.rs:2:6\n  |\n2 | impl<T> Mark for *const T { fn mark(self) {} }\n  |      ^  ----     --------\n  |      |\n  |      unsatisfied trait bound introduced here\nhelp: consider relaxing the type parameter's implicit `Sized` bound\n  |\n2 | impl<T: ?Sized> Mark for *const T { fn mark(self) {} }\n  |       ++++++++\nhelp: consider restricting the type parameter to satisfy the trait bound\n  |\n3 | fn run<T>(p: *const T) where T: ?Sized, T: Sized { p.mark(); }\n  |                                       ++++++++++\n\nerror: aborting due to 1 previous error\n\nFor more information about this error, try `rustc --explain E0599`.\n"
+    }
+  ],
+  "limitations": [
+    "static candidates; no runtime dispatch or general generic compiler proof"
+  ]
+}

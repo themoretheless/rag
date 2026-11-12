@@ -74,9 +74,11 @@ async fn start_source_sync_rejects_zero_max_bytes_without_registering_a_job() {
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
     let mut bad = request(std::path::Path::new("/tmp"));
     bad.max_file_bytes = Some(0);
-    assert!(registry
-        .start_source_sync(bad, store, embedder, Config::for_tests())
-        .is_err());
+    assert!(
+        registry
+            .start_source_sync(bad, store, embedder, Config::for_tests())
+            .is_err()
+    );
     assert!(registry.list().is_empty());
 }
 
@@ -114,9 +116,11 @@ async fn start_source_sync_runs_to_success_and_survives_restore() {
     assert!(!finished.requeue_safe);
 
     // A succeeded job cannot be requeued, and cancelling it is a no-op.
-    assert!(registry
-        .requeue_source_sync(&started.id, store.clone(), embedder.clone(), config.clone())
-        .is_err());
+    assert!(
+        registry
+            .requeue_source_sync(&started.id, store.clone(), embedder.clone(), config.clone())
+            .is_err()
+    );
     assert_eq!(
         registry.cancel(&started.id).unwrap().status,
         JobStatus::Succeeded

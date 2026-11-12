@@ -2,9 +2,9 @@
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::answer_judge::{judge_answer_heuristic, AnswerJudgeInput, AnswerJudgeResult};
+use super::answer_judge::{AnswerJudgeInput, AnswerJudgeResult, judge_answer_heuristic};
 use crate::error::{AppError, Result};
 
 /// Bundle format version. Unknown versions are refused on replay.

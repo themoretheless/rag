@@ -12,21 +12,21 @@ use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 
 use axum::{
+    Router,
     extract::{Query, State},
     response::IntoResponse,
     routing::get,
-    Router,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::{
-    error::{api_err, api_ok},
     HttpState,
+    error::{api_err, api_ok},
 };
 use crate::config::Config;
-use crate::db::store::embedding_manifest_matches_config;
 use crate::db::Store;
+use crate::db::store::embedding_manifest_matches_config;
 use crate::error::AppError;
 use crate::util::{non_blank, run_blocking};
 

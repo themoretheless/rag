@@ -10,17 +10,17 @@
 //! - `hyde=true` adds a dense leg from the hypothetical passage (`hyde`
 //!   reason, `hyde_ms` timing).
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use chrono::Utc;
-use rag_mcp::chunking::{from_config, Chunker};
+use rag_mcp::chunking::{Chunker, from_config};
 use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
 use rag_mcp::error::{AppError, Result as RagResult};
 use rag_mcp::llm::{ChatCompleter, ChatMessage};
 use rag_mcp::models::{Chunk, Document, SearchMode};
-use rag_mcp::retrieval::{execute_search_with_llm, SearchCommand};
+use rag_mcp::retrieval::{SearchCommand, execute_search_with_llm};
 use rag_mcp::testkit::open_temp_store;
 use rag_mcp::{Config, Store};
 use uuid::Uuid;

@@ -22,7 +22,7 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::config::Config;
 use crate::error::{AppError, Result};
-use crate::llm::{system_user, ChatClient, ChatCompleter};
+use crate::llm::{ChatClient, ChatCompleter, system_user};
 
 pub use crate::config::limits::{
     DEFAULT_CACHE_SIZE, DEFAULT_REWRITE_VARIANTS, MAX_REWRITE_VARIANTS,
@@ -414,9 +414,11 @@ mod tests {
             llm_enabled: false,
             ..Config::for_tests()
         };
-        assert!(build_transform_llm(&config, TransformKind::Rewrite)
-            .unwrap()
-            .is_none());
+        assert!(
+            build_transform_llm(&config, TransformKind::Rewrite)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

@@ -1,0 +1,42 @@
+    Blocking waiting for file lock on build directory
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2m 21s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 1 test
+IDENTITY Bytes std::arch::aarch64::uint8x16_t arch=Some("aarch64") glob=None
+IDENTITY Bytes std::arch::aarch64::uint8x16_t arch=Some("aarch64") glob=None
+TYPE FOUND []
+IDENTITY uint8x16_t uint8x16_t arch=Some("aarch64") glob=None
+STDARCH PATTERN Named("uint8x16_t", []) / Unknown / core::arch::aarch64::uint8x16_t
+TYPE FOUND []
+IDENTITY uint8x16_t uint8x16_t arch=Some("aarch64") glob=None
+IDENTITY Words core::arch::aarch64::uint16x8_t arch=Some("aarch64") glob=None
+IDENTITY Bytes std::arch::aarch64::uint8x16_t arch=Some("aarch64") glob=None
+TYPE FOUND []
+IDENTITY uint8x16_t uint8x16_t arch=Some("aarch64") glob=None
+STDARCH PATTERN Named("uint8x16_t", []) / Unknown / core::arch::aarch64::uint16x8_t
+TYPE FOUND []
+IDENTITY uint8x16_t uint8x16_t arch=Some("aarch64") glob=None
+IDENTITY Bytes std::arch::aarch64::uint8x16_t arch=Some("aarch64") glob=None
+IDENTITY Bytes std::arch::aarch64::uint8x16_t arch=Some("aarch64") glob=None
+STDARCH PATTERN Named("Bytes", []) / Stdarch("core::arch::aarch64::uint8x16_t") / core::arch::aarch64::uint8x16_t
+TYPE FOUND []
+IDENTITY uint8x16_t uint8x16_t arch=Some("aarch64") glob=None
+STDARCH PATTERN Named("uint8x16_t", []) / Unknown / core::arch::aarch64::uint8x16_t
+
+thread 'code_index::rust_semantics::tests::rust_stdarch_aliases_match_exact_vector_types_without_inherent_guesses' (72711721) panicked at src/code_index/rust_semantics.rs:1507:9:
+assertion `left == right` failed
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test code_index::rust_semantics::tests::rust_stdarch_aliases_match_exact_vector_types_without_inherent_guesses ... FAILED
+
+failures:
+
+failures:
+    code_index::rust_semantics::tests::rust_stdarch_aliases_match_exact_vector_types_without_inherent_guesses
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1348 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `--lib`

@@ -1,0 +1,31 @@
+{
+  "workspace_tests": {
+    "passed": 1545,
+    "failed": 0,
+    "ignored": 1
+  },
+  "focused_native_passed": 17,
+  "mcp_suites_passed": 8,
+  "versions": {
+    "index_format": 73,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "binary_sha256": "fda0ad0063e1f0db38207e6e0a8b99d1b9c61b385c7bacdad1f311692dd1acef",
+  "source_sha256": {
+    "src/code_index.rs": "664b89a0d4fcdb60d8987ae96fd9553da4ae2a1e608dbf4f3e0c04bdae37b3f9",
+    "src/code_index/history.rs": "1f812c6049251be5ec5dac6a0424cb20bac1b0da5cc948baf41aa549672e753e",
+    "src/code_index/inheritance.rs": "bccc57132daedd2f75adb83a99a163c08d3138f42db75fb2ed2e136b19b1c994",
+    "src/code_index/php_names.rs": "807c5045d64788d42fa4213065a38323905b6b913184de27d352150e2dfdd000",
+    "src/code_index/php_names/hierarchy.rs": "6e5e694620bf167a7ba991535902233a803b7efb858d52958275b18aa148a877",
+    "src/code_index/php_names/resolve.rs": "d0051bbb9b8b346bb538d515f070dace293465f6fe9974b1d4ac5c3d515c25c7",
+    "src/code_index/php_names/tests.rs": "896e85484066d954ce29e7c48fc7043a0c68755e0af03df5fd97f140e651ddc6",
+    "src/code_index/php_names/capture.rs": "03331959e9b686b4fc14f32be53300c9f75680857b130af960e33e94ea010fd0",
+    "src/mcp/analysis.rs": "5f3e001393efae66af885a1fd7f5a567d32a56abf1ebd7e78ffaf865fba959ea",
+    "scripts/smoke_php_inheritance.py": "8b201fa8f5fa34e62f80719026df7feabe81119f9c6f5378f683737c703c691a"
+  },
+  "shared_checkout": true,
+  "frozen_checkout_proven": false,
+  "deployment_proven": false,
+  "compiler_runtime_verified": false
+}

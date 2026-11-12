@@ -1,0 +1,3362 @@
+{
+  "contract_version": 1,
+  "status": "qualified_workloads",
+  "qualification_only": true,
+  "binary_sha256": "edb5c3ea69692f46690b1b974f98bf4c9f8c284d4a04b0976ecf830efe41af55",
+  "runner_sha256": "677409a904bde5eba6be3bfdac9cb54ee34fc5e8674ebb09f4cbb888bf7676c7",
+  "client_sha256": "78f44eb3b5812426c7d78f0d3f919258c5e7a732c071de17dc73716a2dff3309",
+  "build_manifest": null,
+  "release_manifest_identity_matches": false,
+  "recipe_sha256": "5c11e1f2817ed1465801d811f9734d617617806139541b4e8f76893de688485e",
+  "recipe": {
+    "contract_version": 1,
+    "name": "itoa-1577ed901354d0d7448ac162328f9dbf5183124c",
+    "upstream_commit": "1577ed901354d0d7448ac162328f9dbf5183124c",
+    "input_recipe": "Cargo.toml and src/**/*.rs; captured default-feature library configuration",
+    "expected_inputs": {
+      "Cargo.toml": "3727dc5bf842fd5a6b100a3dae94b5dfcb4ec33f20dd8f2eceac3d175d782101",
+      "src/lib.rs": "e962338e1886873aa7c3399ec89aa5378ccbfed712b9690f043628079390a34f",
+      "src/u128_ext.rs": "498cc94f13805e551248fd82f47cc318f51d953a5002a9f8698858cd12fbae3c"
+    },
+    "phases": [
+      {
+        "name": "body",
+        "edits": [
+          {
+            "path": "src/u128_ext.rs",
+            "before": "u128::from(x_hi) * u128::from(y_hi) + high1 + high2",
+            "after": "(u128::from(x_hi) * u128::from(y_hi) + high1) + high2"
+          }
+        ]
+      },
+      {
+        "name": "signature",
+        "edits": [
+          {
+            "path": "src/u128_ext.rs",
+            "before": "fn mulhi(x: u128, y: u128)",
+            "after": "fn mulhi(x: u128, y: u128, _benchmark_tag: ())"
+          },
+          {
+            "path": "src/lib.rs",
+            "before": "u128_ext::mulhi(n, M_HIGH)",
+            "after": "u128_ext::mulhi(n, M_HIGH, ())"
+          }
+        ]
+      },
+      {
+        "name": "manifest_metadata",
+        "edits": [
+          {
+            "path": "Cargo.toml",
+            "append": "\n[package.metadata.index_benchmark]\nnonce=1\n"
+          }
+        ]
+      }
+    ]
+  },
+  "source_inputs": {
+    "Cargo.toml": "3727dc5bf842fd5a6b100a3dae94b5dfcb4ec33f20dd8f2eceac3d175d782101",
+    "src/lib.rs": "e962338e1886873aa7c3399ec89aa5378ccbfed712b9690f043628079390a34f",
+    "src/u128_ext.rs": "498cc94f13805e551248fd82f47cc318f51d953a5002a9f8698858cd12fbae3c"
+  },
+  "mode": "incremental",
+  "preflight": {
+    "blocking_processes": [
+      {
+        "pid": 411,
+        "cpu_percent": 42.6,
+        "command": "WindowServer",
+        "compiler": false
+      },
+      {
+        "pid": 62493,
+        "cpu_percent": 42.7,
+        "command": "Kimi Helper (Renderer)",
+        "compiler": false
+      },
+      {
+        "pid": 64758,
+        "cpu_percent": 0.0,
+        "command": "cargo",
+        "compiler": true
+      },
+      {
+        "pid": 64813,
+        "cpu_percent": 54.0,
+        "command": "voxy_gameplay-dfd140e6fdf50cb4",
+        "compiler": false
+      },
+      {
+        "pid": 67682,
+        "cpu_percent": 0.0,
+        "command": "cargo",
+        "compiler": true
+      },
+      {
+        "pid": 67690,
+        "cpu_percent": 27.0,
+        "command": "rustc",
+        "compiler": true
+      },
+      {
+        "pid": 67768,
+        "cpu_percent": 0.0,
+        "command": "cargo",
+        "compiler": true
+      },
+      {
+        "pid": 67940,
+        "cpu_percent": 85.5,
+        "command": "rustc",
+        "compiler": true
+      },
+      {
+        "pid": 67997,
+        "cpu_percent": 30.4,
+        "command": "rustc",
+        "compiler": true
+      },
+      {
+        "pid": 68006,
+        "cpu_percent": 46.5,
+        "command": "top",
+        "compiler": false
+      },
+      {
+        "pid": 68015,
+        "cpu_percent": 28.3,
+        "command": "rustc",
+        "compiler": true
+      },
+      {
+        "pid": 68048,
+        "cpu_percent": 27.8,
+        "command": "rustc",
+        "compiler": true
+      },
+      {
+        "pid": 67744,
+        "cpu_percent": 0.0,
+        "command": "cargo",
+        "compiler": true
+      },
+      {
+        "pid": 67745,
+        "cpu_percent": 245.5,
+        "command": "rustc",
+        "compiler": true
+      },
+      {
+        "pid": 67990,
+        "cpu_percent": 24.4,
+        "command": "rustc",
+        "compiler": true
+      }
+    ],
+    "quiet": false,
+    "sampled_at_unix": 1792983426.599445,
+    "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+  },
+  "controls": [
+    {
+      "case": "cold_ingest_and_index",
+      "before": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 50.2,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 42.4,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 160.1,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67682,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67690,
+            "cpu_percent": 82.5,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67745,
+            "cpu_percent": 154.7,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 67990,
+            "cpu_percent": 25.9,
+            "command": "rustc",
+            "compiler": true
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983427.273083,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "after": {
+        "blocking_processes": [
+          {
+            "pid": 366,
+            "cpu_percent": 27.6,
+            "command": "mds",
+            "compiler": false
+          },
+          {
+            "pid": 411,
+            "cpu_percent": 49.8,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 421,
+            "cpu_percent": 26.7,
+            "command": "backupd-helper",
+            "compiler": false
+          },
+          {
+            "pid": 2608,
+            "cpu_percent": 27.6,
+            "command": "XprotectService",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 40.9,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 147.4,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67682,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67690,
+            "cpu_percent": 74.4,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.4,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 68088,
+            "cpu_percent": 68.5,
+            "command": "CacheDeleteExtension",
+            "compiler": false
+          },
+          {
+            "pid": 68089,
+            "cpu_percent": 154.2,
+            "command": "lin-9b69f1e840b117a4",
+            "compiler": false
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67745,
+            "cpu_percent": 244.0,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 67990,
+            "cpu_percent": 27.3,
+            "command": "rustc",
+            "compiler": true
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983427.987974,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      }
+    },
+    {
+      "case": "warm_noop",
+      "before": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 50.9,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 421,
+            "cpu_percent": 27.6,
+            "command": "backupd-helper",
+            "compiler": false
+          },
+          {
+            "pid": 532,
+            "cpu_percent": 29.5,
+            "command": "triald_system",
+            "compiler": false
+          },
+          {
+            "pid": 618,
+            "cpu_percent": 28.9,
+            "command": "cloudd",
+            "compiler": false
+          },
+          {
+            "pid": 674,
+            "cpu_percent": 27.7,
+            "command": "deleted",
+            "compiler": false
+          },
+          {
+            "pid": 804,
+            "cpu_percent": 26.6,
+            "command": "triald",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 41.4,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 189.5,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67682,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67690,
+            "cpu_percent": 92.1,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 68089,
+            "cpu_percent": 247.6,
+            "command": "lin-9b69f1e840b117a4",
+            "compiler": false
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67990,
+            "cpu_percent": 24.3,
+            "command": "rustc",
+            "compiler": true
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983428.654639,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "after": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 50.9,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 421,
+            "cpu_percent": 27.6,
+            "command": "backupd-helper",
+            "compiler": false
+          },
+          {
+            "pid": 532,
+            "cpu_percent": 29.5,
+            "command": "triald_system",
+            "compiler": false
+          },
+          {
+            "pid": 618,
+            "cpu_percent": 28.9,
+            "command": "cloudd",
+            "compiler": false
+          },
+          {
+            "pid": 674,
+            "cpu_percent": 27.7,
+            "command": "deleted",
+            "compiler": false
+          },
+          {
+            "pid": 804,
+            "cpu_percent": 26.6,
+            "command": "triald",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 41.3,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 193.0,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67682,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67690,
+            "cpu_percent": 94.5,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 68089,
+            "cpu_percent": 261.2,
+            "command": "lin-9b69f1e840b117a4",
+            "compiler": false
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67990,
+            "cpu_percent": 22.6,
+            "command": "rustc",
+            "compiler": true
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983428.72459,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      }
+    },
+    {
+      "case": "body",
+      "before": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 47.7,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 421,
+            "cpu_percent": 37.9,
+            "command": "backupd-helper",
+            "compiler": false
+          },
+          {
+            "pid": 532,
+            "cpu_percent": 34.3,
+            "command": "triald_system",
+            "compiler": false
+          },
+          {
+            "pid": 618,
+            "cpu_percent": 38.2,
+            "command": "cloudd",
+            "compiler": false
+          },
+          {
+            "pid": 674,
+            "cpu_percent": 33.8,
+            "command": "deleted",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 42.5,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 198.6,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67682,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67690,
+            "cpu_percent": 97.9,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 68089,
+            "cpu_percent": 175.3,
+            "command": "lin-9b69f1e840b117a4",
+            "compiler": false
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67990,
+            "cpu_percent": 31.0,
+            "command": "rustc",
+            "compiler": true
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983429.101024,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "after": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 47.0,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 421,
+            "cpu_percent": 43.0,
+            "command": "backupd-helper",
+            "compiler": false
+          },
+          {
+            "pid": 444,
+            "cpu_percent": 25.2,
+            "command": "mobileassetd",
+            "compiler": false
+          },
+          {
+            "pid": 618,
+            "cpu_percent": 38.1,
+            "command": "cloudd",
+            "compiler": false
+          },
+          {
+            "pid": 674,
+            "cpu_percent": 31.5,
+            "command": "deleted",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 44.1,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 199.4,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67682,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67690,
+            "cpu_percent": 99.3,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 68089,
+            "cpu_percent": 187.2,
+            "command": "lin-9b69f1e840b117a4",
+            "compiler": false
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67990,
+            "cpu_percent": 34.5,
+            "command": "rustc",
+            "compiler": true
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983429.318568,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      }
+    },
+    {
+      "case": "signature",
+      "before": {
+        "blocking_processes": [
+          {
+            "pid": 366,
+            "cpu_percent": 37.0,
+            "command": "mds",
+            "compiler": false
+          },
+          {
+            "pid": 411,
+            "cpu_percent": 44.3,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 421,
+            "cpu_percent": 43.8,
+            "command": "backupd-helper",
+            "compiler": false
+          },
+          {
+            "pid": 444,
+            "cpu_percent": 34.0,
+            "command": "mobileassetd",
+            "compiler": false
+          },
+          {
+            "pid": 618,
+            "cpu_percent": 29.9,
+            "command": "cloudd",
+            "compiler": false
+          },
+          {
+            "pid": 674,
+            "cpu_percent": 34.1,
+            "command": "deleted",
+            "compiler": false
+          },
+          {
+            "pid": 12863,
+            "cpu_percent": 50.4,
+            "command": "jetbrains-toolbox",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 43.2,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 198.1,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67682,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67690,
+            "cpu_percent": 100.0,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 68089,
+            "cpu_percent": 179.3,
+            "command": "lin-9b69f1e840b117a4",
+            "compiler": false
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67990,
+            "cpu_percent": 35.7,
+            "command": "rustc",
+            "compiler": true
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983429.7446988,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "after": {
+        "blocking_processes": [
+          {
+            "pid": 366,
+            "cpu_percent": 34.3,
+            "command": "mds",
+            "compiler": false
+          },
+          {
+            "pid": 411,
+            "cpu_percent": 45.0,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 421,
+            "cpu_percent": 42.9,
+            "command": "backupd-helper",
+            "compiler": false
+          },
+          {
+            "pid": 444,
+            "cpu_percent": 38.5,
+            "command": "mobileassetd",
+            "compiler": false
+          },
+          {
+            "pid": 674,
+            "cpu_percent": 38.0,
+            "command": "deleted",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 42.1,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 195.6,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 68089,
+            "cpu_percent": 78.4,
+            "command": "lin-9b69f1e840b117a4",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 59.8,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67990,
+            "cpu_percent": 34.5,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 1363,
+            "cpu_percent": 36.6,
+            "command": "k9s",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983430.2176378,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      }
+    },
+    {
+      "case": "manifest_metadata",
+      "before": {
+        "blocking_processes": [
+          {
+            "pid": 366,
+            "cpu_percent": 34.6,
+            "command": "mds",
+            "compiler": false
+          },
+          {
+            "pid": 411,
+            "cpu_percent": 42.6,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 421,
+            "cpu_percent": 45.8,
+            "command": "backupd-helper",
+            "compiler": false
+          },
+          {
+            "pid": 674,
+            "cpu_percent": 53.6,
+            "command": "deleted",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 42.3,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 198.2,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67990,
+            "cpu_percent": 36.2,
+            "command": "rustc",
+            "compiler": true
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983430.639231,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "after": {
+        "blocking_processes": [
+          {
+            "pid": 366,
+            "cpu_percent": 39.8,
+            "command": "mds",
+            "compiler": false
+          },
+          {
+            "pid": 411,
+            "cpu_percent": 41.2,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 421,
+            "cpu_percent": 49.6,
+            "command": "backupd-helper",
+            "compiler": false
+          },
+          {
+            "pid": 674,
+            "cpu_percent": 34.6,
+            "command": "deleted",
+            "compiler": false
+          },
+          {
+            "pid": 2608,
+            "cpu_percent": 29.1,
+            "command": "XprotectService",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 42.6,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 197.8,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67990,
+            "cpu_percent": 38.6,
+            "command": "rustc",
+            "compiler": true
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983430.841386,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      }
+    }
+  ],
+  "records": [
+    {
+      "case": "cold_ingest_and_index",
+      "steps": [
+        {
+          "operation": "ingest_file",
+          "path": "Cargo.toml",
+          "ms": 84.512,
+          "result": {
+            "document_id": "e1406c60-2293-45b7-9281-762dfa0def0b",
+            "chunk_count": 4,
+            "node_id": "b99ce434-52fb-4682-96f4-5a989ddd68fa",
+            "edge_count": 2,
+            "content_hash": "2b0f3478f5ad00073d774b21ce88acc66ce9631f5d020306930a3ae5148db5fc",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/lib.rs",
+          "ms": 90.990667,
+          "result": {
+            "document_id": "fb262c34-41ef-4a0e-856a-d0123abbbc24",
+            "chunk_count": 51,
+            "node_id": "c86c56ff-a1b0-4565-839b-4cfd3fd4b690",
+            "edge_count": 2,
+            "content_hash": "100307a5f55fc826aff32bc52377aaa470cc9ec20762780c6a3c63694821cb3e",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/u128_ext.rs",
+          "ms": 50.38,
+          "result": {
+            "document_id": "873f9e89-25d7-4f55-9646-868d2f674f6b",
+            "chunk_count": 3,
+            "node_id": "a9f2451a-5835-448b-95ba-35249214145f",
+            "edge_count": 2,
+            "content_hash": "c547af59d513302d24cc4e6b5da842f3f3af9b67a120547353e80f2945033d98",
+            "op": "inserted",
+            "revision": 1,
+            "etag": "W/\"1\""
+          }
+        },
+        {
+          "operation": "index_code",
+          "arguments": {},
+          "ms": 369.917708,
+          "result": {
+            "indexed": 3,
+            "unchanged": 0,
+            "unsupported": 0,
+            "parse_errors": [],
+            "index_revision": 1,
+            "revision_created": true,
+            "stage_timings": {
+              "contract_version": 1,
+              "run_id": "bd92c200-eb42-4dca-8ef7-97431586f189",
+              "lock_wait_ms": 0.000417,
+              "source_load_decode_ms": 2.441667,
+              "cache_parse_serialize_ms": 190.288458,
+              "cache_replace_ms": 32.364583,
+              "revision_publish_ms": 119.937416,
+              "transaction_body_ms": 345.25375,
+              "before_metrics_write_ms": 345.254167,
+              "documents_loaded": 3,
+              "cache_hits": 0,
+              "cache_misses": 3,
+              "unsupported_documents": 0,
+              "parse_error_documents": 0,
+              "commit_included": false,
+              "metrics_write_included": false,
+              "embedding_fts_included": false
+            },
+            "resolution": {
+              "contract_version": 1,
+              "documents_total": 3,
+              "documents_resolved": 3,
+              "documents_reused": 0,
+              "reference_sites_resolved": 503,
+              "reference_sites_reused": 0,
+              "rust_package_scopes": 2,
+              "project_fallback_scopes": 0,
+              "empty_reference_documents": 1,
+              "dependency_inputs_hashed": 6,
+              "invalid_cache_entries": 0,
+              "forced_full": false,
+              "cache_available": false,
+              "no_resolution_required": false,
+              "resolution_ms": 32.024875,
+              "equivalent_to_existing": null
+            },
+            "completion": {
+              "contract_version": 1,
+              "native_total_ms": 369.164542,
+              "commit_ms": 21.080958,
+              "metrics_write_ms": 2.8288749999999996,
+              "commit_included": true,
+              "process_lifetime_peak_rss_bytes": 160202752
+            }
+          }
+        }
+      ],
+      "inputs": {
+        "Cargo.toml": "3727dc5bf842fd5a6b100a3dae94b5dfcb4ec33f20dd8f2eceac3d175d782101",
+        "src/lib.rs": "e962338e1886873aa7c3399ec89aa5378ccbfed712b9690f043628079390a34f",
+        "src/u128_ext.rs": "498cc94f13805e551248fd82f47cc318f51d953a5002a9f8698858cd12fbae3c"
+      },
+      "ordinary_noop": false,
+      "environment": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 50.2,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 42.4,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 160.1,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67682,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67690,
+            "cpu_percent": 82.5,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67745,
+            "cpu_percent": 154.7,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 67990,
+            "cpu_percent": 25.9,
+            "command": "rustc",
+            "compiler": true
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983427.273083,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "end_to_end_mcp_ms": 595.814541,
+      "sampled_worker_peak_rss_bytes": 158547968,
+      "rss_samples": 10,
+      "rss_sample_period_seconds": 0.05,
+      "environment_after": {
+        "blocking_processes": [
+          {
+            "pid": 366,
+            "cpu_percent": 27.6,
+            "command": "mds",
+            "compiler": false
+          },
+          {
+            "pid": 411,
+            "cpu_percent": 49.8,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 421,
+            "cpu_percent": 26.7,
+            "command": "backupd-helper",
+            "compiler": false
+          },
+          {
+            "pid": 2608,
+            "cpu_percent": 27.6,
+            "command": "XprotectService",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 40.9,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 147.4,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67682,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67690,
+            "cpu_percent": 74.4,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.4,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 68088,
+            "cpu_percent": 68.5,
+            "command": "CacheDeleteExtension",
+            "compiler": false
+          },
+          {
+            "pid": 68089,
+            "cpu_percent": 154.2,
+            "command": "lin-9b69f1e840b117a4",
+            "compiler": false
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67745,
+            "cpu_percent": 244.0,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 67990,
+            "cpu_percent": 27.3,
+            "command": "rustc",
+            "compiler": true
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983427.987974,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      }
+    },
+    {
+      "case": "warm_noop",
+      "steps": [
+        {
+          "operation": "index_code",
+          "arguments": {},
+          "ms": 14.60425,
+          "result": {
+            "indexed": 0,
+            "unchanged": 3,
+            "unsupported": 0,
+            "parse_errors": [],
+            "index_revision": 1,
+            "revision_created": false,
+            "stage_timings": {
+              "contract_version": 1,
+              "run_id": "a32cfe3a-9db5-47db-8f2d-364f00429539",
+              "lock_wait_ms": 0.00075,
+              "source_load_decode_ms": 3.332958,
+              "cache_parse_serialize_ms": 4.204917,
+              "cache_replace_ms": 0.002333,
+              "revision_publish_ms": 2.360042,
+              "transaction_body_ms": 10.532333,
+              "before_metrics_write_ms": 10.533249999999999,
+              "documents_loaded": 3,
+              "cache_hits": 3,
+              "cache_misses": 0,
+              "unsupported_documents": 0,
+              "parse_error_documents": 0,
+              "commit_included": false,
+              "metrics_write_included": false,
+              "embedding_fts_included": false
+            },
+            "resolution": {
+              "contract_version": 1,
+              "documents_total": 0,
+              "documents_resolved": 0,
+              "documents_reused": 0,
+              "reference_sites_resolved": 0,
+              "reference_sites_reused": 0,
+              "rust_package_scopes": 0,
+              "project_fallback_scopes": 0,
+              "empty_reference_documents": 0,
+              "dependency_inputs_hashed": 0,
+              "invalid_cache_entries": 0,
+              "forced_full": false,
+              "cache_available": false,
+              "no_resolution_required": true,
+              "resolution_ms": 0.0,
+              "equivalent_to_existing": null
+            },
+            "completion": {
+              "contract_version": 1,
+              "native_total_ms": 13.736540999999999,
+              "commit_ms": 0.853958,
+              "metrics_write_ms": 2.349084,
+              "commit_included": true,
+              "process_lifetime_peak_rss_bytes": 167428096
+            }
+          }
+        }
+      ],
+      "inputs": {
+        "Cargo.toml": "3727dc5bf842fd5a6b100a3dae94b5dfcb4ec33f20dd8f2eceac3d175d782101",
+        "src/lib.rs": "e962338e1886873aa7c3399ec89aa5378ccbfed712b9690f043628079390a34f",
+        "src/u128_ext.rs": "498cc94f13805e551248fd82f47cc318f51d953a5002a9f8698858cd12fbae3c"
+      },
+      "ordinary_noop": true,
+      "environment": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 50.9,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 421,
+            "cpu_percent": 27.6,
+            "command": "backupd-helper",
+            "compiler": false
+          },
+          {
+            "pid": 532,
+            "cpu_percent": 29.5,
+            "command": "triald_system",
+            "compiler": false
+          },
+          {
+            "pid": 618,
+            "cpu_percent": 28.9,
+            "command": "cloudd",
+            "compiler": false
+          },
+          {
+            "pid": 674,
+            "cpu_percent": 27.7,
+            "command": "deleted",
+            "compiler": false
+          },
+          {
+            "pid": 804,
+            "cpu_percent": 26.6,
+            "command": "triald",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 41.4,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 189.5,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67682,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67690,
+            "cpu_percent": 92.1,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 68089,
+            "cpu_percent": 247.6,
+            "command": "lin-9b69f1e840b117a4",
+            "compiler": false
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67990,
+            "cpu_percent": 24.3,
+            "command": "rustc",
+            "compiler": true
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983428.654639,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "end_to_end_mcp_ms": 14.608291,
+      "sampled_worker_peak_rss_bytes": 167395328,
+      "rss_samples": 1,
+      "rss_sample_period_seconds": 0.05,
+      "environment_after": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 50.9,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 421,
+            "cpu_percent": 27.6,
+            "command": "backupd-helper",
+            "compiler": false
+          },
+          {
+            "pid": 532,
+            "cpu_percent": 29.5,
+            "command": "triald_system",
+            "compiler": false
+          },
+          {
+            "pid": 618,
+            "cpu_percent": 28.9,
+            "command": "cloudd",
+            "compiler": false
+          },
+          {
+            "pid": 674,
+            "cpu_percent": 27.7,
+            "command": "deleted",
+            "compiler": false
+          },
+          {
+            "pid": 804,
+            "cpu_percent": 26.6,
+            "command": "triald",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 41.3,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 193.0,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67682,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67690,
+            "cpu_percent": 94.5,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 68089,
+            "cpu_percent": 261.2,
+            "command": "lin-9b69f1e840b117a4",
+            "compiler": false
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67990,
+            "cpu_percent": 22.6,
+            "command": "rustc",
+            "compiler": true
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983428.72459,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      }
+    },
+    {
+      "case": "body",
+      "steps": [
+        {
+          "operation": "ingest_file",
+          "path": "src/u128_ext.rs",
+          "ms": 52.858208,
+          "result": {
+            "document_id": "873f9e89-25d7-4f55-9646-868d2f674f6b",
+            "chunk_count": 3,
+            "node_id": "a9f2451a-5835-448b-95ba-35249214145f",
+            "edge_count": 2,
+            "content_hash": "8bf0dbf5d0c854afc2eadbc0385163b283f676c1da62ec92672f36d51aa27829",
+            "op": "updated",
+            "revision": 2,
+            "etag": "W/\"2\""
+          }
+        },
+        {
+          "operation": "index_code",
+          "arguments": {},
+          "ms": 112.686334,
+          "result": {
+            "indexed": 1,
+            "unchanged": 2,
+            "unsupported": 0,
+            "parse_errors": [],
+            "index_revision": 2,
+            "revision_created": true,
+            "stage_timings": {
+              "contract_version": 1,
+              "run_id": "c3e9df67-00d9-4196-be16-229a55b95b62",
+              "lock_wait_ms": 0.0005,
+              "source_load_decode_ms": 2.0110829999999997,
+              "cache_parse_serialize_ms": 8.380083,
+              "cache_replace_ms": 3.42,
+              "revision_publish_ms": 92.941541,
+              "transaction_body_ms": 106.942083,
+              "before_metrics_write_ms": 106.942667,
+              "documents_loaded": 3,
+              "cache_hits": 2,
+              "cache_misses": 1,
+              "unsupported_documents": 0,
+              "parse_error_documents": 0,
+              "commit_included": false,
+              "metrics_write_included": false,
+              "embedding_fts_included": false
+            },
+            "resolution": {
+              "contract_version": 1,
+              "documents_total": 3,
+              "documents_resolved": 2,
+              "documents_reused": 1,
+              "reference_sites_resolved": 503,
+              "reference_sites_reused": 0,
+              "rust_package_scopes": 2,
+              "project_fallback_scopes": 0,
+              "empty_reference_documents": 1,
+              "dependency_inputs_hashed": 6,
+              "invalid_cache_entries": 0,
+              "forced_full": false,
+              "cache_available": true,
+              "no_resolution_required": false,
+              "resolution_ms": 32.062292,
+              "equivalent_to_existing": null
+            },
+            "completion": {
+              "contract_version": 1,
+              "native_total_ms": 112.101167,
+              "commit_ms": 2.863,
+              "metrics_write_ms": 2.2951249999999996,
+              "commit_included": true,
+              "process_lifetime_peak_rss_bytes": 196165632
+            }
+          }
+        }
+      ],
+      "inputs": {
+        "Cargo.toml": "3727dc5bf842fd5a6b100a3dae94b5dfcb4ec33f20dd8f2eceac3d175d782101",
+        "src/lib.rs": "e962338e1886873aa7c3399ec89aa5378ccbfed712b9690f043628079390a34f",
+        "src/u128_ext.rs": "b349f6f10d5698480c4f42f3c0dd6641fc3698e361a296c7ac62446c59fbc52a"
+      },
+      "ordinary_noop": false,
+      "environment": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 47.7,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 421,
+            "cpu_percent": 37.9,
+            "command": "backupd-helper",
+            "compiler": false
+          },
+          {
+            "pid": 532,
+            "cpu_percent": 34.3,
+            "command": "triald_system",
+            "compiler": false
+          },
+          {
+            "pid": 618,
+            "cpu_percent": 38.2,
+            "command": "cloudd",
+            "compiler": false
+          },
+          {
+            "pid": 674,
+            "cpu_percent": 33.8,
+            "command": "deleted",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 42.5,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 198.6,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67682,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67690,
+            "cpu_percent": 97.9,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 68089,
+            "cpu_percent": 175.3,
+            "command": "lin-9b69f1e840b117a4",
+            "compiler": false
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67990,
+            "cpu_percent": 31.0,
+            "command": "rustc",
+            "compiler": true
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983429.101024,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "end_to_end_mcp_ms": 165.551208,
+      "sampled_worker_peak_rss_bytes": 191250432,
+      "rss_samples": 3,
+      "rss_sample_period_seconds": 0.05,
+      "environment_after": {
+        "blocking_processes": [
+          {
+            "pid": 411,
+            "cpu_percent": 47.0,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 421,
+            "cpu_percent": 43.0,
+            "command": "backupd-helper",
+            "compiler": false
+          },
+          {
+            "pid": 444,
+            "cpu_percent": 25.2,
+            "command": "mobileassetd",
+            "compiler": false
+          },
+          {
+            "pid": 618,
+            "cpu_percent": 38.1,
+            "command": "cloudd",
+            "compiler": false
+          },
+          {
+            "pid": 674,
+            "cpu_percent": 31.5,
+            "command": "deleted",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 44.1,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 199.4,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67682,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67690,
+            "cpu_percent": 99.3,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 68089,
+            "cpu_percent": 187.2,
+            "command": "lin-9b69f1e840b117a4",
+            "compiler": false
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67990,
+            "cpu_percent": 34.5,
+            "command": "rustc",
+            "compiler": true
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983429.318568,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "mutations": [
+        {
+          "path": "src/u128_ext.rs",
+          "before_sha256": "498cc94f13805e551248fd82f47cc318f51d953a5002a9f8698858cd12fbae3c",
+          "after_sha256": "b349f6f10d5698480c4f42f3c0dd6641fc3698e361a296c7ac62446c59fbc52a"
+        }
+      ]
+    },
+    {
+      "case": "signature",
+      "steps": [
+        {
+          "operation": "ingest_file",
+          "path": "src/u128_ext.rs",
+          "ms": 50.543708,
+          "result": {
+            "document_id": "873f9e89-25d7-4f55-9646-868d2f674f6b",
+            "chunk_count": 3,
+            "node_id": "a9f2451a-5835-448b-95ba-35249214145f",
+            "edge_count": 2,
+            "content_hash": "adb24871c087997bdfa7564f2763c728f8d6b4a60a0e5caeaa1adf6aef835e9e",
+            "op": "updated",
+            "revision": 3,
+            "etag": "W/\"3\""
+          }
+        },
+        {
+          "operation": "ingest_file",
+          "path": "src/lib.rs",
+          "ms": 81.039625,
+          "result": {
+            "document_id": "fb262c34-41ef-4a0e-856a-d0123abbbc24",
+            "chunk_count": 51,
+            "node_id": "c86c56ff-a1b0-4565-839b-4cfd3fd4b690",
+            "edge_count": 2,
+            "content_hash": "07719cfe6ff8df89d06b8bea331543a5243b3848dec3bc5073fdb93332bada5d",
+            "op": "updated",
+            "revision": 2,
+            "etag": "W/\"2\""
+          }
+        },
+        {
+          "operation": "index_code",
+          "arguments": {},
+          "ms": 289.873584,
+          "result": {
+            "indexed": 2,
+            "unchanged": 1,
+            "unsupported": 0,
+            "parse_errors": [],
+            "index_revision": 3,
+            "revision_created": true,
+            "stage_timings": {
+              "contract_version": 1,
+              "run_id": "7fe67a66-ed68-48eb-afeb-961f1b573ed0",
+              "lock_wait_ms": 0.0006670000000000001,
+              "source_load_decode_ms": 1.7257500000000001,
+              "cache_parse_serialize_ms": 174.24683399999998,
+              "cache_replace_ms": 7.562584,
+              "revision_publish_ms": 100.151833,
+              "transaction_body_ms": 283.89124999999996,
+              "before_metrics_write_ms": 283.892,
+              "documents_loaded": 3,
+              "cache_hits": 1,
+              "cache_misses": 2,
+              "unsupported_documents": 0,
+              "parse_error_documents": 0,
+              "commit_included": false,
+              "metrics_write_included": false,
+              "embedding_fts_included": false
+            },
+            "resolution": {
+              "contract_version": 1,
+              "documents_total": 3,
+              "documents_resolved": 2,
+              "documents_reused": 1,
+              "reference_sites_resolved": 503,
+              "reference_sites_reused": 0,
+              "rust_package_scopes": 2,
+              "project_fallback_scopes": 0,
+              "empty_reference_documents": 1,
+              "dependency_inputs_hashed": 6,
+              "invalid_cache_entries": 0,
+              "forced_full": false,
+              "cache_available": true,
+              "no_resolution_required": false,
+              "resolution_ms": 32.391042,
+              "equivalent_to_existing": null
+            },
+            "completion": {
+              "contract_version": 1,
+              "native_total_ms": 289.285083,
+              "commit_ms": 3.043959,
+              "metrics_write_ms": 2.348709,
+              "commit_included": true,
+              "process_lifetime_peak_rss_bytes": 212140032
+            }
+          }
+        }
+      ],
+      "inputs": {
+        "Cargo.toml": "3727dc5bf842fd5a6b100a3dae94b5dfcb4ec33f20dd8f2eceac3d175d782101",
+        "src/lib.rs": "4bbe38566c363a28a3e6ee8c2c57646438049eb0cad634920a97dbcd4eea7fee",
+        "src/u128_ext.rs": "e940644ce0412376cdfa4c8407d629ff609ce4a145eb58d60eef940da6290ee6"
+      },
+      "ordinary_noop": false,
+      "environment": {
+        "blocking_processes": [
+          {
+            "pid": 366,
+            "cpu_percent": 37.0,
+            "command": "mds",
+            "compiler": false
+          },
+          {
+            "pid": 411,
+            "cpu_percent": 44.3,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 421,
+            "cpu_percent": 43.8,
+            "command": "backupd-helper",
+            "compiler": false
+          },
+          {
+            "pid": 444,
+            "cpu_percent": 34.0,
+            "command": "mobileassetd",
+            "compiler": false
+          },
+          {
+            "pid": 618,
+            "cpu_percent": 29.9,
+            "command": "cloudd",
+            "compiler": false
+          },
+          {
+            "pid": 674,
+            "cpu_percent": 34.1,
+            "command": "deleted",
+            "compiler": false
+          },
+          {
+            "pid": 12863,
+            "cpu_percent": 50.4,
+            "command": "jetbrains-toolbox",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 43.2,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 198.1,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67682,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67690,
+            "cpu_percent": 100.0,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 68089,
+            "cpu_percent": 179.3,
+            "command": "lin-9b69f1e840b117a4",
+            "compiler": false
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67990,
+            "cpu_percent": 35.7,
+            "command": "rustc",
+            "compiler": true
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983429.7446988,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "end_to_end_mcp_ms": 421.466666,
+      "sampled_worker_peak_rss_bytes": 212140032,
+      "rss_samples": 8,
+      "rss_sample_period_seconds": 0.05,
+      "environment_after": {
+        "blocking_processes": [
+          {
+            "pid": 366,
+            "cpu_percent": 34.3,
+            "command": "mds",
+            "compiler": false
+          },
+          {
+            "pid": 411,
+            "cpu_percent": 45.0,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 421,
+            "cpu_percent": 42.9,
+            "command": "backupd-helper",
+            "compiler": false
+          },
+          {
+            "pid": 444,
+            "cpu_percent": 38.5,
+            "command": "mobileassetd",
+            "compiler": false
+          },
+          {
+            "pid": 674,
+            "cpu_percent": 38.0,
+            "command": "deleted",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 42.1,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 195.6,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 68089,
+            "cpu_percent": 78.4,
+            "command": "lin-9b69f1e840b117a4",
+            "compiler": false
+          },
+          {
+            "pid": 94044,
+            "cpu_percent": 59.8,
+            "command": "Antigravity Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67990,
+            "cpu_percent": 34.5,
+            "command": "rustc",
+            "compiler": true
+          },
+          {
+            "pid": 1363,
+            "cpu_percent": 36.6,
+            "command": "k9s",
+            "compiler": false
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983430.2176378,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "mutations": [
+        {
+          "path": "src/u128_ext.rs",
+          "before_sha256": "b349f6f10d5698480c4f42f3c0dd6641fc3698e361a296c7ac62446c59fbc52a",
+          "after_sha256": "e940644ce0412376cdfa4c8407d629ff609ce4a145eb58d60eef940da6290ee6"
+        },
+        {
+          "path": "src/lib.rs",
+          "before_sha256": "e962338e1886873aa7c3399ec89aa5378ccbfed712b9690f043628079390a34f",
+          "after_sha256": "4bbe38566c363a28a3e6ee8c2c57646438049eb0cad634920a97dbcd4eea7fee"
+        }
+      ]
+    },
+    {
+      "case": "manifest_metadata",
+      "steps": [
+        {
+          "operation": "ingest_file",
+          "path": "Cargo.toml",
+          "ms": 47.180375,
+          "result": {
+            "document_id": "e1406c60-2293-45b7-9281-762dfa0def0b",
+            "chunk_count": 4,
+            "node_id": "b99ce434-52fb-4682-96f4-5a989ddd68fa",
+            "edge_count": 2,
+            "content_hash": "709576f27664411f4878fa755e2ae92b5740ad500879cfad24757d0da6e3e94f",
+            "op": "updated",
+            "revision": 2,
+            "etag": "W/\"2\""
+          }
+        },
+        {
+          "operation": "index_code",
+          "arguments": {},
+          "ms": 105.113916,
+          "result": {
+            "indexed": 1,
+            "unchanged": 2,
+            "unsupported": 0,
+            "parse_errors": [],
+            "index_revision": 4,
+            "revision_created": true,
+            "stage_timings": {
+              "contract_version": 1,
+              "run_id": "b08cf83b-1c7a-421b-a0f3-a86a6b553bb2",
+              "lock_wait_ms": 0.0005,
+              "source_load_decode_ms": 1.736875,
+              "cache_parse_serialize_ms": 4.227333,
+              "cache_replace_ms": 2.743458,
+              "revision_publish_ms": 91.158666,
+              "transaction_body_ms": 100.10416699999999,
+              "before_metrics_write_ms": 100.10475000000001,
+              "documents_loaded": 3,
+              "cache_hits": 2,
+              "cache_misses": 1,
+              "unsupported_documents": 0,
+              "parse_error_documents": 0,
+              "commit_included": false,
+              "metrics_write_included": false,
+              "embedding_fts_included": false
+            },
+            "resolution": {
+              "contract_version": 1,
+              "documents_total": 3,
+              "documents_resolved": 3,
+              "documents_reused": 0,
+              "reference_sites_resolved": 503,
+              "reference_sites_reused": 0,
+              "rust_package_scopes": 2,
+              "project_fallback_scopes": 0,
+              "empty_reference_documents": 1,
+              "dependency_inputs_hashed": 6,
+              "invalid_cache_entries": 0,
+              "forced_full": false,
+              "cache_available": true,
+              "no_resolution_required": false,
+              "resolution_ms": 32.160624999999996,
+              "equivalent_to_existing": null
+            },
+            "completion": {
+              "contract_version": 1,
+              "native_total_ms": 104.54483400000001,
+              "commit_ms": 2.489583,
+              "metrics_write_ms": 1.950167,
+              "commit_included": true,
+              "process_lifetime_peak_rss_bytes": 226148352
+            }
+          }
+        }
+      ],
+      "inputs": {
+        "Cargo.toml": "ac1aa357ef1f7f559a7b86d9d8946657b2b37a475ff07c5a3e5e6f9a3a7e0e5b",
+        "src/lib.rs": "4bbe38566c363a28a3e6ee8c2c57646438049eb0cad634920a97dbcd4eea7fee",
+        "src/u128_ext.rs": "e940644ce0412376cdfa4c8407d629ff609ce4a145eb58d60eef940da6290ee6"
+      },
+      "ordinary_noop": false,
+      "environment": {
+        "blocking_processes": [
+          {
+            "pid": 366,
+            "cpu_percent": 34.6,
+            "command": "mds",
+            "compiler": false
+          },
+          {
+            "pid": 411,
+            "cpu_percent": 42.6,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 421,
+            "cpu_percent": 45.8,
+            "command": "backupd-helper",
+            "compiler": false
+          },
+          {
+            "pid": 674,
+            "cpu_percent": 53.6,
+            "command": "deleted",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 42.3,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 198.2,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67990,
+            "cpu_percent": 36.2,
+            "command": "rustc",
+            "compiler": true
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983430.639231,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "end_to_end_mcp_ms": 152.300792,
+      "sampled_worker_peak_rss_bytes": 225263616,
+      "rss_samples": 3,
+      "rss_sample_period_seconds": 0.05,
+      "environment_after": {
+        "blocking_processes": [
+          {
+            "pid": 366,
+            "cpu_percent": 39.8,
+            "command": "mds",
+            "compiler": false
+          },
+          {
+            "pid": 411,
+            "cpu_percent": 41.2,
+            "command": "WindowServer",
+            "compiler": false
+          },
+          {
+            "pid": 421,
+            "cpu_percent": 49.6,
+            "command": "backupd-helper",
+            "compiler": false
+          },
+          {
+            "pid": 674,
+            "cpu_percent": 34.6,
+            "command": "deleted",
+            "compiler": false
+          },
+          {
+            "pid": 2608,
+            "cpu_percent": 29.1,
+            "command": "XprotectService",
+            "compiler": false
+          },
+          {
+            "pid": 62493,
+            "cpu_percent": 42.6,
+            "command": "Kimi Helper (Renderer)",
+            "compiler": false
+          },
+          {
+            "pid": 64758,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 64813,
+            "cpu_percent": 197.8,
+            "command": "voxy_gameplay-dfd140e6fdf50cb4",
+            "compiler": false
+          },
+          {
+            "pid": 67768,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67744,
+            "cpu_percent": 0.0,
+            "command": "cargo",
+            "compiler": true
+          },
+          {
+            "pid": 67990,
+            "cpu_percent": 38.6,
+            "command": "rustc",
+            "compiler": true
+          }
+        ],
+        "quiet": false,
+        "sampled_at_unix": 1792983430.841386,
+        "scope": "process names and reported CPU only; no thermal/power/whole-machine isolation proof"
+      },
+      "mutations": [
+        {
+          "path": "Cargo.toml",
+          "before_sha256": "3727dc5bf842fd5a6b100a3dae94b5dfcb4ec33f20dd8f2eceac3d175d782101",
+          "after_sha256": "ac1aa357ef1f7f559a7b86d9d8946657b2b37a475ff07c5a3e5e6f9a3a7e0e5b"
+        }
+      ]
+    }
+  ],
+  "correctness_audits": [
+    {
+      "case": "cold_ingest_and_index",
+      "result": {
+        "indexed": 0,
+        "unchanged": 3,
+        "unsupported": 0,
+        "parse_errors": [],
+        "index_revision": 1,
+        "revision_created": false,
+        "stage_timings": {
+          "contract_version": 1,
+          "run_id": "c1d7542c-f960-47a6-bc05-5a9c08d610be",
+          "lock_wait_ms": 0.0015,
+          "source_load_decode_ms": 2.114167,
+          "cache_parse_serialize_ms": 3.7195829999999996,
+          "cache_replace_ms": 0.0015,
+          "revision_publish_ms": 289.530459,
+          "transaction_body_ms": 295.895208,
+          "before_metrics_write_ms": 295.89712499999996,
+          "documents_loaded": 3,
+          "cache_hits": 3,
+          "cache_misses": 0,
+          "unsupported_documents": 0,
+          "parse_error_documents": 0,
+          "commit_included": false,
+          "metrics_write_included": false,
+          "embedding_fts_included": false
+        },
+        "resolution": {
+          "contract_version": 1,
+          "documents_total": 3,
+          "documents_resolved": 3,
+          "documents_reused": 0,
+          "reference_sites_resolved": 503,
+          "reference_sites_reused": 0,
+          "rust_package_scopes": 2,
+          "project_fallback_scopes": 0,
+          "empty_reference_documents": 1,
+          "dependency_inputs_hashed": 6,
+          "invalid_cache_entries": 0,
+          "forced_full": true,
+          "cache_available": true,
+          "no_resolution_required": false,
+          "resolution_ms": 33.950792,
+          "equivalent_to_existing": true
+        },
+        "completion": {
+          "contract_version": 1,
+          "native_total_ms": 302.132583,
+          "commit_ms": 2.708042,
+          "metrics_write_ms": 3.5270409999999996,
+          "commit_included": true,
+          "process_lifetime_peak_rss_bytes": 167395328
+        }
+      }
+    },
+    {
+      "case": "warm_noop",
+      "result": {
+        "indexed": 0,
+        "unchanged": 3,
+        "unsupported": 0,
+        "parse_errors": [],
+        "index_revision": 1,
+        "revision_created": false,
+        "stage_timings": {
+          "contract_version": 1,
+          "run_id": "972fc149-a943-41aa-a633-a2b923e5a515",
+          "lock_wait_ms": 0.0012079999999999999,
+          "source_load_decode_ms": 2.2581670000000003,
+          "cache_parse_serialize_ms": 3.835042,
+          "cache_replace_ms": 0.001583,
+          "revision_publish_ms": 280.66341700000004,
+          "transaction_body_ms": 287.310042,
+          "before_metrics_write_ms": 287.311416,
+          "documents_loaded": 3,
+          "cache_hits": 3,
+          "cache_misses": 0,
+          "unsupported_documents": 0,
+          "parse_error_documents": 0,
+          "commit_included": false,
+          "metrics_write_included": false,
+          "embedding_fts_included": false
+        },
+        "resolution": {
+          "contract_version": 1,
+          "documents_total": 3,
+          "documents_resolved": 3,
+          "documents_reused": 0,
+          "reference_sites_resolved": 503,
+          "reference_sites_reused": 0,
+          "rust_package_scopes": 2,
+          "project_fallback_scopes": 0,
+          "empty_reference_documents": 1,
+          "dependency_inputs_hashed": 6,
+          "invalid_cache_entries": 0,
+          "forced_full": true,
+          "cache_available": true,
+          "no_resolution_required": false,
+          "resolution_ms": 32.182165999999995,
+          "equivalent_to_existing": true
+        },
+        "completion": {
+          "contract_version": 1,
+          "native_total_ms": 291.255,
+          "commit_ms": 1.0025410000000001,
+          "metrics_write_ms": 2.940583,
+          "commit_included": true,
+          "process_lifetime_peak_rss_bytes": 168214528
+        }
+      }
+    },
+    {
+      "case": "body",
+      "result": {
+        "indexed": 0,
+        "unchanged": 3,
+        "unsupported": 0,
+        "parse_errors": [],
+        "index_revision": 2,
+        "revision_created": false,
+        "stage_timings": {
+          "contract_version": 1,
+          "run_id": "e94fc0aa-0a0e-495e-bc12-fdd774423f2d",
+          "lock_wait_ms": 0.0011250000000000001,
+          "source_load_decode_ms": 2.104291,
+          "cache_parse_serialize_ms": 3.9274999999999998,
+          "cache_replace_ms": 0.001625,
+          "revision_publish_ms": 278.841875,
+          "transaction_body_ms": 285.295,
+          "before_metrics_write_ms": 285.296291,
+          "documents_loaded": 3,
+          "cache_hits": 3,
+          "cache_misses": 0,
+          "unsupported_documents": 0,
+          "parse_error_documents": 0,
+          "commit_included": false,
+          "metrics_write_included": false,
+          "embedding_fts_included": false
+        },
+        "resolution": {
+          "contract_version": 1,
+          "documents_total": 3,
+          "documents_resolved": 3,
+          "documents_reused": 0,
+          "reference_sites_resolved": 503,
+          "reference_sites_reused": 0,
+          "rust_package_scopes": 2,
+          "project_fallback_scopes": 0,
+          "empty_reference_documents": 1,
+          "dependency_inputs_hashed": 6,
+          "invalid_cache_entries": 0,
+          "forced_full": true,
+          "cache_available": true,
+          "no_resolution_required": false,
+          "resolution_ms": 32.254999999999995,
+          "equivalent_to_existing": true
+        },
+        "completion": {
+          "contract_version": 1,
+          "native_total_ms": 289.08729100000005,
+          "commit_ms": 0.8081670000000001,
+          "metrics_write_ms": 2.98225,
+          "commit_included": true,
+          "process_lifetime_peak_rss_bytes": 198328320
+        }
+      }
+    },
+    {
+      "case": "signature",
+      "result": {
+        "indexed": 0,
+        "unchanged": 3,
+        "unsupported": 0,
+        "parse_errors": [],
+        "index_revision": 3,
+        "revision_created": false,
+        "stage_timings": {
+          "contract_version": 1,
+          "run_id": "265065bf-b83b-45f8-907c-cb80a34ab8a2",
+          "lock_wait_ms": 0.000834,
+          "source_load_decode_ms": 2.074375,
+          "cache_parse_serialize_ms": 3.810708,
+          "cache_replace_ms": 0.001542,
+          "revision_publish_ms": 276.850959,
+          "transaction_body_ms": 283.10175,
+          "before_metrics_write_ms": 283.10275,
+          "documents_loaded": 3,
+          "cache_hits": 3,
+          "cache_misses": 0,
+          "unsupported_documents": 0,
+          "parse_error_documents": 0,
+          "commit_included": false,
+          "metrics_write_included": false,
+          "embedding_fts_included": false
+        },
+        "resolution": {
+          "contract_version": 1,
+          "documents_total": 3,
+          "documents_resolved": 3,
+          "documents_reused": 0,
+          "reference_sites_resolved": 503,
+          "reference_sites_reused": 0,
+          "rust_package_scopes": 2,
+          "project_fallback_scopes": 0,
+          "empty_reference_documents": 1,
+          "dependency_inputs_hashed": 6,
+          "invalid_cache_entries": 0,
+          "forced_full": true,
+          "cache_available": true,
+          "no_resolution_required": false,
+          "resolution_ms": 31.988207999999997,
+          "equivalent_to_existing": true
+        },
+        "completion": {
+          "contract_version": 1,
+          "native_total_ms": 286.568584,
+          "commit_ms": 0.720583,
+          "metrics_write_ms": 2.744958,
+          "commit_included": true,
+          "process_lifetime_peak_rss_bytes": 212926464
+        }
+      }
+    },
+    {
+      "case": "manifest_metadata",
+      "result": {
+        "indexed": 0,
+        "unchanged": 3,
+        "unsupported": 0,
+        "parse_errors": [],
+        "index_revision": 4,
+        "revision_created": false,
+        "stage_timings": {
+          "contract_version": 1,
+          "run_id": "015372f7-1f6a-4243-9f54-7718a5a98d05",
+          "lock_wait_ms": 0.0011250000000000001,
+          "source_load_decode_ms": 1.8745420000000002,
+          "cache_parse_serialize_ms": 3.7131659999999997,
+          "cache_replace_ms": 0.001625,
+          "revision_publish_ms": 276.218542,
+          "transaction_body_ms": 282.213958,
+          "before_metrics_write_ms": 282.21524999999997,
+          "documents_loaded": 3,
+          "cache_hits": 3,
+          "cache_misses": 0,
+          "unsupported_documents": 0,
+          "parse_error_documents": 0,
+          "commit_included": false,
+          "metrics_write_included": false,
+          "embedding_fts_included": false
+        },
+        "resolution": {
+          "contract_version": 1,
+          "documents_total": 3,
+          "documents_resolved": 3,
+          "documents_reused": 0,
+          "reference_sites_resolved": 503,
+          "reference_sites_reused": 0,
+          "rust_package_scopes": 2,
+          "project_fallback_scopes": 0,
+          "empty_reference_documents": 1,
+          "dependency_inputs_hashed": 6,
+          "invalid_cache_entries": 0,
+          "forced_full": true,
+          "cache_available": true,
+          "no_resolution_required": false,
+          "resolution_ms": 32.155834,
+          "equivalent_to_existing": true
+        },
+        "completion": {
+          "contract_version": 1,
+          "native_total_ms": 285.928625,
+          "commit_ms": 0.771167,
+          "metrics_write_ms": 2.94175,
+          "commit_included": true,
+          "process_lifetime_peak_rss_bytes": 226164736
+        }
+      }
+    }
+  ],
+  "compiler_checks": [
+    {
+      "case": "cold_ingest_and_index",
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--lib",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-43york7x/sources/Cargo.toml"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "    Checking itoa v1.0.18 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-43york7x/sources)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.23s\n"
+    },
+    {
+      "case": "warm_noop",
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--lib",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-43york7x/sources/Cargo.toml"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.01s\n"
+    },
+    {
+      "case": "body",
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--lib",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-43york7x/sources/Cargo.toml"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "    Checking itoa v1.0.18 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-43york7x/sources)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s\n"
+    },
+    {
+      "case": "signature",
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--lib",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-43york7x/sources/Cargo.toml"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "    Checking itoa v1.0.18 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-43york7x/sources)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s\n"
+    },
+    {
+      "case": "manifest_metadata",
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--lib",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-43york7x/sources/Cargo.toml"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.01s\n"
+    }
+  ],
+  "production_database_used": false,
+  "performance_qualified": false,
+  "limitations": [
+    "small real-library workload; no representative scale claim",
+    "mock embeddings (16 dimensions), local FTS/document writes and code graph; no model cost",
+    "startup, source-copy, compiler and equivalence audits excluded from timing",
+    "sampled worker RSS is a lower bound, not exact physical operation peak",
+    "full binding control is an internal algorithm control, not a competitor",
+    "manifest_metadata changes metadata, not Cargo feature/dependency semantics",
+    "release profile is supplied by an external manifest; this runner checks identity, not compiler provenance"
+  ],
+  "index_status": {
+    "calls": 61,
+    "capabilities": {
+      "calls_and_value_references": "conservative_static_candidates",
+      "cpg": {
+        "available": false,
+        "reason": "backend_not_implemented"
+      },
+      "data_flow_slicing": false,
+      "graph_compute": {
+        "backend": "native_cpu",
+        "gpu_available": false,
+        "reason": "no_graph_gpu_backend",
+        "scope": "structural_graph_operations"
+      },
+      "inheritance": "partial_static",
+      "languages": [
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "rust"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "python"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "javascript"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "typescript"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "tsx"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "go"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "java"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "lua"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "ruby"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "csharp"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "perl"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "powershell"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "c"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "cpp"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "php"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "shell"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "css"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "html"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "sqlparser",
+          "language": "sql"
+        }
+      ],
+      "representative_precision_recall_verified": false,
+      "runtime_dispatch_verified": false,
+      "rust_receiver_typing": {
+        "backend": "captured_ast",
+        "compiler_verified": false,
+        "limitations": [
+          "complete_trait_solver_and_gats",
+          "custom_deref_and_index",
+          "macro_and_cfg_expansion",
+          "full_compiler_type_inference"
+        ],
+        "patterns": [
+          "declared_returns",
+          "method_chains",
+          "async_await",
+          "named_fields",
+          "arrays_slices_vec",
+          "standard_box_arc_rc",
+          "local_factory_initializers",
+          "explicit_function_type_arguments"
+        ],
+        "return_type_context": "declaration_document",
+        "runtime_dispatch_verified": false
+      },
+      "rust_trait_typing": {
+        "backend": "captured_ast",
+        "bound_receiver_targets": "trait_declarations_only",
+        "compiler_verified": false,
+        "limitations": [
+          "full_coherence_and_specialization",
+          "higher_ranked_and_generic_associated_types",
+          "complete_supertrait_and_trait_argument_inference",
+          "macro_cfg_and_target_configuration"
+        ],
+        "patterns": [
+          "cross_file_impl_owner",
+          "generic_impl_substitution",
+          "explicit_ufcs",
+          "generic_and_where_bounds",
+          "dyn_and_impl_trait_declarations",
+          "associated_type_projections",
+          "default_methods",
+          "inherent_precedence",
+          "explicit_ambiguity"
+        ],
+        "runtime_dispatch_verified": false
+      },
+      "slice": "bounded_structural_call_graph",
+      "sql_schema": "captured_migration_ddl_subset"
+    },
+    "capability": "static_syntax_bindings",
+    "cargo_targets": [
+      {
+        "cfg_evaluated": false,
+        "compiler_verified": false,
+        "complete": false,
+        "features_evaluated": false,
+        "kind": "lib",
+        "macro_expansion": false,
+        "manifest_hash": "709576f27664411f4878fa755e2ae92b5740ad500879cfad24757d0da6e3e94f",
+        "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-43york7x/sources/Cargo.toml",
+        "manifest_revision": 2,
+        "member_paths": [
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-43york7x/sources/src/lib.rs",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-43york7x/sources/src/u128_ext.rs"
+        ],
+        "member_paths_truncated": false,
+        "name": "itoa",
+        "observed_member_paths_total": 2,
+        "package": "itoa",
+        "project": "bench",
+        "required_features_unselected": false,
+        "root_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-43york7x/sources/src/lib.rs",
+        "scope": "captured_source_syntax",
+        "target_id": "ea4f18a482b2e9f1a6982408d3a617d90993e4ccca00e847501ed9a40b726be7"
+      }
+    ],
+    "cargo_targets_total": 1,
+    "cargo_targets_truncated": false,
+    "contract_version": 1,
+    "coverage": {
+      "available": true,
+      "evidence_limit": 50,
+      "evidence_truncated": false,
+      "extensions": {
+        "rs": 2,
+        "toml": 1
+      },
+      "fresh_documents": 3,
+      "indexable_documents": 3,
+      "parse_error_count": 0,
+      "source_documents": 3,
+      "stale_count": 0,
+      "unindexed_count": 0,
+      "unsupported_extension_categories": 0,
+      "unsupported_extensions_truncated": false,
+      "unsupported_is_not_parse_failure": true,
+      "unsupported_source_extensions": {}
+    },
+    "data_flow_slicing": false,
+    "filesystem_verified": false,
+    "index_rev": 4,
+    "observation_consistency": "single_read_transaction",
+    "observation_ms": 93.681208,
+    "parse_errors": [],
+    "policy_decisions": 10,
+    "project": "bench",
+    "quality": {
+      "binding_diagnostic_code_count": 0,
+      "binding_diagnostic_codes_truncated": false,
+      "binding_diagnostic_counts": {},
+      "chunks": {
+        "byte_budget_exhausted": false,
+        "bytes_inspected": 32554,
+        "dimension_mismatches": 0,
+        "dimensions": {
+          "16": 58
+        },
+        "examples": [],
+        "examples_truncated": false,
+        "invalid_vectors": 0,
+        "large_vectors_unmeasured": 0,
+        "long_text_unmeasured": 0,
+        "max_content_chars": 791,
+        "max_estimated_tokens": 244,
+        "norm_max": 1.000000107702755,
+        "norm_min": 0.9999998860814715,
+        "norm_p50": 0.9999999909231078,
+        "oversized_estimated_tokens": 0,
+        "problem_rows": 0,
+        "sample_truncated": false,
+        "sampled": 58,
+        "tokenized": 58,
+        "total": 58,
+        "unit_norm_vectors": 58,
+        "valid_vectors": 58,
+        "zero_vectors": 0
+      },
+      "docblocks": {
+        "available": true,
+        "compiler_or_rendered_semantics_verified": false,
+        "coverage": 0.3333333333333333,
+        "documented_symbols": 6,
+        "examined_symbols": 18,
+        "full_language_coverage_verified": false,
+        "observed_doc_facts": 6,
+        "scope": "supported_syntax_forms_in_fresh_scoped_symbols",
+        "truncated_segment_lists": 0,
+        "truncated_texts": 0,
+        "uninspected_symbols": 1
+      },
+      "embedding_identity": {
+        "available": true,
+        "configured_dims": 16,
+        "dims": 16,
+        "matches_config": true,
+        "model": "text-embedding-3-small",
+        "provider": "mock",
+        "scope": "corpus_global"
+      },
+      "exhaustive": false,
+      "fresh_code_files_without_definitions": 0,
+      "healthy": null,
+      "manifest_error_code": null,
+      "observed_checks_passed": true,
+      "problems": [],
+      "reference_resolution_counts": {
+        "resolved_static": 26,
+        "unresolved": 477
+      },
+      "sample_policy": {
+        "byte_budget": 4194304,
+        "limit": 128,
+        "max_chunk_tokens": 4096,
+        "max_text_chars": 16384,
+        "max_vector_bytes": 65536,
+        "order": "chunk_id",
+        "threshold_calibrated": false,
+        "token_counts_estimated": true
+      },
+      "signatures": {
+        "available": true,
+        "empty": 0,
+        "max_chars": 77,
+        "nonempty": 19,
+        "parameter_type_coverage": null,
+        "truncation_verified": false
+      },
+      "snapshot_error_code": null,
+      "unmeasured_checks": [
+        "semantic_precision_recall",
+        "runtime_dispatch",
+        "full_docblock_coverage",
+        "complete_parameter_types",
+        "index_commit_timing",
+        "index_failure_runs",
+        "per_project_index_timings"
+      ]
+    },
+    "resource_targets": {
+      "diagnostics": {
+        "binary_decoding_proven": false,
+        "fresh_targets": 0,
+        "hash_semantics": "decoded_stored_source_text",
+        "items": [],
+        "live_filesystem_checked": false,
+        "targets_total": 0,
+        "total": 0,
+        "truncated": false
+      },
+      "inventory_available": true,
+      "syntax_indexed": false
+    },
+    "retrieval": {
+      "lexical": {
+        "backend": "duckdb_bm25",
+        "chunks_generation": 7,
+        "configured": true,
+        "dirty": true,
+        "generation_gap": 7,
+        "index_generation": 0,
+        "rebuild_count": 1,
+        "scope": "corpus_global"
+      }
+    },
+    "runtime_dispatch_verified": false,
+    "rust_build_contexts": [
+      {
+        "available": true,
+        "cfg_flags": [
+          "debug_assertions",
+          "overflow_checks",
+          "target_has_atomic",
+          "target_has_atomic_load_store",
+          "target_has_reliable_f128",
+          "target_has_reliable_f16",
+          "target_has_reliable_f16_math",
+          "target_has_reliable_f16b",
+          "target_has_threads",
+          "target_thread_local",
+          "ub_checks",
+          "unix"
+        ],
+        "cfg_flags_total": 12,
+        "cfg_flags_truncated": false,
+        "cfg_values": {
+          "fmt_debug": [
+            "full"
+          ],
+          "panic": [
+            "unwind"
+          ],
+          "relocation_model": [
+            "pic"
+          ],
+          "target_abi": [
+            ""
+          ],
+          "target_arch": [
+            "aarch64"
+          ],
+          "target_endian": [
+            "little"
+          ],
+          "target_env": [
+            ""
+          ],
+          "target_family": [
+            "unix"
+          ],
+          "target_feature": [
+            "aes",
+            "crc",
+            "dit",
+            "dotprod",
+            "dpb",
+            "dpb2",
+            "fcma",
+            "fhm"
+          ],
+          "target_has_atomic": [
+            "128",
+            "16",
+            "32",
+            "64",
+            "8",
+            "ptr"
+          ],
+          "target_has_atomic_load_store": [
+            "128",
+            "16",
+            "32",
+            "64",
+            "8",
+            "ptr"
+          ],
+          "target_has_atomic_primitive_alignment": [
+            "128",
+            "16",
+            "32",
+            "64",
+            "8",
+            "ptr"
+          ],
+          "target_object_format": [
+            "mach-o"
+          ],
+          "target_os": [
+            "macos"
+          ],
+          "target_pointer_width": [
+            "64"
+          ],
+          "target_vendor": [
+            "apple"
+          ]
+        },
+        "cfg_values_truncated": true,
+        "compiler_verified": false,
+        "configuration_id": "f073f7fb177dda897a2e391f7ff5a964a5bd831f0cf78fc1348eab45b3d17b53",
+        "default_features": true,
+        "dependency_feature_forwarding_verified": true,
+        "disabled_conditions": 2,
+        "excluded_source_files": 0,
+        "features": [],
+        "features_total": 0,
+        "features_truncated": false,
+        "manifest_hash": "709576f27664411f4878fa755e2ae92b5740ad500879cfad24757d0da6e3e94f",
+        "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-real-index-bench-43york7x/sources/Cargo.toml",
+        "manifest_revision": 2,
+        "multi_target_instantiation": false,
+        "project": "bench",
+        "scope": "one_explicit_compilation_target_per_package",
+        "target_kind": "lib",
+        "target_name": null,
+        "target_triple": "aarch64-apple-darwin",
+        "unknown_conditions": 0
+      }
+    ],
+    "rust_build_contexts_total": 1,
+    "rust_build_contexts_truncated": false,
+    "sql_tables": 0,
+    "sql_usages": 0,
+    "stage_timings": {
+      "available": true,
+      "commit_measured": false,
+      "embedding_fts_measured": false,
+      "index_rev": 4,
+      "latest_successful_run": {
+        "index_rev": 4,
+        "metrics": {
+          "before_metrics_write_ms": 282.21524999999997,
+          "cache_hits": 3,
+          "cache_misses": 0,
+          "cache_parse_serialize_ms": 3.713166,
+          "cache_replace_ms": 0.001625,
+          "commit_included": false,
+          "contract_version": 1,
+          "documents_loaded": 3,
+          "embedding_fts_included": false,
+          "lock_wait_ms": 0.001125,
+          "metrics_write_included": false,
+          "parse_error_documents": 0,
+          "revision_publish_ms": 276.218542,
+          "run_id": "015372f7-1f6a-4243-9f54-7718a5a98d05",
+          "source_load_decode_ms": 1.874542,
+          "transaction_body_ms": 282.213958,
+          "unsupported_documents": 0
+        },
+        "recorded_at": "2026-10-26 02:57:10.872209",
+        "revision_created": false,
+        "run_id": "015372f7-1f6a-4243-9f54-7718a5a98d05",
+        "seq": 10
+      },
+      "mcp_queue_wait_measured": false,
+      "metrics_write_measured": false,
+      "publication_run": {
+        "index_rev": 4,
+        "metrics": {
+          "before_metrics_write_ms": 100.10475,
+          "cache_hits": 2,
+          "cache_misses": 1,
+          "cache_parse_serialize_ms": 4.227333,
+          "cache_replace_ms": 2.743458,
+          "commit_included": false,
+          "contract_version": 1,
+          "documents_loaded": 3,
+          "embedding_fts_included": false,
+          "lock_wait_ms": 0.0005,
+          "metrics_write_included": false,
+          "parse_error_documents": 0,
+          "revision_publish_ms": 91.158666,
+          "run_id": "b08cf83b-1c7a-421b-a0f3-a86a6b553bb2",
+          "source_load_decode_ms": 1.736875,
+          "transaction_body_ms": 100.104167,
+          "unsupported_documents": 0
+        },
+        "recorded_at": "2026-10-26 02:57:10.688135",
+        "revision_created": true,
+        "run_id": "b08cf83b-1c7a-421b-a0f3-a86a6b553bb2",
+        "seq": 9
+      },
+      "reason": null,
+      "scope": "corpus_global",
+      "successful_committed_runs_only": true
+    },
+    "stale_documents": [],
+    "state": "observed_checks_passed",
+    "style_facts": 0,
+    "symbols": 19,
+    "unindexed_documents": [],
+    "unresolved_calls": 49,
+    "versions": {
+      "index_format": 70,
+      "package": "0.1.0",
+      "store_schema": 25
+    },
+    "view": "current_captured_sources_and_fresh_subset_of_revision_inputs"
+  },
+  "isolated_stderr": "",
+  "original_source_unchanged": true,
+  "binary_unchanged": true
+}

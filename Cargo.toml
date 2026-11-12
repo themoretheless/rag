@@ -18,6 +18,8 @@ anyhow = "1"
 blake3 = "1"
 chrono = { version = "0.4", features = ["serde"] }
 duckdb = { version = "1", features = ["bundled"] }
+lin = { git = "https://github.com/themoretheless/lin", branch = "release", version = "0.6.0", features = ["compress-zstd", "parallel"] }
+rusqlite = { version = "0.42", features = ["bundled"] }
 ring = "0.17"
 # Same major as rmcp's re-export so Cargo.lock holds one schemars version.
 schemars = "1"
@@ -37,10 +39,13 @@ rag-code-intel = { path = "crates/rag-code-intel", version = "0.1.0" }
 libc = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
+[workspace.lints.clippy]
+collapsible_if = "allow"
+
 [package]
 name = "rag-mcp"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 # MSRV: egui/eframe (rag-mcp-ui) declare rust-version 1.95, the highest in
 # Cargo.lock, so the workspace uses that floor. CI builds on stable (1.97 at time
 # of writing) and the `msrv` job in checks.yml runs `cargo check` on 1.95.
@@ -65,6 +70,17 @@ path = "src/bin/ingest_file.rs"
 name = "rag_gate"
 path = "src/bin/rag_gate.rs"
 
+[[bin]]
+name = "migrate_to_lin"
+path = "src/bin/migrate_to_lin.rs"
+
+[[bin]]
+name = "bench_duckdb_vs_lin"
+path = "src/bin/bench_duckdb_vs_lin.rs"
+
+[lints]
+workspace = true
+
 [dependencies]
 tempfile = { workspace = true }
 clap = { workspace = true }
@@ -78,6 +94,8 @@ axum = "0.8"
 blake3 = { workspace = true }
 chrono = { workspace = true }
 duckdb = { workspace = true }
+lin = { workspace = true }
+rusqlite = { workspace = true }
 notify = "8"
 reqwest = { workspace = true }
 ring = { workspace = true }

@@ -8,6 +8,8 @@
 *.duckdb
 *.duckdb.wal
 *.bak-*
+*.lin
+*.lin/
 
 # Generated graph export (export_graph_snapshot / rag-mcp-ui export).
 /graph.json

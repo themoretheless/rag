@@ -1,0 +1,12 @@
+{
+  "code_quality_capture": {
+    "path": "/private/tmp/rag-associated-bounds-20261026/qualified/bin/code_quality_capture",
+    "sha256": "b3e36f5931b41a594cda6cf6ecd01f7a632b6e165dc5193fd642a210af6e30da",
+    "size_bytes": 174011272
+  },
+  "rag-mcp": {
+    "path": "/private/tmp/rag-associated-bounds-20261026/qualified/bin/rag-mcp",
+    "sha256": "17ffb90de46f54298382f9cbba95a91b3bc9be3709a1af1628cc8e45d1e01b30",
+    "size_bytes": 329731208
+  }
+}

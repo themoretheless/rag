@@ -28,8 +28,8 @@ impl crate::llm::ChatCompleter for ScriptedLlm {
 #[tokio::test]
 async fn llm_planner_keeps_whitelisted_actions_and_rejects_the_rest() {
     let llm = ScriptedLlm(
-            "```json\n{\"actions\": [{\"action\": \"vacuum\", \"reason\": \"wal\"}, {\"action\": \"drop_table\"}], \"notes\": \"n\"}\n```",
-        );
+        "```json\n{\"actions\": [{\"action\": \"vacuum\", \"reason\": \"wal\"}, {\"action\": \"drop_table\"}], \"notes\": \"n\"}\n```",
+    );
     let config = Config {
         llm_enabled: true,
         ..Config::for_tests()

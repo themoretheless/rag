@@ -1,18 +1,25 @@
-//! Precise cleanup for legacy source-document duplicates.
+//! Precise cleanup for legacy source-document duplicates over `lin`.
 //!
 //! This is intentionally narrower than content-hash deduplication: a group is
 //! actionable only when active raw documents share the same non-empty
 //! `(source_file, content_hash)` and exactly one document has the canonical
 //! `file://<source_file>` URI. All discovery, graph rewiring, manifest repair,
-//! and deletion happens in one DuckDB transaction.
+//! and deletion happens in one `lin` transaction.
 
+use std::collections::{BTreeMap, HashMap, HashSet};
+
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
+
+use super::lin_engine::{
+    LinReader, LinWriter, RecBuilder, cell_f64, cell_nonempty_string, cell_opt_string, cell_str,
+    cell_string, cell_ts_or_now,
+};
 use super::rows;
-use super::store::Maintenance;
-use super::store::{delete_document_locked, DOCUMENT_SELECT};
+use super::store::{Store, delete_document_locked};
 use crate::error::{AppError, Result};
 use crate::models::Document;
-use duckdb::{params, params_from_iter, Connection};
-use serde::{Deserialize, Serialize};
+use crate::util::format_db_timestamp;
 
 /// Keep MCP responses bounded even when a damaged store contains a very large
 /// duplicate population. Totals in [`SourceDuplicateCleanupReport`] always
@@ -102,10 +109,30 @@ pub struct SourceDuplicateCleanupReport {
     pub groups: Vec<SourceDuplicateGroup>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct GroupKey {
     source_file: String,
     content_hash: String,
+}
+
+#[derive(Debug, Clone)]
+struct RawMemberBase {
+    id: String,
+    uri: String,
+    title: String,
+    source_file: String,
+    content_hash: String,
+    canonical_uri_match: bool,
+}
+
+#[derive(Debug, Clone)]
+struct EnrichedMember {
+    base: RawMemberBase,
+    chunks: u64,
+    wiki_references: u64,
+    collection_references: u64,
+    foreign_source_manifest_references: u64,
+    revisions: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -124,6 +151,7 @@ struct GroupMetrics {
     source_manifest_owner_is_member: bool,
     actionable: bool,
     candidate_count: u64,
+    members: Vec<EnrichedMember>,
 }
 
 #[derive(Debug, Clone)]
@@ -132,366 +160,497 @@ struct BatchSelection {
     candidate_ids: Vec<String>,
 }
 
-/// Classify every same-source/same-hash group inside DuckDB. The Rust side only
-/// receives scalar totals plus explicitly limited candidate/detail rows.
-const CLASSIFIED_GROUPS_CTE: &str = r#"
-WITH
-raw_documents AS (
-  SELECT
-    d.id,
-    d.uri,
-    d.title,
-    d.source_file,
-    d.content_hash,
-    d.uri = ('file://' || d.source_file) AS canonical_uri_match,
-    source_owner.document_id AS source_manifest_document_id
-  FROM documents d
-  LEFT JOIN source_manifest source_owner ON source_owner.canonical_path = d.source_file
-  WHERE LOWER(COALESCE(NULLIF(TRIM(d.layer), ''), 'raw')) = 'raw'
-    AND LOWER(COALESCE(NULLIF(TRIM(d.status), ''), 'active')) = 'active'
-    AND d.source_file IS NOT NULL AND TRIM(d.source_file) <> ''
-    AND d.content_hash IS NOT NULL AND TRIM(d.content_hash) <> ''
-),
-duplicate_members_base AS (
-  SELECT member.*
-  FROM raw_documents member
-  JOIN (
-    SELECT source_file, content_hash
-    FROM raw_documents
-    GROUP BY source_file, content_hash
-    HAVING COUNT(*) > 1
-  ) duplicate_group USING (source_file, content_hash)
-),
-chunk_counts AS (
-  SELECT chunk.document_id, COUNT(*)::BIGINT AS chunks
-  FROM chunks chunk
-  JOIN duplicate_members_base member ON member.id = chunk.document_id
-  GROUP BY chunk.document_id
-),
-wiki_reference_rows AS (
-  SELECT entry.id AS row_id, entry.document_id AS referenced_document_id
-  FROM wiki_index entry
-  JOIN duplicate_members_base member ON member.id = entry.document_id
-  UNION
-  SELECT entry.id AS row_id, entry.page_id AS referenced_document_id
-  FROM wiki_index entry
-  JOIN duplicate_members_base member ON member.id = entry.page_id
-),
-wiki_reference_counts AS (
-  SELECT referenced_document_id AS document_id, COUNT(*)::BIGINT AS reference_count
-  FROM wiki_reference_rows
-  GROUP BY referenced_document_id
-),
-collection_entry_reference_rows AS (
-  SELECT entry.collection_id, entry.document_id AS entry_document_id,
-         entry.document_id AS referenced_document_id
-  FROM collection_entries entry
-  JOIN duplicate_members_base member ON member.id = entry.document_id
-  UNION
-  SELECT entry.collection_id, entry.document_id AS entry_document_id,
-         entry.parent_document_id AS referenced_document_id
-  FROM collection_entries entry
-  JOIN duplicate_members_base member ON member.id = entry.parent_document_id
-),
-collection_entry_reference_counts AS (
-  SELECT referenced_document_id AS document_id, COUNT(*)::BIGINT AS reference_count
-  FROM collection_entry_reference_rows
-  GROUP BY referenced_document_id
-),
-collection_dependency_reference_rows AS (
-  SELECT dependency.collection_id, dependency.document_id,
-         dependency.depends_on_document_id,
-         dependency.document_id AS referenced_document_id
-  FROM collection_dependencies dependency
-  JOIN duplicate_members_base member ON member.id = dependency.document_id
-  UNION
-  SELECT dependency.collection_id, dependency.document_id,
-         dependency.depends_on_document_id,
-         dependency.depends_on_document_id AS referenced_document_id
-  FROM collection_dependencies dependency
-  JOIN duplicate_members_base member ON member.id = dependency.depends_on_document_id
-),
-collection_dependency_reference_counts AS (
-  SELECT referenced_document_id AS document_id, COUNT(*)::BIGINT AS reference_count
-  FROM collection_dependency_reference_rows
-  GROUP BY referenced_document_id
-),
-collection_reference_counts AS (
-  SELECT document_id, SUM(reference_count)::BIGINT AS reference_count
-  FROM (
-    SELECT document_id, reference_count FROM collection_entry_reference_counts
-    UNION ALL
-    SELECT document_id, reference_count FROM collection_dependency_reference_counts
-  ) reference_counts_by_table
-  GROUP BY document_id
-),
-foreign_manifest_reference_counts AS (
-  SELECT member.id AS document_id, COUNT(*)::BIGINT AS reference_count
-  FROM duplicate_members_base member
-  JOIN source_manifest manifest ON manifest.document_id = member.id
-  WHERE manifest.canonical_path <> member.source_file
-  GROUP BY member.id
-),
-revision_counts AS (
-  SELECT revision.document_id, COUNT(*)::BIGINT AS revisions
-  FROM document_revisions revision
-  JOIN duplicate_members_base member ON member.id = revision.document_id
-  GROUP BY revision.document_id
-),
-active_raw AS (
-  SELECT
-    member.id,
-    member.uri,
-    member.title,
-    member.source_file,
-    member.content_hash,
-    member.canonical_uri_match,
-    COALESCE(chunks.chunks, 0)::BIGINT AS chunks,
-    COALESCE(wiki_refs.reference_count, 0)::BIGINT AS wiki_references,
-    COALESCE(collection_refs.reference_count, 0)::BIGINT AS collection_references,
-    COALESCE(foreign_manifest_refs.reference_count, 0)::BIGINT
-      AS foreign_source_manifest_references,
-    COALESCE(revisions.revisions, 0)::BIGINT AS revisions,
-    member.source_manifest_document_id
-  FROM duplicate_members_base member
-  LEFT JOIN chunk_counts chunks ON chunks.document_id = member.id
-  LEFT JOIN wiki_reference_counts wiki_refs ON wiki_refs.document_id = member.id
-  LEFT JOIN collection_reference_counts collection_refs ON collection_refs.document_id = member.id
-  LEFT JOIN foreign_manifest_reference_counts foreign_manifest_refs
-    ON foreign_manifest_refs.document_id = member.id
-  LEFT JOIN revision_counts revisions ON revisions.document_id = member.id
-),
-grouped AS (
-  SELECT
-    source_file,
-    content_hash,
-    COUNT(*)::BIGINT AS document_count,
-    SUM(CASE WHEN canonical_uri_match THEN 1 ELSE 0 END)::BIGINT AS canonical_count,
-    MAX(CASE WHEN canonical_uri_match THEN id END) AS survivor_document_id,
-    MAX(source_manifest_document_id) AS source_manifest_document_id,
-    SUM(CASE WHEN NOT canonical_uri_match THEN 1 ELSE 0 END)::BIGINT
-      AS raw_candidate_count,
-    SUM(CASE WHEN canonical_uri_match THEN chunks ELSE 0 END)::BIGINT
-      AS canonical_chunks,
-    SUM(CASE WHEN NOT canonical_uri_match THEN chunks ELSE 0 END)::BIGINT
-      AS candidate_chunks,
-    SUM(CASE WHEN NOT canonical_uri_match THEN wiki_references ELSE 0 END)::BIGINT
-      AS candidate_wiki_references,
-    SUM(CASE WHEN NOT canonical_uri_match THEN collection_references ELSE 0 END)::BIGINT
-      AS candidate_collection_references,
-    SUM(CASE WHEN NOT canonical_uri_match
-             THEN foreign_source_manifest_references ELSE 0 END)::BIGINT
-      AS candidate_foreign_manifest_references,
-    SUM(CASE WHEN NOT canonical_uri_match THEN revisions ELSE 0 END)::BIGINT
-      AS candidate_revisions,
-    SUM(CASE WHEN source_manifest_document_id = id THEN 1 ELSE 0 END)::BIGINT
-      AS source_manifest_owner_members
-  FROM active_raw
-  GROUP BY source_file, content_hash
-),
-classified AS (
-  SELECT
-    *,
-    source_manifest_document_id IS NULL OR source_manifest_owner_members > 0
-      AS source_manifest_owner_is_member,
-    canonical_count = 1
-      AND raw_candidate_count > 0
-      AND NOT (canonical_chunks = 0 AND candidate_chunks > 0)
-      AND candidate_wiki_references = 0
-      AND candidate_collection_references = 0
-      AND candidate_foreign_manifest_references = 0
-      AND candidate_revisions = 0
-      AND (source_manifest_document_id IS NULL OR source_manifest_owner_members > 0)
-      AS actionable
-  FROM grouped
-),
-group_metrics AS (
-  SELECT
-    *,
-    CASE WHEN actionable THEN raw_candidate_count ELSE 0 END::BIGINT AS candidate_count
-  FROM classified
-)
-"#;
-
-#[derive(Debug, Clone, Copy, Default)]
-struct CleanupTotals {
-    matched_groups: usize,
-    actionable_groups: usize,
-    candidate_count: u64,
-}
-
-fn load_cleanup_totals(conn: &Connection) -> Result<CleanupTotals> {
-    let sql = format!(
-        r#"
-        {CLASSIFIED_GROUPS_CTE}
-        SELECT
-          COUNT(*)::BIGINT,
-          COALESCE(SUM(CASE WHEN actionable THEN 1 ELSE 0 END), 0)::BIGINT,
-          COALESCE(SUM(candidate_count), 0)::BIGINT
-        FROM group_metrics
-        "#
-    );
-    let (matched_groups, actionable_groups, candidate_count) = conn.query_row(&sql, [], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, i64>(1)?,
-            row.get::<_, i64>(2)?,
-        ))
-    })?;
-    Ok(CleanupTotals {
-        matched_groups: nonnegative(matched_groups) as usize,
-        actionable_groups: nonnegative(actionable_groups) as usize,
-        candidate_count: nonnegative(candidate_count),
+fn is_active_raw_source_doc(row: &lin::Row) -> Option<RawMemberBase> {
+    let layer = cell_str(row, "layer")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("raw");
+    if !layer.eq_ignore_ascii_case("raw") {
+        return None;
+    }
+    let status = cell_str(row, "status")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("active");
+    if !status.eq_ignore_ascii_case("active") {
+        return None;
+    }
+    let source_file = cell_str(row, "source_file").filter(|s| !s.trim().is_empty())?;
+    let content_hash = cell_str(row, "content_hash").filter(|s| !s.trim().is_empty())?;
+    let uri = cell_string(row, "uri");
+    let canonical_uri_match = uri == format!("file://{source_file}");
+    Some(RawMemberBase {
+        id: cell_string(row, "id"),
+        uri,
+        title: cell_string(row, "title"),
+        source_file: source_file.to_string(),
+        content_hash: content_hash.to_string(),
+        canonical_uri_match,
     })
 }
 
-fn load_batch(conn: &Connection, max_candidates: usize) -> Result<Vec<BatchSelection>> {
-    let sql = format!(
-        r#"
-        {CLASSIFIED_GROUPS_CTE}
-        SELECT
-          metrics.source_file,
-          metrics.content_hash,
-          metrics.document_count,
-          metrics.canonical_count,
-          metrics.survivor_document_id,
-          metrics.source_manifest_document_id,
-          metrics.raw_candidate_count,
-          metrics.canonical_chunks,
-          metrics.candidate_chunks,
-          metrics.candidate_wiki_references,
-          metrics.candidate_collection_references,
-          metrics.candidate_foreign_manifest_references,
-          metrics.candidate_revisions,
-          metrics.source_manifest_owner_is_member,
-          metrics.actionable,
-          metrics.candidate_count,
-          member.id
-        FROM group_metrics metrics
-        JOIN active_raw member USING (source_file, content_hash)
-        WHERE metrics.actionable AND NOT member.canonical_uri_match
-        ORDER BY metrics.source_file ASC, metrics.content_hash ASC, member.id ASC
-        LIMIT ?
-        "#
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query([sql_limit(max_candidates)])?;
-    let mut batch = Vec::<BatchSelection>::new();
-    crate::db::rows::visit_rows(&mut rows, |row| {
-        let metrics = group_metrics_from_row(row)?;
-        let candidate_id: String = row.get(16)?;
-        if batch
-            .last()
-            .is_none_or(|selection| selection.metrics.key != metrics.key)
-        {
-            batch.push(BatchSelection {
-                metrics,
-                candidate_ids: Vec::new(),
+fn classify_all_groups(r: &impl LinReader) -> Result<(u64, Vec<GroupMetrics>)> {
+    let mut scanned_active_raw_documents = 0u64;
+    let mut by_key: BTreeMap<GroupKey, Vec<RawMemberBase>> = BTreeMap::new();
+
+    r.scan_each_projected(
+        "documents",
+        &[
+            "id",
+            "uri",
+            "title",
+            "layer",
+            "status",
+            "source_file",
+            "content_hash",
+        ],
+        |row| {
+            if let Some(member) = is_active_raw_source_doc(row) {
+                scanned_active_raw_documents += 1;
+                let key = GroupKey {
+                    source_file: member.source_file.clone(),
+                    content_hash: member.content_hash.clone(),
+                };
+                by_key.entry(key).or_default().push(member);
+            }
+            Ok(true)
+        },
+    )?;
+
+    by_key.retain(|_, members| members.len() > 1);
+    if by_key.is_empty() {
+        return Ok((scanned_active_raw_documents, Vec::new()));
+    }
+
+    let mut duplicate_ids: HashSet<String> = HashSet::new();
+    for members in by_key.values() {
+        for m in members {
+            duplicate_ids.insert(m.id.clone());
+        }
+    }
+
+    // Wiki references (UNION over row_id + referenced_document_id)
+    let mut wiki_refs: HashMap<String, HashSet<String>> = HashMap::new();
+    r.scan_each("wiki_index", |row| {
+        let rid = cell_string(row, "id");
+        if let Some(did) = cell_nonempty_string(row, "document_id") {
+            if duplicate_ids.contains(&did) {
+                wiki_refs.entry(did).or_default().insert(rid.clone());
+            }
+        }
+        if let Some(pid) = cell_nonempty_string(row, "page_id") {
+            if duplicate_ids.contains(&pid) {
+                wiki_refs.entry(pid).or_default().insert(rid);
+            }
+        }
+        Ok(true)
+    })?;
+
+    // Collection entry references
+    let mut col_entry_refs: HashMap<String, HashSet<(String, String)>> = HashMap::new();
+    r.scan_each("collection_entries", |row| {
+        let cid = cell_string(row, "collection_id");
+        let edid = cell_string(row, "document_id");
+        if duplicate_ids.contains(&edid) {
+            col_entry_refs
+                .entry(edid.clone())
+                .or_default()
+                .insert((cid.clone(), edid.clone()));
+        }
+        if let Some(parent_id) = cell_nonempty_string(row, "parent_document_id") {
+            if duplicate_ids.contains(&parent_id) {
+                col_entry_refs
+                    .entry(parent_id)
+                    .or_default()
+                    .insert((cid, edid));
+            }
+        }
+        Ok(true)
+    })?;
+
+    // Collection dependency references
+    let mut col_dep_refs: HashMap<String, HashSet<(String, String, String)>> = HashMap::new();
+    r.scan_each("collection_dependencies", |row| {
+        let cid = cell_string(row, "collection_id");
+        let did = cell_string(row, "document_id");
+        let dep = cell_string(row, "depends_on_document_id");
+        if duplicate_ids.contains(&did) {
+            col_dep_refs.entry(did.clone()).or_default().insert((
+                cid.clone(),
+                did.clone(),
+                dep.clone(),
+            ));
+        }
+        if duplicate_ids.contains(&dep) {
+            col_dep_refs.entry(dep).or_default().insert((
+                cid,
+                did,
+                cell_string(row, "depends_on_document_id"),
+            ));
+        }
+        Ok(true)
+    })?;
+
+    // Source manifest map (canonical_path -> document_id, and document_id -> paths)
+    let mut manifest_by_path: HashMap<String, String> = HashMap::new();
+    let mut manifest_paths_by_doc: HashMap<String, Vec<String>> = HashMap::new();
+    r.scan_each("source_manifest", |row| {
+        let cp = cell_string(row, "canonical_path");
+        let did = cell_string(row, "document_id");
+        manifest_by_path.insert(cp.clone(), did.clone());
+        if duplicate_ids.contains(&did) {
+            manifest_paths_by_doc.entry(did).or_default().push(cp);
+        }
+        Ok(true)
+    })?;
+
+    let mut all_metrics = Vec::with_capacity(by_key.len());
+    for (key, mut raw_members) in by_key {
+        raw_members.sort_by(|a, b| {
+            b.canonical_uri_match
+                .cmp(&a.canonical_uri_match)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+
+        let source_manifest_document_id = manifest_by_path.get(&key.source_file).cloned();
+        let mut enriched = Vec::with_capacity(raw_members.len());
+        for base in raw_members {
+            let mut chunks = 0u64;
+            r.for_each_by_eq_projected("chunks", "document_id", &base.id, Some(&["id"]), |_| {
+                chunks += 1;
+                Ok(true)
+            })?;
+            let mut revisions = 0u64;
+            r.for_each_by_eq_projected(
+                "document_revisions",
+                "document_id",
+                &base.id,
+                Some(&["id"]),
+                |_| {
+                    revisions += 1;
+                    Ok(true)
+                },
+            )?;
+            let wiki_references = wiki_refs.get(&base.id).map_or(0, |s| s.len() as u64);
+            let collection_references = col_entry_refs.get(&base.id).map_or(0, |s| s.len() as u64)
+                + col_dep_refs.get(&base.id).map_or(0, |s| s.len() as u64);
+            let foreign_source_manifest_references =
+                manifest_paths_by_doc.get(&base.id).map_or(0, |paths| {
+                    paths.iter().filter(|p| *p != &base.source_file).count() as u64
+                });
+
+            enriched.push(EnrichedMember {
+                base,
+                chunks,
+                wiki_references,
+                collection_references,
+                foreign_source_manifest_references,
+                revisions,
             });
         }
-        batch
-            .last_mut()
-            .expect("batch contains current group")
-            .candidate_ids
-            .push(candidate_id);
-        Ok(())
-    })?;
-    Ok(batch)
+
+        let document_count = enriched.len() as u64;
+        let mut canonical_count = 0u64;
+        let mut survivor_document_id: Option<String> = None;
+        let mut raw_candidate_count = 0u64;
+        let mut canonical_chunks = 0u64;
+        let mut candidate_chunks = 0u64;
+        let mut candidate_wiki_references = 0u64;
+        let mut candidate_collection_references = 0u64;
+        let mut candidate_foreign_manifest_references = 0u64;
+        let mut candidate_revisions = 0u64;
+        let mut source_manifest_owner_members = 0u64;
+
+        for m in &enriched {
+            if m.base.canonical_uri_match {
+                canonical_count += 1;
+                if survivor_document_id
+                    .as_ref()
+                    .is_none_or(|prev| &m.base.id > prev)
+                {
+                    survivor_document_id = Some(m.base.id.clone());
+                }
+                canonical_chunks += m.chunks;
+            } else {
+                raw_candidate_count += 1;
+                candidate_chunks += m.chunks;
+                candidate_wiki_references += m.wiki_references;
+                candidate_collection_references += m.collection_references;
+                candidate_foreign_manifest_references += m.foreign_source_manifest_references;
+                candidate_revisions += m.revisions;
+            }
+            if source_manifest_document_id.as_deref() == Some(m.base.id.as_str()) {
+                source_manifest_owner_members += 1;
+            }
+        }
+
+        let source_manifest_owner_is_member =
+            source_manifest_document_id.is_none() || source_manifest_owner_members > 0;
+        let actionable = canonical_count == 1
+            && raw_candidate_count > 0
+            && !(canonical_chunks == 0 && candidate_chunks > 0)
+            && candidate_wiki_references == 0
+            && candidate_collection_references == 0
+            && candidate_foreign_manifest_references == 0
+            && candidate_revisions == 0
+            && source_manifest_owner_is_member;
+        let candidate_count = if actionable { raw_candidate_count } else { 0 };
+
+        all_metrics.push(GroupMetrics {
+            key,
+            document_count,
+            canonical_count,
+            survivor_document_id,
+            source_manifest_document_id,
+            canonical_chunks,
+            candidate_chunks,
+            candidate_wiki_references,
+            candidate_collection_references,
+            candidate_foreign_manifest_references,
+            candidate_revisions,
+            source_manifest_owner_is_member,
+            actionable,
+            candidate_count,
+            members: enriched,
+        });
+    }
+
+    Ok((scanned_active_raw_documents, all_metrics))
 }
 
-fn load_report_groups(
-    conn: &Connection,
+impl Store {
+    /// Preview or atomically remove legacy raw documents that duplicate the
+    /// canonical `file://<source_file>` document.
+    pub fn cleanup_source_duplicates(
+        &self,
+        dry_run: bool,
+        confirm: bool,
+        max_candidates: usize,
+    ) -> Result<SourceDuplicateCleanupReport> {
+        if max_candidates == 0 {
+            return Err(AppError::config(
+                "cleanup_source_duplicates max_candidates must be >= 1",
+            ));
+        }
+        if !dry_run && !confirm {
+            return Err(AppError::config(
+                "cleanup_source_duplicates apply requires confirm=true",
+            ));
+        }
+
+        self.with_tx(|tx| {
+            let (scanned_active_raw_documents, all_metrics) = classify_all_groups(tx)?;
+            let matched_groups = all_metrics.len();
+            let actionable_groups = all_metrics.iter().filter(|m| m.actionable).count();
+            let total_candidate_count: u64 = all_metrics.iter().map(|m| m.candidate_count).sum();
+
+            // Select bounded batch in (source_file, content_hash, member.id) order.
+            let mut batch: Vec<BatchSelection> = Vec::new();
+            let mut remaining_budget = max_candidates;
+            for metric in &all_metrics {
+                if !metric.actionable || remaining_budget == 0 {
+                    continue;
+                }
+                let mut cands: Vec<String> = metric
+                    .members
+                    .iter()
+                    .filter(|m| !m.base.canonical_uri_match)
+                    .map(|m| m.base.id.clone())
+                    .collect();
+                cands.sort();
+                if cands.len() > remaining_budget {
+                    cands.truncate(remaining_budget);
+                }
+                if !cands.is_empty() {
+                    remaining_budget -= cands.len();
+                    batch.push(BatchSelection {
+                        metrics: metric.clone(),
+                        candidate_ids: cands,
+                    });
+                }
+            }
+
+            let batch_candidates: u64 = batch.iter().map(|s| s.candidate_ids.len() as u64).sum();
+            let fully_drained_groups = batch
+                .iter()
+                .filter(|s| s.candidate_ids.len() as u64 >= s.metrics.candidate_count)
+                .count();
+            let remaining_candidates = total_candidate_count.saturating_sub(batch_candidates);
+            let remaining_groups = actionable_groups.saturating_sub(fully_drained_groups);
+            let cap_exceeded = remaining_candidates > 0;
+
+            let groups = build_report_groups(tx, &batch, &all_metrics)?;
+            let reported_groups = groups.len();
+            let groups_truncated = reported_groups < matched_groups;
+            let reported_members = groups.iter().map(|g| g.members.len()).sum();
+            let members_truncated = groups_truncated || groups.iter().any(|g| g.members_truncated);
+
+            let mut report = SourceDuplicateCleanupReport {
+                success: true,
+                errors: Vec::new(),
+                dry_run,
+                confirmed: confirm,
+                max_candidates,
+                scanned_active_raw_documents,
+                matched_groups,
+                actionable_groups,
+                skipped_groups: matched_groups.saturating_sub(actionable_groups),
+                candidate_count: total_candidate_count,
+                batch_groups: batch.len(),
+                batch_candidates,
+                remaining_groups,
+                remaining_candidates,
+                cap_exceeded,
+                applied: false,
+                deleted_documents: 0,
+                rewired_graph_edge_endpoints: 0,
+                deduplicated_graph_edges: 0,
+                removed_graph_self_edges: 0,
+                rewired_kg_facts: 0,
+                rebound_source_manifests: 0,
+                reported_groups,
+                groups_truncated,
+                reported_members,
+                members_truncated,
+                groups,
+            };
+
+            let now_s = format_db_timestamp(Utc::now());
+            for selection in if dry_run { &[][..] } else { batch.as_slice() } {
+                let survivor_id = selection
+                    .metrics
+                    .survivor_document_id
+                    .as_deref()
+                    .expect("actionable group has one survivor");
+                let survivor = load_document_locked(tx, survivor_id)?.ok_or_else(|| {
+                    AppError::conflict(format!(
+                        "canonical source document disappeared during cleanup: {survivor_id}"
+                    ))
+                })?;
+                let candidate_ids: Vec<&str> =
+                    selection.candidate_ids.iter().map(String::as_str).collect();
+
+                let graph = rewire_graph_to_survivor(tx, &survivor, &candidate_ids)?;
+                report.rewired_graph_edge_endpoints += graph.rewired_endpoints;
+                report.deduplicated_graph_edges += graph.deduplicated_edges;
+                report.removed_graph_self_edges += graph.removed_self_edges;
+
+                for &candidate_id in &candidate_ids {
+                    report.rewired_kg_facts += tx.update_where(
+                        "kg_facts",
+                        lin::query::pred::eq("source_document_id", candidate_id),
+                        RecBuilder::new()
+                            .str("source_document_id", survivor_id)
+                            .str("updated_at", &now_s)
+                            .build(),
+                    )? as u64;
+                }
+
+                let sm_pred = lin::query::pred::and(
+                    lin::query::pred::eq(
+                        "canonical_path",
+                        selection.metrics.key.source_file.as_str(),
+                    ),
+                    lin::query::pred::ne("document_id", survivor_id),
+                );
+                report.rebound_source_manifests += tx.update_where(
+                    "source_manifest",
+                    sm_pred,
+                    RecBuilder::new().str("document_id", survivor_id).build(),
+                )? as u64;
+
+                for candidate_id in candidate_ids {
+                    if delete_document_locked(tx, candidate_id)? {
+                        report.deleted_documents += 1;
+                    } else {
+                        return Err(AppError::conflict(format!(
+                            "duplicate candidate disappeared during cleanup: {candidate_id}"
+                        )));
+                    }
+                }
+            }
+
+            report.applied = !dry_run && report.deleted_documents > 0;
+            Ok(report)
+        })
+    }
+}
+
+fn build_report_groups(
+    r: &impl LinReader,
     batch: &[BatchSelection],
-    matched_groups: usize,
+    all_metrics: &[GroupMetrics],
 ) -> Result<Vec<SourceDuplicateGroup>> {
-    let mut metrics = batch
+    let mut selected_metrics: Vec<GroupMetrics> = batch
         .iter()
         .take(REPORT_GROUP_LIMIT)
-        .map(|selection| selection.metrics.clone())
-        .collect::<Vec<_>>();
-    if metrics.len() < REPORT_GROUP_LIMIT && metrics.len() < matched_groups {
-        for diagnostic in load_group_metrics_limited(conn, REPORT_GROUP_LIMIT)? {
-            if metrics
-                .iter()
-                .any(|existing| existing.key == diagnostic.key)
-            {
+        .map(|s| s.metrics.clone())
+        .collect();
+    if selected_metrics.len() < REPORT_GROUP_LIMIT && selected_metrics.len() < all_metrics.len() {
+        for diagnostic in all_metrics.iter().take(REPORT_GROUP_LIMIT) {
+            if selected_metrics.iter().any(|e| e.key == diagnostic.key) {
                 continue;
             }
-            metrics.push(diagnostic);
-            if metrics.len() == REPORT_GROUP_LIMIT {
+            selected_metrics.push(diagnostic.clone());
+            if selected_metrics.len() == REPORT_GROUP_LIMIT {
                 break;
             }
         }
     }
 
     let mut member_budget = REPORT_MEMBER_LIMIT;
-    let mut groups = Vec::with_capacity(metrics.len());
-    for metric in metrics {
+    let mut groups = Vec::with_capacity(selected_metrics.len());
+    for metric in selected_metrics {
         let batch_candidate_count = batch
             .iter()
-            .find(|selection| selection.metrics.key == metric.key)
-            .map(|selection| selection.candidate_ids.len() as u64)
+            .find(|s| s.metrics.key == metric.key)
+            .map(|s| s.candidate_ids.len() as u64)
             .unwrap_or(0);
-        let members = load_group_members(conn, &metric.key, member_budget)?;
+        let members = materialize_group_members(r, &metric.members, member_budget)?;
         member_budget = member_budget.saturating_sub(members.len());
         groups.push(group_from_metrics(metric, batch_candidate_count, members));
     }
     Ok(groups)
 }
 
-fn load_group_metrics_limited(conn: &Connection, limit: usize) -> Result<Vec<GroupMetrics>> {
-    let sql = format!(
-        r#"
-        {CLASSIFIED_GROUPS_CTE}
-        SELECT
-          source_file,
-          content_hash,
-          document_count,
-          canonical_count,
-          survivor_document_id,
-          source_manifest_document_id,
-          raw_candidate_count,
-          canonical_chunks,
-          candidate_chunks,
-          candidate_wiki_references,
-          candidate_collection_references,
-          candidate_foreign_manifest_references,
-          candidate_revisions,
-          source_manifest_owner_is_member,
-          actionable,
-          candidate_count
-        FROM group_metrics
-        ORDER BY source_file ASC, content_hash ASC
-        LIMIT ?
-        "#
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let metrics = crate::db::rows::query_vec(&mut stmt, [sql_limit(limit)], |row| {
-        group_metrics_from_row(row)
-    })?;
-    Ok(metrics)
-}
-
-fn group_metrics_from_row(row: &duckdb::Row<'_>) -> Result<GroupMetrics> {
-    Ok(GroupMetrics {
-        key: GroupKey {
-            source_file: row.get(0)?,
-            content_hash: row.get(1)?,
-        },
-        document_count: nonnegative(row.get(2)?),
-        canonical_count: nonnegative(row.get(3)?),
-        survivor_document_id: row.get(4)?,
-        source_manifest_document_id: row.get(5)?,
-        canonical_chunks: nonnegative(row.get(7)?),
-        candidate_chunks: nonnegative(row.get(8)?),
-        candidate_wiki_references: nonnegative(row.get(9)?),
-        candidate_collection_references: nonnegative(row.get(10)?),
-        candidate_foreign_manifest_references: nonnegative(row.get(11)?),
-        candidate_revisions: nonnegative(row.get(12)?),
-        source_manifest_owner_is_member: row.get(13)?,
-        actionable: row.get(14)?,
-        candidate_count: nonnegative(row.get(15)?),
-    })
+fn materialize_group_members(
+    r: &impl LinReader,
+    enriched_members: &[EnrichedMember],
+    limit: usize,
+) -> Result<Vec<SourceDuplicateDocument>> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for m in enriched_members.iter().take(limit) {
+        let node_rows = r.find_by_eq("graph_nodes", "document_id", &m.base.id)?;
+        let graph_nodes = node_rows.len() as u64;
+        let mut incident_edge_ids: HashSet<String> = HashSet::new();
+        for nr in &node_rows {
+            if let Some(nid) = cell_str(nr, "id") {
+                for er in r.find_by_eq("graph_edges", "source_id", nid)? {
+                    incident_edge_ids.insert(cell_string(&er, "id"));
+                }
+                for er in r.find_by_eq("graph_edges", "target_id", nid)? {
+                    incident_edge_ids.insert(cell_string(&er, "id"));
+                }
+            }
+        }
+        out.push(SourceDuplicateDocument {
+            document_id: m.base.id.clone(),
+            uri: m.base.uri.clone(),
+            title: m.base.title.clone(),
+            canonical_uri_match: m.base.canonical_uri_match,
+            chunks: m.chunks,
+            graph_nodes,
+            incident_graph_edges: incident_edge_ids.len() as u64,
+            wiki_references: m.wiki_references,
+            collection_references: m.collection_references,
+            foreign_source_manifest_references: m.foreign_source_manifest_references,
+            revisions: m.revisions,
+        });
+    }
+    Ok(out)
 }
 
 fn group_from_metrics(
@@ -564,82 +723,6 @@ fn group_from_metrics(
     }
 }
 
-fn load_group_members(
-    conn: &Connection,
-    key: &GroupKey,
-    limit: usize,
-) -> Result<Vec<SourceDuplicateDocument>> {
-    if limit == 0 {
-        return Ok(Vec::new());
-    }
-    let canonical_uri = format!("file://{}", key.source_file);
-    let mut stmt = conn.prepare(
-        r#"
-        WITH selected_members AS (
-          SELECT d.id, d.uri, d.title, d.source_file,
-                 d.uri = ? AS canonical_uri_match
-          FROM documents d
-          WHERE d.source_file = ? AND d.content_hash = ?
-            AND LOWER(COALESCE(NULLIF(TRIM(d.layer), ''), 'raw')) = 'raw'
-            AND LOWER(COALESCE(NULLIF(TRIM(d.status), ''), 'active')) = 'active'
-          ORDER BY canonical_uri_match DESC, d.id ASC
-          LIMIT ?
-        )
-        SELECT
-          d.id,
-          d.uri,
-          d.title,
-          d.canonical_uri_match,
-          (SELECT COUNT(*)::BIGINT FROM chunks c WHERE c.document_id = d.id),
-          (SELECT COUNT(*)::BIGINT FROM graph_nodes n WHERE n.document_id = d.id),
-          (SELECT COUNT(*)::BIGINT
-             FROM graph_edges e
-            WHERE e.source_id IN (SELECT id FROM graph_nodes n WHERE n.document_id = d.id)
-               OR e.target_id IN (SELECT id FROM graph_nodes n WHERE n.document_id = d.id)),
-          (SELECT COUNT(*)::BIGINT FROM wiki_index w
-            WHERE w.document_id = d.id OR w.page_id = d.id),
-          ((SELECT COUNT(*)::BIGINT FROM collection_entries ce
-             WHERE ce.document_id = d.id OR ce.parent_document_id = d.id)
-           + (SELECT COUNT(*)::BIGINT FROM collection_dependencies cd
-             WHERE cd.document_id = d.id OR cd.depends_on_document_id = d.id)),
-          (SELECT COUNT(*)::BIGINT FROM source_manifest sm
-            WHERE sm.document_id = d.id AND sm.canonical_path <> d.source_file),
-          (SELECT COUNT(*)::BIGINT FROM document_revisions r WHERE r.document_id = d.id)
-        FROM selected_members d
-        ORDER BY canonical_uri_match DESC, d.id ASC
-        "#,
-    )?;
-    let mut rows = stmt.query(params![
-        canonical_uri,
-        key.source_file,
-        key.content_hash,
-        sql_limit(limit)
-    ])?;
-    let mut members = Vec::new();
-    crate::db::rows::visit_rows(&mut rows, |row| {
-        members.push(SourceDuplicateDocument {
-            document_id: row.get(0)?,
-            uri: row.get(1)?,
-            title: row.get(2)?,
-            canonical_uri_match: row.get(3)?,
-            chunks: nonnegative(row.get(4)?),
-            graph_nodes: nonnegative(row.get(5)?),
-            incident_graph_edges: nonnegative(row.get(6)?),
-            wiki_references: nonnegative(row.get(7)?),
-            collection_references: nonnegative(row.get(8)?),
-            foreign_source_manifest_references: nonnegative(row.get(9)?),
-            revisions: nonnegative(row.get(10)?),
-        });
-        Ok(())
-    })?;
-
-    Ok(members)
-}
-
-fn sql_limit(limit: usize) -> i64 {
-    i64::try_from(limit).unwrap_or(i64::MAX)
-}
-
 #[derive(Debug, Clone, Copy, Default)]
 struct GraphRewireReport {
     rewired_endpoints: u64,
@@ -648,14 +731,14 @@ struct GraphRewireReport {
 }
 
 fn rewire_graph_to_survivor(
-    conn: &Connection,
+    w: &mut impl LinWriter,
     survivor: &Document,
     candidate_ids: &[&str],
 ) -> Result<GraphRewireReport> {
-    let mut survivor_node_ids = graph_node_ids(conn, &survivor.id)?;
+    let mut survivor_node_ids = graph_node_ids(w, &survivor.id)?;
     let mut candidate_node_ids = Vec::new();
     for candidate_id in candidate_ids {
-        candidate_node_ids.extend(graph_node_ids(conn, candidate_id)?);
+        candidate_node_ids.extend(graph_node_ids(w, candidate_id)?);
     }
     candidate_node_ids.sort();
     candidate_node_ids.dedup();
@@ -664,11 +747,11 @@ fn rewire_graph_to_survivor(
     }
     let canonical_node_id = if survivor_node_ids.is_empty() {
         let node_id = candidate_node_ids.remove(0);
-        promote_node_to_survivor(conn, &node_id, survivor)?;
+        promote_node_to_survivor(w, &node_id, survivor)?;
         node_id
     } else {
         let node_id = survivor_node_ids.remove(0);
-        promote_node_to_survivor(conn, &node_id, survivor)?;
+        promote_node_to_survivor(w, &node_id, survivor)?;
         node_id
     };
 
@@ -679,21 +762,27 @@ fn rewire_graph_to_survivor(
     merged_node_ids.retain(|node_id| node_id != &canonical_node_id);
 
     let removed_self_edges =
-        delete_edges_that_would_collapse_to_self(conn, &canonical_node_id, &merged_node_ids)?;
+        delete_edges_that_would_collapse_to_self(w, &canonical_node_id, &merged_node_ids)?;
     let deduplicated_edges =
-        deduplicate_prospective_edges(conn, &canonical_node_id, &merged_node_ids)?;
+        deduplicate_prospective_edges(w, &canonical_node_id, &merged_node_ids)?;
 
     let mut rewired_endpoints = 0u64;
     for old_node_id in &merged_node_ids {
-        rewired_endpoints += conn.execute(
-            "UPDATE graph_edges SET source_id = ? WHERE source_id = ?",
-            params![canonical_node_id, old_node_id],
+        rewired_endpoints += w.update_where(
+            "graph_edges",
+            lin::query::pred::eq("source_id", old_node_id.as_str()),
+            RecBuilder::new()
+                .str("source_id", &canonical_node_id)
+                .build(),
         )? as u64;
-        rewired_endpoints += conn.execute(
-            "UPDATE graph_edges SET target_id = ? WHERE target_id = ?",
-            params![canonical_node_id, old_node_id],
+        rewired_endpoints += w.update_where(
+            "graph_edges",
+            lin::query::pred::eq("target_id", old_node_id.as_str()),
+            RecBuilder::new()
+                .str("target_id", &canonical_node_id)
+                .build(),
         )? as u64;
-        conn.execute("DELETE FROM graph_nodes WHERE id = ?", params![old_node_id])?;
+        let _ = w.delete_by_id("graph_nodes", old_node_id)?;
     }
 
     Ok(GraphRewireReport {
@@ -703,271 +792,1049 @@ fn rewire_graph_to_survivor(
     })
 }
 
-fn deduplicate_prospective_edges(
-    conn: &Connection,
+fn collect_incident_edges_for_collapse(
+    r: &impl LinReader,
     canonical_node_id: &str,
     merged_node_ids: &[String],
-) -> Result<u64> {
-    if merged_node_ids.is_empty() {
-        return Ok(0);
+) -> Result<Vec<lin::Row>> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out = Vec::new();
+    for nid in std::iter::once(canonical_node_id).chain(merged_node_ids.iter().map(String::as_str))
+    {
+        for er in r.find_by_eq("graph_edges", "source_id", nid)? {
+            if seen.insert(cell_string(&er, "id")) {
+                out.push(er);
+            }
+        }
+        for er in r.find_by_eq("graph_edges", "target_id", nid)? {
+            if seen.insert(cell_string(&er, "id")) {
+                out.push(er);
+            }
+        }
     }
-    let mut collapse_ids = Vec::with_capacity(merged_node_ids.len() + 1);
-    collapse_ids.push(canonical_node_id.to_string());
-    collapse_ids.extend(merged_node_ids.iter().cloned());
-    let merged_placeholders = crate::db::sql::in_placeholders(merged_node_ids.len());
-    let collapse_placeholders = crate::db::sql::in_placeholders(collapse_ids.len());
-    let sql = format!(
-        r#"
-        DELETE FROM graph_edges
-        WHERE id IN (
-          SELECT id FROM (
-            SELECT id,
-                   ROW_NUMBER() OVER (
-                     PARTITION BY
-                       CASE WHEN source_id IN ({merged_placeholders}) THEN ? ELSE source_id END,
-                       CASE WHEN target_id IN ({merged_placeholders}) THEN ? ELSE target_id END,
-                       rel_type, weight, context
-                     ORDER BY
-                       CASE WHEN source_id IN ({merged_placeholders})
-                                  OR target_id IN ({merged_placeholders})
-                            THEN 1 ELSE 0 END ASC,
-                       created_at ASC, id ASC
-                   ) AS duplicate_rank
-            FROM graph_edges
-            WHERE source_id IN ({collapse_placeholders})
-               OR target_id IN ({collapse_placeholders})
-          ) ranked
-          WHERE duplicate_rank > 1
-        )
-        "#
-    );
-    let mut binds = Vec::with_capacity(merged_node_ids.len() * 4 + collapse_ids.len() * 2 + 2);
-    binds.extend(merged_node_ids.iter().cloned());
-    binds.push(canonical_node_id.to_string());
-    binds.extend(merged_node_ids.iter().cloned());
-    binds.push(canonical_node_id.to_string());
-    binds.extend(merged_node_ids.iter().cloned());
-    binds.extend(merged_node_ids.iter().cloned());
-    binds.extend(collapse_ids.iter().cloned());
-    binds.extend(collapse_ids);
-    Ok(conn.execute(&sql, params_from_iter(binds.iter()))? as u64)
+    Ok(out)
 }
 
 fn delete_edges_that_would_collapse_to_self(
-    conn: &Connection,
+    w: &mut impl LinWriter,
     canonical_node_id: &str,
     merged_node_ids: &[String],
 ) -> Result<u64> {
     if merged_node_ids.is_empty() {
         return Ok(0);
     }
-    let mut collapse_ids = Vec::with_capacity(merged_node_ids.len() + 1);
-    collapse_ids.push(canonical_node_id.to_string());
-    collapse_ids.extend(merged_node_ids.iter().cloned());
-    let collapse_placeholders = crate::db::sql::in_placeholders(collapse_ids.len());
-    let merged_placeholders = crate::db::sql::in_placeholders(merged_node_ids.len());
-    let sql = format!(
-        r#"
-        DELETE FROM graph_edges
-        WHERE source_id IN ({collapse_placeholders})
-          AND target_id IN ({collapse_placeholders})
-          AND (source_id IN ({merged_placeholders})
-               OR target_id IN ({merged_placeholders}))
-        "#
-    );
-    let mut binds = Vec::with_capacity(collapse_ids.len() * 2 + merged_node_ids.len() * 2);
-    binds.extend(collapse_ids.iter().cloned());
-    binds.extend(collapse_ids);
-    binds.extend(merged_node_ids.iter().cloned());
-    binds.extend(merged_node_ids.iter().cloned());
-    Ok(conn.execute(&sql, params_from_iter(binds.iter()))? as u64)
+    let merged_set: HashSet<&str> = merged_node_ids.iter().map(String::as_str).collect();
+    let mut collapse_set = merged_set.clone();
+    collapse_set.insert(canonical_node_id);
+
+    let edges = collect_incident_edges_for_collapse(w, canonical_node_id, merged_node_ids)?;
+    let mut removed = 0u64;
+    for er in &edges {
+        let sid = cell_str(er, "source_id").unwrap_or_default();
+        let tid = cell_str(er, "target_id").unwrap_or_default();
+        if collapse_set.contains(sid)
+            && collapse_set.contains(tid)
+            && (merged_set.contains(sid) || merged_set.contains(tid))
+        {
+            if w.delete_by_id("graph_edges", cell_str(er, "id").unwrap_or_default())? {
+                removed += 1;
+            }
+        }
+    }
+    Ok(removed)
 }
 
-fn promote_node_to_survivor(conn: &Connection, node_id: &str, survivor: &Document) -> Result<()> {
-    conn.execute(
-        r#"
-        UPDATE graph_nodes
-        SET kind = 'document', label = ?, label_key = ?, document_id = ?, uri = ?,
-            resolved = true, updated_at = now()
-        WHERE id = ?
-        "#,
-        params![
-            survivor.title,
-            rag_mcp_markup::normalize::label_key(&survivor.title),
-            survivor.id,
-            survivor.uri,
-            node_id
-        ],
+fn deduplicate_prospective_edges(
+    w: &mut impl LinWriter,
+    canonical_node_id: &str,
+    merged_node_ids: &[String],
+) -> Result<u64> {
+    if merged_node_ids.is_empty() {
+        return Ok(0);
+    }
+    let merged_set: HashSet<&str> = merged_node_ids.iter().map(String::as_str).collect();
+    let edges = collect_incident_edges_for_collapse(w, canonical_node_id, merged_node_ids)?;
+
+    type PartitionKey = (String, String, String, u64, Option<String>);
+    let mut partitions: HashMap<PartitionKey, Vec<(u8, chrono::DateTime<Utc>, String)>> =
+        HashMap::new();
+
+    for er in &edges {
+        let raw_s = cell_str(er, "source_id").unwrap_or_default();
+        let raw_t = cell_str(er, "target_id").unwrap_or_default();
+        let eff_s = if merged_set.contains(raw_s) {
+            canonical_node_id.to_string()
+        } else {
+            raw_s.to_string()
+        };
+        let eff_t = if merged_set.contains(raw_t) {
+            canonical_node_id.to_string()
+        } else {
+            raw_t.to_string()
+        };
+        let rel_type = cell_string(er, "rel_type");
+        let weight_bits = cell_f64(er, "weight", 1.0).to_bits();
+        let context = cell_opt_string(er, "context");
+        let is_merged = u8::from(merged_set.contains(raw_s) || merged_set.contains(raw_t));
+        let created_at = cell_ts_or_now(er, "created_at");
+        let eid = cell_string(er, "id");
+
+        partitions
+            .entry((eff_s, eff_t, rel_type, weight_bits, context))
+            .or_default()
+            .push((is_merged, created_at, eid));
+    }
+
+    let mut deleted = 0u64;
+    for (_, mut members) in partitions {
+        if members.len() <= 1 {
+            continue;
+        }
+        members.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then_with(|| a.1.cmp(&b.1))
+                .then_with(|| a.2.cmp(&b.2))
+        });
+        for (_, _, eid) in members.into_iter().skip(1) {
+            if w.delete_by_id("graph_edges", &eid)? {
+                deleted += 1;
+            }
+        }
+    }
+    Ok(deleted)
+}
+
+fn promote_node_to_survivor(
+    w: &mut impl LinWriter,
+    node_id: &str,
+    survivor: &Document,
+) -> Result<()> {
+    let now_s = format_db_timestamp(Utc::now());
+    let label_key = crate::graph::normalize::label_key(&survivor.title);
+    w.update_where(
+        "graph_nodes",
+        lin::query::pred::eq("id", node_id),
+        RecBuilder::new()
+            .str("kind", "document")
+            .str("label", &survivor.title)
+            .str("label_key", &label_key)
+            .str("document_id", &survivor.id)
+            .str("uri", &survivor.uri)
+            .bool("resolved", true)
+            .str("updated_at", &now_s)
+            .build(),
     )?;
     Ok(())
 }
 
-fn graph_node_ids(conn: &Connection, document_id: &str) -> Result<Vec<String>> {
-    let mut stmt =
-        conn.prepare("SELECT id FROM graph_nodes WHERE document_id = ? ORDER BY id ASC")?;
-    let ids = crate::db::rows::query_vec(&mut stmt, params![document_id], |row| Ok(row.get(0)?))?;
+fn graph_node_ids(r: &impl LinReader, document_id: &str) -> Result<Vec<String>> {
+    let mut ids: Vec<String> = r
+        .find_by_eq("graph_nodes", "document_id", document_id)?
+        .iter()
+        .map(|row| cell_string(row, "id"))
+        .collect();
+    ids.sort();
     Ok(ids)
 }
 
-fn load_document_locked(conn: &Connection, document_id: &str) -> Result<Option<Document>> {
-    let sql = format!("SELECT {DOCUMENT_SELECT} FROM documents WHERE id = ?");
-    let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query(params![document_id])?;
-    match rows.next()? {
-        Some(row) => Ok(Some(rows::document(row)?)),
-        None => Ok(None),
-    }
-}
-
-fn nonnegative(value: i64) -> u64 {
-    value.max(0) as u64
-}
-
-impl Maintenance<'_> {
-    /// Preview or atomically remove legacy raw documents that duplicate the
-    /// canonical `file://<source_file>` document.
-    ///
-    /// Apply requires both `dry_run=false` and `confirm=true`. Each invocation
-    /// selects at most `max_candidates` in stable `(source_file, content_hash,
-    /// document_id)` order, so a large group can be drained safely over repeated
-    /// calls. Groups with no unique canonical survivor, protected references,
-    /// ambiguous manifest ownership, or candidate revision history are skipped.
-    pub fn cleanup_source_duplicates(
-        &self,
-        dry_run: bool,
-        confirm: bool,
-        max_candidates: usize,
-    ) -> Result<SourceDuplicateCleanupReport> {
-        if max_candidates == 0 {
-            return Err(AppError::config(
-                "cleanup_source_duplicates max_candidates must be >= 1",
-            ));
-        }
-        if !dry_run && !confirm {
-            return Err(AppError::config(
-                "cleanup_source_duplicates apply requires confirm=true",
-            ));
-        }
-
-        self.store.with_tx(|tx| {
-            let scanned_active_raw_documents = tx.query_row(
-                r#"
-                SELECT COUNT(*)::BIGINT
-                FROM documents
-                WHERE LOWER(COALESCE(NULLIF(TRIM(layer), ''), 'raw')) = 'raw'
-                  AND LOWER(COALESCE(NULLIF(TRIM(status), ''), 'active')) = 'active'
-                  AND source_file IS NOT NULL AND TRIM(source_file) <> ''
-                  AND content_hash IS NOT NULL AND TRIM(content_hash) <> ''
-                "#,
-                [],
-                |row| row.get::<_, i64>(0),
-            )?;
-            let totals = load_cleanup_totals(tx)?;
-            let batch = load_batch(tx, max_candidates)?;
-            let batch_candidates = batch
-                .iter()
-                .map(|selection| selection.candidate_ids.len() as u64)
-                .sum::<u64>();
-            let fully_drained_groups = batch
-                .iter()
-                .filter(|selection| {
-                    selection.candidate_ids.len() as u64 >= selection.metrics.candidate_count
-                })
-                .count();
-            let remaining_candidates = totals.candidate_count.saturating_sub(batch_candidates);
-            let remaining_groups = totals
-                .actionable_groups
-                .saturating_sub(fully_drained_groups);
-            let cap_exceeded = remaining_candidates > 0;
-
-            let groups = load_report_groups(tx, &batch, totals.matched_groups)?;
-            let reported_groups = groups.len();
-            let groups_truncated = reported_groups < totals.matched_groups;
-            let reported_members = groups.iter().map(|group| group.members.len()).sum();
-            let members_truncated =
-                groups_truncated || groups.iter().any(|group| group.members_truncated);
-
-            let mut report = SourceDuplicateCleanupReport {
-                success: true,
-                errors: Vec::new(),
-                dry_run,
-                confirmed: confirm,
-                max_candidates,
-                scanned_active_raw_documents: scanned_active_raw_documents.max(0) as u64,
-                matched_groups: totals.matched_groups,
-                actionable_groups: totals.actionable_groups,
-                skipped_groups: totals
-                    .matched_groups
-                    .saturating_sub(totals.actionable_groups),
-                candidate_count: totals.candidate_count,
-                batch_groups: batch.len(),
-                batch_candidates,
-                remaining_groups,
-                remaining_candidates,
-                cap_exceeded,
-                applied: false,
-                deleted_documents: 0,
-                rewired_graph_edge_endpoints: 0,
-                deduplicated_graph_edges: 0,
-                removed_graph_self_edges: 0,
-                rewired_kg_facts: 0,
-                rebound_source_manifests: 0,
-                reported_groups,
-                groups_truncated,
-                reported_members,
-                members_truncated,
-                groups,
-            };
-
-            for selection in if dry_run { &[][..] } else { batch.as_slice() } {
-                let survivor_id = selection
-                    .metrics
-                    .survivor_document_id
-                    .as_deref()
-                    .expect("actionable group has one survivor");
-                let survivor = load_document_locked(tx, survivor_id)?.ok_or_else(|| {
-                    AppError::conflict(format!(
-                        "canonical source document disappeared during cleanup: {survivor_id}"
-                    ))
-                })?;
-                let candidate_ids = selection
-                    .candidate_ids
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>();
-
-                let graph = rewire_graph_to_survivor(tx, &survivor, &candidate_ids)?;
-                report.rewired_graph_edge_endpoints += graph.rewired_endpoints;
-                report.deduplicated_graph_edges += graph.deduplicated_edges;
-                report.removed_graph_self_edges += graph.removed_self_edges;
-
-                for candidate_id in &candidate_ids {
-                    report.rewired_kg_facts += tx.execute(
-                        "UPDATE kg_facts SET source_document_id = ?, updated_at = now() WHERE source_document_id = ?",
-                        params![survivor_id, candidate_id],
-                    )? as u64;
-                }
-                report.rebound_source_manifests += tx.execute(
-                    "UPDATE source_manifest SET document_id = ? WHERE canonical_path = ? AND document_id <> ?",
-                    params![survivor_id, selection.metrics.key.source_file, survivor_id],
-                )? as u64;
-
-                for candidate_id in candidate_ids {
-                    if delete_document_locked(tx, candidate_id)? {
-                        report.deleted_documents += 1;
-                    } else {
-                        return Err(AppError::conflict(format!(
-                            "duplicate candidate disappeared during cleanup: {candidate_id}"
-                        )));
-                    }
-                }
-            }
-
-            report.applied = !dry_run && report.deleted_documents > 0;
-            Ok(report)
-        })
-    }
+fn load_document_locked(r: &impl LinReader, document_id: &str) -> Result<Option<Document>> {
+    r.get_by_id("documents", document_id)?
+        .as_ref()
+        .map(rows::document)
+        .transpose()
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    use chrono::Utc;
+
+    use super::*;
+    use crate::db::{KgFactInput, SourceManifestWrite};
+    use crate::models::{Chunk, Collection, CollectionEntry, GraphEdge, GraphNode};
+    use crate::util::content_hash;
+
+    fn document(
+        id: &str,
+        uri: &str,
+        source_file: &str,
+        body: &str,
+        layer: &str,
+        status: &str,
+    ) -> Document {
+        let now = Utc::now();
+        Document {
+            id: id.into(),
+            uri: uri.into(),
+            title: id.into(),
+            content: body.into(),
+            metadata_json: "{}".into(),
+            created_at: now,
+            updated_at: now,
+            source_file: Some(source_file.into()),
+            content_hash: Some(content_hash(body)),
+            layer: layer.into(),
+            status: status.into(),
+            ..Default::default()
+        }
+    }
+
+    fn graph_node(id: &str, document_id: Option<&str>) -> GraphNode {
+        GraphNode {
+            id: id.into(),
+            kind: if document_id.is_some() {
+                "document".into()
+            } else {
+                "entity".into()
+            },
+            label: id.into(),
+            document_id: document_id.map(str::to_string),
+            uri: None,
+            resolved: true,
+            metadata_json: "{}".into(),
+        }
+    }
+
+    fn edge(id: &str, source_id: &str, target_id: &str, context: &str) -> GraphEdge {
+        GraphEdge {
+            id: id.into(),
+            source_id: source_id.into(),
+            target_id: target_id.into(),
+            rel_type: "related".into(),
+            weight: 1.0,
+            context: Some(context.into()),
+        }
+    }
+
+    #[test]
+    fn precise_cleanup_is_dry_run_then_atomic_apply() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("source-dedupe.lin")).unwrap();
+        let source = "/vault/project/a.md";
+        let body = "same source body";
+        let canonical = document(
+            "canonical",
+            "file:///vault/project/a.md",
+            source,
+            body,
+            "raw",
+            "active",
+        );
+        let legacy = document(
+            "legacy",
+            "project://project/a.md",
+            source,
+            body,
+            "raw",
+            "active",
+        );
+        let other_source = document(
+            "other-source",
+            "project://other/a.md",
+            "/vault/other/a.md",
+            body,
+            "raw",
+            "active",
+        );
+        let wiki = document("wiki", "wiki://same-body", source, body, "wiki", "active");
+        let archived = document(
+            "archived",
+            "project://archive/a.md",
+            source,
+            body,
+            "raw",
+            "archived",
+        );
+        for doc in [&canonical, &legacy, &other_source, &wiki, &archived] {
+            store.upsert_document(doc).unwrap();
+        }
+        store
+            .insert_chunks(&[
+                Chunk {
+                    id: "canonical-chunk".into(),
+                    document_id: canonical.id.clone(),
+                    chunk_index: 0,
+                    content: body.into(),
+                    embedding: vec![1.0, 0.0],
+                    char_start: 0,
+                    char_end: body.len() as i32,
+                    metadata_json: "{}".into(),
+                },
+                Chunk {
+                    id: "legacy-chunk".into(),
+                    document_id: legacy.id.clone(),
+                    chunk_index: 0,
+                    content: body.into(),
+                    embedding: vec![1.0, 0.0],
+                    char_start: 0,
+                    char_end: body.len() as i32,
+                    metadata_json: "{}".into(),
+                },
+            ])
+            .unwrap();
+        for node in [
+            graph_node("canonical-node", Some("canonical")),
+            graph_node("legacy-node", Some("legacy")),
+            graph_node("external-node", None),
+        ] {
+            store.upsert_graph_node(&node).unwrap();
+        }
+        store
+            .insert_graph_edges(&[
+                edge("z-canonical-out", "canonical-node", "external-node", "same"),
+                edge("a-legacy-out", "legacy-node", "external-node", "same"),
+                edge("legacy-in", "external-node", "legacy-node", "unique"),
+            ])
+            .unwrap();
+        let hash = content_hash(body);
+        store
+            .upsert_source_manifest(SourceManifestWrite {
+                canonical_path: source,
+                canonical_root: "/vault/project",
+                size_bytes: body.len() as u64,
+                mtime_ns: 1,
+                content_hash: &hash,
+                document_id: "legacy",
+            })
+            .unwrap();
+        let fact = store
+            .kg_add(KgFactInput {
+                subject: "a",
+                predicate: "rel",
+                object: "b",
+                valid_from: None,
+                valid_to: None,
+                source_document_id: Some("legacy"),
+                confidence: None,
+                metadata_json: None,
+            })
+            .unwrap();
+
+        let preview = store.cleanup_source_duplicates(true, false, 10).unwrap();
+        assert!(preview.dry_run);
+        assert!(!preview.applied);
+        assert_eq!(preview.candidate_count, 1);
+        assert_eq!(preview.deleted_documents, 0);
+        assert!(store.get_document("legacy").unwrap().is_some());
+        assert_eq!(preview.groups[0].members.len(), 2);
+
+        let applied = store.cleanup_source_duplicates(false, true, 10).unwrap();
+        assert!(applied.applied);
+        assert_eq!(applied.deleted_documents, 1);
+        assert_eq!(applied.rewired_graph_edge_endpoints, 1);
+        assert_eq!(applied.deduplicated_graph_edges, 1);
+        assert_eq!(applied.rewired_kg_facts, 1);
+        assert_eq!(applied.rebound_source_manifests, 1);
+        assert!(store.get_document("canonical").unwrap().is_some());
+        assert!(store.get_document("legacy").unwrap().is_none());
+        assert!(store.get_document("other-source").unwrap().is_some());
+        assert!(store.get_document("wiki").unwrap().is_some());
+        assert!(store.get_document("archived").unwrap().is_some());
+        assert!(store.list_chunks_for_document("legacy").unwrap().is_empty());
+        assert_eq!(
+            store.list_chunks_for_document("canonical").unwrap().len(),
+            1
+        );
+
+        let r = store.read().unwrap();
+        let manifest_document = cell_string(
+            &r.get_by_id("source_manifest", source).unwrap().unwrap(),
+            "document_id",
+        );
+        assert_eq!(manifest_document, "canonical");
+        drop(r);
+
+        let updated_fact = store.kg_get(&fact.id).unwrap().unwrap();
+        assert_eq!(
+            updated_fact.source_document_id.as_deref(),
+            Some("canonical")
+        );
+
+        assert!(store.find_node_by_document_id("legacy").unwrap().is_none());
+        let all_edges = store.list_graph_edges().unwrap();
+        let canonical_edges = all_edges
+            .iter()
+            .filter(|e| e.source_id == "canonical-node" || e.target_id == "canonical-node")
+            .count();
+        assert_eq!(canonical_edges, 2);
+        assert!(all_edges.iter().any(|e| e.id == "z-canonical-out"));
+        assert!(!all_edges.iter().any(|e| e.id == "a-legacy-out"));
+        assert!(
+            !all_edges
+                .iter()
+                .any(|e| e.source_id == "legacy-node" || e.target_id == "legacy-node")
+        );
+    }
+
+    #[test]
+    fn cleanup_requires_confirm_and_drains_an_oversized_group_in_bounded_batches() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("source-dedupe-cap.lin")).unwrap();
+        let source = "/vault/cap.md";
+        let body = "cap body";
+        for doc in [
+            document(
+                "canonical",
+                "file:///vault/cap.md",
+                source,
+                body,
+                "raw",
+                "active",
+            ),
+            document("legacy-a", "project://cap/a", source, body, "raw", "active"),
+            document("legacy-b", "project://cap/b", source, body, "raw", "active"),
+        ] {
+            store.upsert_document(&doc).unwrap();
+        }
+
+        let error = store
+            .cleanup_source_duplicates(false, false, 10)
+            .unwrap_err();
+        assert!(error.to_string().contains("confirm=true"));
+
+        let first = store.cleanup_source_duplicates(false, true, 1).unwrap();
+        assert!(first.cap_exceeded);
+        assert!(first.applied);
+        assert_eq!(first.candidate_count, 2);
+        assert_eq!(first.batch_groups, 1);
+        assert_eq!(first.batch_candidates, 1);
+        assert_eq!(first.remaining_groups, 1);
+        assert_eq!(first.remaining_candidates, 1);
+        assert_eq!(first.deleted_documents, 1);
+        assert_eq!(first.groups[0].batch_candidate_count, 1);
+        assert_eq!(first.groups[0].remaining_candidate_count, 1);
+        assert!(store.get_document("legacy-a").unwrap().is_none());
+        assert!(store.get_document("legacy-b").unwrap().is_some());
+
+        let second = store.cleanup_source_duplicates(false, true, 1).unwrap();
+        assert!(!second.cap_exceeded);
+        assert!(second.applied);
+        assert_eq!(second.batch_candidates, 1);
+        assert_eq!(second.remaining_groups, 0);
+        assert_eq!(second.remaining_candidates, 0);
+        assert!(store.get_document("legacy-b").unwrap().is_none());
+
+        let converged = store.cleanup_source_duplicates(false, true, 1).unwrap();
+        assert_eq!(converged.candidate_count, 0);
+        assert_eq!(converged.batch_candidates, 0);
+        assert!(!converged.applied);
+    }
+
+    #[test]
+    fn cleanup_promotes_a_legacy_graph_node_when_survivor_has_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("source-dedupe-promote.lin")).unwrap();
+        let source = "/vault/promote.md";
+        let body = "promote body";
+        for doc in [
+            document(
+                "canonical",
+                "file:///vault/promote.md",
+                source,
+                body,
+                "raw",
+                "active",
+            ),
+            document(
+                "legacy",
+                "project://promote.md",
+                source,
+                body,
+                "raw",
+                "active",
+            ),
+        ] {
+            store.upsert_document(&doc).unwrap();
+        }
+        let mut legacy_node = graph_node("legacy-node", Some("legacy"));
+        legacy_node.metadata_json = r#"{"preserved":true}"#.into();
+        store.upsert_graph_node(&legacy_node).unwrap();
+        store
+            .upsert_graph_node(&graph_node("external", None))
+            .unwrap();
+        store
+            .insert_graph_edges(&[edge("incoming", "external", "legacy-node", "keep")])
+            .unwrap();
+
+        let report = store.cleanup_source_duplicates(false, true, 10).unwrap();
+        assert!(report.applied);
+        assert_eq!(report.deleted_documents, 1);
+
+        let r = store.read().unwrap();
+        let node_row = r.get_by_id("graph_nodes", "legacy-node").unwrap().unwrap();
+        assert_eq!(cell_str(&node_row, "document_id"), Some("canonical"));
+        assert_eq!(cell_str(&node_row, "uri"), Some("file:///vault/promote.md"));
+        assert_eq!(
+            cell_str(&node_row, "metadata_json"),
+            Some(r#"{"preserved":true}"#)
+        );
+        let label = cell_string(&node_row, "label");
+        let label_key = cell_opt_string(&node_row, "label_key");
+        assert_eq!(
+            label_key.as_deref(),
+            Some(crate::graph::normalize::label_key(&label).as_str())
+        );
+        let edge_row = r.get_by_id("graph_edges", "incoming").unwrap().unwrap();
+        assert_eq!(cell_str(&edge_row, "target_id"), Some("legacy-node"));
+    }
+
+    #[test]
+    fn cleanup_does_not_create_graph_state_when_duplicates_have_no_nodes() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("source-dedupe-no-graph.lin")).unwrap();
+        let source = "/vault/no-graph.md";
+        let body = "no graph body";
+        for doc in [
+            document(
+                "canonical",
+                "file:///vault/no-graph.md",
+                source,
+                body,
+                "raw",
+                "active",
+            ),
+            document(
+                "legacy",
+                "project://no-graph.md",
+                source,
+                body,
+                "raw",
+                "active",
+            ),
+        ] {
+            store.upsert_document(&doc).unwrap();
+        }
+
+        let report = store.cleanup_source_duplicates(false, true, 10).unwrap();
+        assert!(report.applied);
+        assert_eq!(report.deleted_documents, 1);
+        assert_eq!(report.rewired_graph_edge_endpoints, 0);
+        assert_eq!(store.list_graph_nodes().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn cleanup_removes_only_edges_that_its_node_collapse_would_make_self_loops() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("source-dedupe-self-edges.lin")).unwrap();
+        let source = "/vault/self-edges.md";
+        let body = "same graph body";
+        for doc in [
+            document(
+                "canonical",
+                "file:///vault/self-edges.md",
+                source,
+                body,
+                "raw",
+                "active",
+            ),
+            document(
+                "legacy",
+                "project://self-edges.md",
+                source,
+                body,
+                "raw",
+                "active",
+            ),
+        ] {
+            store.upsert_document(&doc).unwrap();
+        }
+        for node in [
+            graph_node("canonical-node", Some("canonical")),
+            graph_node("legacy-node", Some("legacy")),
+            graph_node("external-node", None),
+        ] {
+            store.upsert_graph_node(&node).unwrap();
+        }
+        store
+            .insert_graph_edges(&[
+                edge(
+                    "preexisting-self",
+                    "canonical-node",
+                    "canonical-node",
+                    "preexisting",
+                ),
+                edge(
+                    "canonical-to-legacy",
+                    "canonical-node",
+                    "legacy-node",
+                    "collapse",
+                ),
+                edge(
+                    "legacy-to-canonical",
+                    "legacy-node",
+                    "canonical-node",
+                    "collapse",
+                ),
+                edge("legacy-self", "legacy-node", "legacy-node", "collapse"),
+                edge(
+                    "legacy-external",
+                    "legacy-node",
+                    "external-node",
+                    "preserve",
+                ),
+            ])
+            .unwrap();
+
+        let report = store.cleanup_source_duplicates(false, true, 10).unwrap();
+        assert!(report.applied);
+        assert_eq!(report.removed_graph_self_edges, 3);
+        assert_eq!(report.rewired_graph_edge_endpoints, 1);
+        let edges = store.list_graph_edges().unwrap();
+        assert!(edges.iter().any(|e| {
+            e.id == "preexisting-self"
+                && e.source_id == "canonical-node"
+                && e.target_id == "canonical-node"
+        }));
+        assert!(
+            !edges
+                .iter()
+                .any(|e| e.source_id == e.target_id && e.id != "preexisting-self")
+        );
+        assert!(edges.iter().any(|e| {
+            e.id == "legacy-external"
+                && e.source_id == "canonical-node"
+                && e.target_id == "external-node"
+        }));
+    }
+
+    #[test]
+    fn cleanup_skips_candidate_that_owns_a_foreign_manifest_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("source-dedupe-manifest.lin")).unwrap();
+        let source = "/vault/owned.md";
+        let body = "owned body";
+        for doc in [
+            document(
+                "canonical",
+                "file:///vault/owned.md",
+                source,
+                body,
+                "raw",
+                "active",
+            ),
+            document(
+                "legacy",
+                "project://owned.md",
+                source,
+                body,
+                "raw",
+                "active",
+            ),
+        ] {
+            store.upsert_document(&doc).unwrap();
+        }
+        let hash = content_hash(body);
+        store
+            .upsert_source_manifest(SourceManifestWrite {
+                canonical_path: "/vault/foreign.md",
+                canonical_root: "/vault",
+                size_bytes: body.len() as u64,
+                mtime_ns: 1,
+                content_hash: &hash,
+                document_id: "legacy",
+            })
+            .unwrap();
+
+        let report = store.cleanup_source_duplicates(false, true, 10).unwrap();
+        assert_eq!(report.actionable_groups, 0);
+        assert_eq!(report.skipped_groups, 1);
+        assert!(
+            report.groups[0]
+                .skip_reasons
+                .iter()
+                .any(|reason| reason.contains("foreign source_manifest references"))
+        );
+        assert!(store.get_document("legacy").unwrap().is_some());
+        let r = store.read().unwrap();
+        let manifest_row = r
+            .get_by_id("source_manifest", "/vault/foreign.md")
+            .unwrap()
+            .unwrap();
+        assert_eq!(cell_str(&manifest_row, "document_id"), Some("legacy"));
+    }
+
+    #[test]
+    fn cleanup_skips_manifest_path_owned_by_a_non_member_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("source-dedupe-third-owner.lin")).unwrap();
+        let source = "/vault/duplicate.md";
+        let body = "duplicate body";
+        for doc in [
+            document(
+                "canonical",
+                "file:///vault/duplicate.md",
+                source,
+                body,
+                "raw",
+                "active",
+            ),
+            document(
+                "legacy",
+                "project://duplicate.md",
+                source,
+                body,
+                "raw",
+                "active",
+            ),
+            document(
+                "third-owner",
+                "file:///vault/third.md",
+                "/vault/third.md",
+                "different body",
+                "raw",
+                "active",
+            ),
+        ] {
+            store.upsert_document(&doc).unwrap();
+        }
+        let hash = content_hash(body);
+        store
+            .upsert_source_manifest(SourceManifestWrite {
+                canonical_path: source,
+                canonical_root: "/vault",
+                size_bytes: body.len() as u64,
+                mtime_ns: 1,
+                content_hash: &hash,
+                document_id: "third-owner",
+            })
+            .unwrap();
+
+        let report = store.cleanup_source_duplicates(false, true, 10).unwrap();
+        assert_eq!(report.actionable_groups, 0);
+        assert_eq!(report.skipped_groups, 1);
+        assert!(!report.applied);
+        assert!(
+            report.groups[0]
+                .skip_reasons
+                .iter()
+                .any(|reason| reason.contains("owned by non-member document"))
+        );
+        assert!(store.get_document("legacy").unwrap().is_some());
+        let r = store.read().unwrap();
+        let manifest_row = r.get_by_id("source_manifest", source).unwrap().unwrap();
+        assert_eq!(cell_str(&manifest_row, "document_id"), Some("third-owner"));
+    }
+
+    #[test]
+    fn cleanup_skips_candidate_with_revision_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("source-dedupe-revisions.lin")).unwrap();
+        let source = "/vault/history.md";
+        let body = "same current body";
+        let canonical = document(
+            "canonical",
+            "file:///vault/history.md",
+            source,
+            body,
+            "raw",
+            "active",
+        );
+        let mut legacy = document(
+            "legacy",
+            "project://history.md",
+            source,
+            body,
+            "raw",
+            "active",
+        );
+        store.upsert_document(&canonical).unwrap();
+        store.upsert_document(&legacy).unwrap();
+        legacy.title = "legacy updated title".into();
+        legacy.updated_at = Utc::now();
+        store.upsert_document(&legacy).unwrap();
+        assert_eq!(
+            store
+                .list_document_revision_summaries("legacy", 10, 0)
+                .unwrap()
+                .total,
+            1
+        );
+
+        let report = store.cleanup_source_duplicates(false, true, 10).unwrap();
+        assert_eq!(report.actionable_groups, 0);
+        assert_eq!(report.skipped_groups, 1);
+        assert!(!report.applied);
+        assert!(
+            report.groups[0]
+                .skip_reasons
+                .iter()
+                .any(|reason| reason.contains("document revisions"))
+        );
+        assert!(store.get_document("legacy").unwrap().is_some());
+        assert_eq!(
+            store
+                .list_document_revision_summaries("legacy", 10, 0)
+                .unwrap()
+                .total,
+            1
+        );
+    }
+
+    #[test]
+    fn cleanup_skips_when_only_legacy_candidate_has_search_chunks() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("source-dedupe-chunks.lin")).unwrap();
+        let source = "/vault/chunks.md";
+        let body = "searchable duplicate body";
+        for doc in [
+            document(
+                "canonical",
+                "file:///vault/chunks.md",
+                source,
+                body,
+                "raw",
+                "active",
+            ),
+            document(
+                "legacy",
+                "project://chunks.md",
+                source,
+                body,
+                "raw",
+                "active",
+            ),
+        ] {
+            store.upsert_document(&doc).unwrap();
+        }
+        store
+            .insert_chunks(&[Chunk {
+                id: "legacy-only-chunk".into(),
+                document_id: "legacy".into(),
+                chunk_index: 0,
+                content: body.into(),
+                embedding: vec![1.0, 0.0],
+                char_start: 0,
+                char_end: body.len() as i32,
+                metadata_json: "{}".into(),
+            }])
+            .unwrap();
+
+        let report = store.cleanup_source_duplicates(false, true, 10).unwrap();
+        assert_eq!(report.actionable_groups, 0);
+        assert_eq!(report.skipped_groups, 1);
+        assert!(!report.applied);
+        assert!(
+            report.groups[0]
+                .skip_reasons
+                .iter()
+                .any(|reason| reason.contains("canonical survivor has no chunks"))
+        );
+        assert!(store.get_document("legacy").unwrap().is_some());
+        assert_eq!(store.list_chunks_for_document("legacy").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn cleanup_preview_bounds_group_and_member_details_but_keeps_totals() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("source-dedupe-report-bound.lin")).unwrap();
+
+        let dense_source = "/vault/000-dense.md";
+        let dense_body = "dense duplicate body";
+        store
+            .upsert_document(&document(
+                "dense-canonical",
+                "file:///vault/000-dense.md",
+                dense_source,
+                dense_body,
+                "raw",
+                "active",
+            ))
+            .unwrap();
+        for index in 0..(REPORT_MEMBER_LIMIT + 5) {
+            store
+                .upsert_document(&document(
+                    &format!("dense-legacy-{index:04}"),
+                    &format!("project://dense/{index}"),
+                    dense_source,
+                    dense_body,
+                    "raw",
+                    "active",
+                ))
+                .unwrap();
+        }
+
+        for index in 0..REPORT_GROUP_LIMIT {
+            let source = format!("/vault/group-{index:04}.md");
+            let body = format!("group body {index}");
+            store
+                .upsert_document(&document(
+                    &format!("group-canonical-{index:04}"),
+                    &format!("file://{source}"),
+                    &source,
+                    &body,
+                    "raw",
+                    "active",
+                ))
+                .unwrap();
+            store
+                .upsert_document(&document(
+                    &format!("group-legacy-{index:04}"),
+                    &format!("project://group/{index}"),
+                    &source,
+                    &body,
+                    "raw",
+                    "active",
+                ))
+                .unwrap();
+        }
+
+        let report = store.cleanup_source_duplicates(true, false, 1_000).unwrap();
+        assert_eq!(report.matched_groups, REPORT_GROUP_LIMIT + 1);
+        assert_eq!(
+            report.candidate_count,
+            (REPORT_MEMBER_LIMIT + 5 + REPORT_GROUP_LIMIT) as u64
+        );
+        assert_eq!(report.reported_groups, REPORT_GROUP_LIMIT);
+        assert_eq!(report.groups.len(), REPORT_GROUP_LIMIT);
+        assert!(report.groups_truncated);
+        assert_eq!(report.reported_members, REPORT_MEMBER_LIMIT);
+        assert!(report.members_truncated);
+        assert_eq!(
+            report.groups[0].document_count,
+            (REPORT_MEMBER_LIMIT + 6) as u64
+        );
+        assert_eq!(report.groups[0].members.len(), REPORT_MEMBER_LIMIT);
+        assert!(report.groups[0].members_truncated);
+    }
+
+    #[test]
+    fn cleanup_report_prioritizes_the_applied_group_before_truncation() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("source-dedupe-report-priority.lin")).unwrap();
+        let body = "same body";
+        for index in 0..REPORT_GROUP_LIMIT {
+            let source = format!("/vault/aaa-skipped-{index:04}.md");
+            for suffix in ["a", "b"] {
+                store
+                    .upsert_document(&document(
+                        &format!("skipped-{index:04}-{suffix}"),
+                        &format!("project://skipped/{index}/{suffix}"),
+                        &source,
+                        body,
+                        "raw",
+                        "active",
+                    ))
+                    .unwrap();
+            }
+        }
+        let selected_source = "/vault/zzz-selected.md";
+        for doc in [
+            document(
+                "selected-canonical",
+                "file:///vault/zzz-selected.md",
+                selected_source,
+                body,
+                "raw",
+                "active",
+            ),
+            document(
+                "selected-legacy",
+                "project://selected/legacy",
+                selected_source,
+                body,
+                "raw",
+                "active",
+            ),
+        ] {
+            store.upsert_document(&doc).unwrap();
+        }
+
+        let report = store.cleanup_source_duplicates(false, true, 1).unwrap();
+        assert!(report.applied);
+        assert_eq!(report.deleted_documents, 1);
+        assert_eq!(report.matched_groups, REPORT_GROUP_LIMIT + 1);
+        assert!(report.groups_truncated);
+        assert!(report.groups.iter().any(|group| {
+            group.source_file == selected_source && group.batch_candidate_count == 1
+        }));
+    }
+
+    #[test]
+    fn ambiguous_and_user_referenced_groups_are_reported_and_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("source-dedupe-skips.lin")).unwrap();
+        let body = "same";
+        let no_canonical = "/vault/no-canonical.md";
+        for doc in [
+            document(
+                "old-a",
+                "project://old/a",
+                no_canonical,
+                body,
+                "raw",
+                "active",
+            ),
+            document(
+                "old-b",
+                "project://old/b",
+                no_canonical,
+                body,
+                "raw",
+                "active",
+            ),
+        ] {
+            store.upsert_document(&doc).unwrap();
+        }
+
+        let protected = "/vault/protected.md";
+        for doc in [
+            document(
+                "protected-canonical",
+                "file:///vault/protected.md",
+                protected,
+                body,
+                "raw",
+                "active",
+            ),
+            document(
+                "protected-legacy",
+                "project://protected/legacy",
+                protected,
+                body,
+                "raw",
+                "active",
+            ),
+        ] {
+            store.upsert_document(&doc).unwrap();
+        }
+        let now = Utc::now().to_rfc3339();
+        store
+            .create_collection(
+                &Collection {
+                    id: "c".into(),
+                    name: "C".into(),
+                    description: None,
+                    metadata_json: "{}".into(),
+                    created_at: now.clone(),
+                    updated_at: now,
+                },
+                &[CollectionEntry {
+                    document_id: "protected-legacy".into(),
+                    position: 0,
+                    parent_document_id: None,
+                    depends_on: Vec::new(),
+                }],
+            )
+            .unwrap();
+
+        let report = store.cleanup_source_duplicates(false, true, 10).unwrap();
+        assert_eq!(report.matched_groups, 2);
+        assert_eq!(report.actionable_groups, 0);
+        assert_eq!(report.skipped_groups, 2);
+        assert_eq!(report.candidate_count, 0);
+        assert!(!report.applied);
+        assert!(store.get_document("old-a").unwrap().is_some());
+        assert!(store.get_document("protected-legacy").unwrap().is_some());
+        assert!(report.groups.iter().any(|group| {
+            group
+                .skip_reasons
+                .iter()
+                .any(|reason| reason.contains("canonical URI"))
+        }));
+        assert!(report.groups.iter().any(|group| {
+            group
+                .skip_reasons
+                .iter()
+                .any(|reason| reason.contains("collection references"))
+        }));
+    }
+}

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::db::Store;
 use crate::error::AppError;
-use crate::models::{pkb_rel_types, GraphView, UI_GRAPH_EXPORT_MAX_NODES};
+use crate::models::{GraphView, UI_GRAPH_EXPORT_MAX_NODES, pkb_rel_types};
 use crate::util::run_blocking;
 
 /// Default BFS depth when the caller sends none.

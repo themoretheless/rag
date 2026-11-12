@@ -1,17 +1,17 @@
 //! Persist and list local retrieval traces for eval debugging.
 
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     response::Response,
     routing::get,
-    Json, Router,
 };
 use serde::Deserialize;
 use serde_json::json;
 
 use super::{
-    error::{api_err, api_ok},
     HttpState,
+    error::{api_err, api_ok},
 };
 use crate::error::AppError;
 use crate::eval::RetrievalTrace;
@@ -97,7 +97,7 @@ mod tests {
     use crate::embeddings::MockEmbedder;
     use crate::eval::{RetrievalTrace, SpanBuilder};
     use crate::http_api::jobs::JobRegistry;
-    use axum::body::{to_bytes, Body};
+    use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode};
     use serde_json::Value;
     use std::sync::Arc;

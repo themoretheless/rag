@@ -1,0 +1,7 @@
+{
+  "scripts/bench_real_index.py": "677409a904bde5eba6be3bfdac9cb54ee34fc5e8674ebb09f4cbb888bf7676c7",
+  "scripts/audit_real_index_bench.py": "a5218a9ba8eb2210149e8bef4b4924fc1ddc17e03b05e0da3d677ee39d240932",
+  "scripts/test_real_index_bench.py": "265d902f8c69a109fc9c6bb5b5c1c38bcd2841697375a754d421e9dd82912781",
+  "scripts/mcp_smoke_client.py": "78f44eb3b5812426c7d78f0d3f919258c5e7a732c071de17dc73716a2dff3309",
+  "tests/fixtures/code-intelligence/index-bench/itoa-workloads.json": "5c11e1f2817ed1465801d811f9734d617617806139541b4e8f76893de688485e"
+}

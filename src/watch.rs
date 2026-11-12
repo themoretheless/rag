@@ -408,9 +408,11 @@ mod tests {
     #[test]
     fn config_disabled_without_roots() {
         assert!(config_from_values(None, None, None).unwrap().is_none());
-        assert!(config_from_values(Some(" ; ; "), None, None)
-            .unwrap()
-            .is_none());
+        assert!(
+            config_from_values(Some(" ; ; "), None, None)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

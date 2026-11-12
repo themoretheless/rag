@@ -75,6 +75,12 @@ impl From<serde_json::Error> for AppError {
     }
 }
 
+impl From<lin::Error> for AppError {
+    fn from(err: lin::Error) -> Self {
+        AppError::Db(err.to_string())
+    }
+}
+
 impl AppError {
     /// Stable machine-readable code shared by the HTTP envelope and MCP error data.
     ///

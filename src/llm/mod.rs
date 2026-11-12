@@ -6,9 +6,9 @@ pub mod json;
 mod provider;
 
 pub(crate) use chat::truncate;
-pub(crate) use chat::{parse_compile_json, parse_consolidate_json};
 pub use chat::{
     ChatClient, ChatMessage, CompilePage, CompileResult, ConsolidateProposal, LlmStatus,
 };
-pub use completer::{system_user, ChatCompleter};
-pub use provider::{resolve_api_key, LlmApiDialect, LlmProviderKind};
+pub(crate) use chat::{parse_compile_json, parse_consolidate_json};
+pub use completer::{ChatCompleter, system_user};
+pub use provider::{LlmApiDialect, LlmProviderKind, resolve_api_key};

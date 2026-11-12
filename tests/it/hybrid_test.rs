@@ -13,12 +13,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::Utc;
-use rag_mcp::chunking::{from_config, Chunker};
-use rag_mcp::db::search::{search, DiversityMode, SearchQuery};
+use rag_mcp::Store;
+use rag_mcp::chunking::{Chunker, from_config};
+use rag_mcp::db::search::{DiversityMode, SearchQuery, search};
 use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
 use rag_mcp::models::{Chunk, Document, SearchMode};
 use rag_mcp::testkit::open_temp_store;
-use rag_mcp::Store;
 use uuid::Uuid;
 
 const DIMS: usize = 32;

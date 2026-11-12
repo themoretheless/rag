@@ -10,20 +10,23 @@
 
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BinaryHeap, HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use duckdb::params_from_iter;
 use tracing::{debug, warn};
 
 use crate::error::{AppError, Result};
 use crate::models::{SearchContextChunk, SearchExplanation, SearchHit, SearchMode};
 
 #[cfg(test)]
-use crate::util::cosine_similarity;
+use crate::util::vector::cosine_similarity;
 
 use super::fts::{self, LexFilters};
-use super::store::{ChunkBody, Store};
+use super::lin_engine::{
+    LinReader, cell_arc_vec, cell_bool, cell_f64, cell_i64, cell_i64_opt, cell_nonempty_string,
+    cell_str, cell_string, cell_ts,
+};
+use super::store::{ChunkBody, Store, embedding_digest_vec};
 
 /// Default RRF rank constant (Cormack / common IR practice).
 pub const DEFAULT_RRF_K: f32 = 60.0;
@@ -36,7 +39,7 @@ const CANDIDATE_MULTIPLIER: usize = 5;
 const CANDIDATE_FLOOR: usize = 50;
 /// Hard per-source bound for adaptive diversity refill.
 const MAX_DIVERSITY_CANDIDATES: usize = 4096;
-pub use crate::config::limits::MAX_TOP_K;
+pub const MAX_TOP_K: usize = 100;
 pub const MAX_QUERY_CHARS: usize = 4096;
 
 /// Result diversity strategy.
@@ -232,7 +235,7 @@ pub struct CorpusSearchGuard {
 }
 
 pub fn acquire_corpus_search_guard(store: &Store, _mode: SearchMode) -> Result<CorpusSearchGuard> {
-    let guard = store.corpus_lane().try_corpus_idle_guard().ok_or_else(|| {
+    let guard = store.try_corpus_idle_guard().ok_or_else(|| {
         AppError::busy("exclusive corpus mutation is active; retry search after it completes")
     })?;
     Ok(CorpusSearchGuard { _guard: guard })
@@ -260,9 +263,6 @@ pub fn search_with_corpus_guard(
     // Exhaustive dispatch only: new SearchMode variants must add a run_* arm here
     // (and update SearchMode::as_str / parse / needs_*). Do not use `_`.
     let mut timings = StageTimings::default();
-    // Document ranking fields read while hydrating vector hits, reused by
-    // `finalize_hits` instead of reading the same documents again.
-    let mut ranking = RankingCache::new();
     let mut refill_rounds = 0;
     let mut reached_refill_cap = false;
     let hits = loop {
@@ -271,7 +271,7 @@ pub fn search_with_corpus_guard(
         let mut round_timings = StageTimings::default();
         let hits = match query.mode {
             SearchMode::Vec => {
-                let mut hits = run_vec(store, query, pool, &filters, &mut ranking)?;
+                let mut hits = run_vec(store, query, pool, &filters)?;
                 round_timings.vec_ms = Some(elapsed_ms(round_started));
                 stamp_ranks(&mut hits, false);
                 hits
@@ -283,14 +283,7 @@ pub fn search_with_corpus_guard(
                 hits
             }
             SearchMode::Hybrid => {
-                match run_hybrid(
-                    store,
-                    query,
-                    pool,
-                    &filters,
-                    &mut round_timings,
-                    &mut ranking,
-                )? {
+                match run_hybrid(store, query, pool, &filters, &mut round_timings)? {
                     HybridOutcome::Fused(h) => h,
                     HybridOutcome::VecOnly(h) => h,
                 }
@@ -320,7 +313,7 @@ pub fn search_with_corpus_guard(
     enforce_timeout(started, query.timeout_ms, "retrieval")?;
     let retrieval_ms = elapsed_ms(started);
     let post_started = Instant::now();
-    let mut hits = finalize_hits(store, hits, query, ranking)?;
+    let mut hits = finalize_hits(store, hits, query)?;
     enforce_timeout(started, query.timeout_ms, "post-processing")?;
     let postprocess_ms = elapsed_ms(post_started);
     let total_ms = elapsed_ms(started);
@@ -373,7 +366,7 @@ fn validate_query(query: &SearchQuery) -> Result<()> {
 
 fn enforce_timeout(started: Instant, timeout_ms: Option<u64>, stage: &str) -> Result<()> {
     if timeout_ms.is_some_and(|ms| started.elapsed() > Duration::from_millis(ms.max(1))) {
-        return Err(AppError::timeout(format!(
+        return Err(AppError::config(format!(
             "search timeout budget exceeded after {stage}"
         )));
     }
@@ -386,14 +379,13 @@ fn run_vec(
     query: &SearchQuery,
     pool: usize,
     filters: &LexFilters,
-    ranking: &mut RankingCache,
 ) -> Result<Vec<SearchHit>> {
     // Vec-only path stays usable when hybrid/lex infrastructure is incomplete.
     let emb = query
         .query_embedding
         .as_deref()
         .ok_or_else(|| AppError::embeddings("vec search requires query_embedding"))?;
-    search_vec_ranked(store, emb, pool, filters, ranking)
+    search_vec(store, emb, pool, filters)
 }
 
 /// Lexical / FTS path (requires `query_text`).
@@ -407,20 +399,23 @@ fn run_lex(
         .query_text
         .as_deref()
         .ok_or_else(|| AppError::fts("lex search requires query_text"))?;
-    if pool == 0 || text.trim().is_empty() {
-        return Ok(Vec::new());
-    }
-    // db::fts owns the fallback (DuckDB BM25, else term frequency); a failure
-    // here is final: retrying the same call cannot succeed.
-    let hits = fts::search_bm25_with_stemmer(
+    // Prefer fts module (DuckDB BM25 or TF fallback) with scope filters.
+    match fts::search_bm25_with_stemmer(
         store,
         text,
         pool,
         filters,
         Some(query.fts_stemmer.as_str()),
-    )?;
-    debug!(count = hits.len(), "lex search via db::fts");
-    Ok(hits)
+    ) {
+        Ok(h) => {
+            debug!(count = h.len(), "lex search via db::fts");
+            Ok(h)
+        }
+        Err(e) => {
+            warn!(error = %e, "fts::search_bm25 failed; using in-module lex fallback");
+            search_lex(store, text, pool, filters, &query.fts_stemmer)
+        }
+    }
 }
 
 /// Hybrid path result: full RRF fusion, or vec-only when lex is unavailable.
@@ -437,7 +432,6 @@ fn run_hybrid(
     pool: usize,
     filters: &LexFilters,
     timings: &mut StageTimings,
-    ranking: &mut RankingCache,
 ) -> Result<HybridOutcome> {
     let emb = query
         .query_embedding
@@ -452,29 +446,38 @@ fn run_hybrid(
     // ranking can drop every in-project candidate when another project has
     // enough stronger matches; `search_vec` also owns the generation-aware
     // normalized snapshot cache.
-    let mut vec_hits = search_vec_ranked(store, emb, pool, filters, ranking)?;
+    let mut vec_hits = search_vec(store, emb, pool, filters)?;
     stamp_ranks(&mut vec_hits, false);
     timings.vec_ms = Some(elapsed_ms(vec_started));
     let lex_started = Instant::now();
-    let lex_result = if text.trim().is_empty() {
-        Ok(Vec::new())
-    } else {
-        fts::search_bm25_with_stemmer(store, text, pool, filters, Some(query.fts_stemmer.as_str()))
-    };
-    let mut lex_hits = match lex_result {
-        Ok(hits) => hits,
-        Err(error) => {
-            // db::fts already fell back internally; hybrid keeps the vector
-            // results so search still returns hits.
-            warn!(%error, "hybrid lexical leg failed; returning vec-only results");
-            return Ok(HybridOutcome::VecOnly(vec_hits));
+    let mut lex_hits = match fts::search_bm25_with_stemmer(
+        store,
+        text,
+        pool,
+        filters,
+        Some(query.fts_stemmer.as_str()),
+    ) {
+        Ok(h) => h,
+        Err(e) => {
+            warn!(error = %e, "fts::search_bm25 failed in hybrid; lex fallback");
+            match search_lex(store, text, pool, filters, &query.fts_stemmer) {
+                Ok(h) => h,
+                Err(e2) => {
+                    // Hybrid incomplete: keep vec results so search still returns hits.
+                    warn!(
+                        error = %e2,
+                        "hybrid lex fallback failed; returning vec-only results"
+                    );
+                    return Ok(HybridOutcome::VecOnly(vec_hits));
+                }
+            }
         }
     };
     stamp_ranks(&mut lex_hits, true);
     timings.lex_ms = Some(elapsed_ms(lex_started));
-    Ok(HybridOutcome::Fused(fuse_rrf_owned(
-        vec_hits,
-        lex_hits,
+    Ok(HybridOutcome::Fused(fuse_rrf(
+        &vec_hits,
+        &lex_hits,
         query.rrf_k,
     )))
 }
@@ -484,7 +487,6 @@ fn finalize_hits(
     store: &Store,
     mut hits: Vec<SearchHit>,
     query: &SearchQuery,
-    mut ranking: RankingCache,
 ) -> Result<Vec<SearchHit>> {
     if let Some(min) = query.min_score {
         hits = apply_min_score(hits, min);
@@ -498,19 +500,23 @@ fn finalize_hits(
         .as_deref()
         .map(str::trim)
         .filter(|q| !q.is_empty());
-    // Documents hydrated with the vector hits are already known; one batch
-    // read covers the rest (lexical-only hits) for recency and field boosts.
-    if recency.is_some() || boost_query.is_some() {
-        fill_ranking_fields(store, &hits, &mut ranking)?;
-    }
+    // One lightweight batch read serves both recency and field boosts; this
+    // used to be two full `get_document` loads per hit.
+    let ranking = if recency.is_some() || boost_query.is_some() {
+        ranking_fields(store, &hits)?
+    } else {
+        HashMap::new()
+    };
 
     if let Some(half_life_days) = recency {
         let now = query.now.unwrap_or_else(chrono::Utc::now);
         for hit in &mut hits {
             if let Some(document) = ranking.get(&hit.document_id) {
-                let updated_at = document.updated_at()?;
-                let age_days =
-                    now.signed_duration_since(updated_at).num_seconds().max(0) as f64 / 86_400.0;
+                let age_days = now
+                    .signed_duration_since(document.updated_at)
+                    .num_seconds()
+                    .max(0) as f64
+                    / 86_400.0;
                 let freshness = 2f64.powf(-age_days / half_life_days) as f32;
                 hit.score *= 1.0 + freshness;
             }
@@ -607,79 +613,39 @@ struct RankingFields {
     uri: String,
     pinned: bool,
     boost: f64,
-    /// `CAST(updated_at AS VARCHAR)`, parsed only when recency applies.
-    updated_raw: String,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-impl RankingFields {
-    /// Read from `(id, title, uri, pinned, boost, updated_at)` as selected by
-    /// [`RANKING_COLUMNS`].
-    fn from_row(row: &duckdb::Row<'_>) -> Result<(String, Self)> {
-        Ok((
-            row.get(0)?,
-            Self {
-                title: row.get(1)?,
-                uri: row.get(2)?,
-                pinned: row.get(3)?,
-                boost: row.get(4)?,
-                updated_raw: row.get(5)?,
-            },
-        ))
-    }
-
-    fn updated_at(&self) -> Result<chrono::DateTime<chrono::Utc>> {
-        crate::util::parse_db_timestamp(&self.updated_raw).ok_or_else(|| {
-            AppError::db(format!(
-                "invalid timestamp value: {}",
-                self.updated_raw.trim()
-            ))
-        })
-    }
-}
-
-/// Ranking fields per document id, filled during one search.
-type RankingCache = HashMap<String, RankingFields>;
-
-/// Projection read by [`RankingFields::from_row`].
-const RANKING_COLUMNS: &str = "id, title, uri, COALESCE(pinned, false), COALESCE(boost, 1.0), \
-     CAST(updated_at AS VARCHAR)";
-
-/// Add the ranking fields of every distinct document among `hits` that
-/// `ranking` does not hold yet, in one query.
-fn fill_ranking_fields(
-    store: &Store,
-    hits: &[SearchHit],
-    ranking: &mut RankingCache,
-) -> Result<()> {
+/// Ranking fields for every distinct document among `hits`, in one read lock.
+fn ranking_fields(store: &Store, hits: &[SearchHit]) -> Result<HashMap<String, RankingFields>> {
     let ids: Vec<&str> = hits
         .iter()
         .map(|hit| hit.document_id.as_str())
-        .filter(|id| !ranking.contains_key(*id))
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
     if ids.is_empty() {
-        return Ok(());
+        return Ok(HashMap::new());
     }
-    let placeholders = crate::db::sql::in_placeholders(ids.len());
-    let conn = store.lock()?;
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {RANKING_COLUMNS} FROM documents WHERE id IN ({placeholders})"
-    ))?;
-    crate::db::rows::for_each_row(&mut stmt, params_from_iter(ids.iter()), |row| {
-        let (id, fields) = RankingFields::from_row(row)?;
-        ranking.insert(id, fields);
-        Ok(())
-    })?;
-    Ok(())
-}
-
-/// Ranking fields for every distinct document among `hits`, in one query.
-#[cfg(test)]
-fn ranking_fields(store: &Store, hits: &[SearchHit]) -> Result<RankingCache> {
-    let mut ranking = RankingCache::new();
-    fill_ranking_fields(store, hits, &mut ranking)?;
-    Ok(ranking)
+    let r = store.read()?;
+    let mut out = HashMap::with_capacity(ids.len());
+    const RANKING_PROJ_COLS: &[&str] = &["title", "uri", "pinned", "boost", "updated_at"];
+    for id in ids {
+        if let Some(row) = r.get_projected_by_id("documents", id, RANKING_PROJ_COLS)? {
+            let updated_at = cell_ts(&row, "updated_at")?;
+            out.insert(
+                id.to_string(),
+                RankingFields {
+                    title: cell_string(&row, "title"),
+                    uri: cell_string(&row, "uri"),
+                    pinned: cell_bool(&row, "pinned", false),
+                    boost: cell_f64(&row, "boost", 1.0),
+                    updated_at,
+                },
+            );
+        }
+    }
+    Ok(out)
 }
 
 fn apply_field_boosts(
@@ -691,7 +657,7 @@ fn apply_field_boosts(
         return;
     };
     let needle = raw.to_lowercase();
-    let terms = fts::tokenize(&needle);
+    let terms = tokenize(&needle);
     // Per-document checks repeat for every hit of that document: memoize.
     let mut uri_matches: HashMap<&str, bool> = HashMap::new();
     for hit in hits {
@@ -736,9 +702,12 @@ fn apply_field_boosts(
 /// Fuse any number of independently ranked query result lists with RRF.
 pub fn fuse_rrf_many(lists: &[Vec<SearchHit>], rrf_k: f32, top_k: usize) -> Vec<SearchHit> {
     let k = if rrf_k > 0.0 { rrf_k } else { DEFAULT_RRF_K };
-    let borrowed: Vec<&[SearchHit]> = lists.iter().map(Vec::as_slice).collect();
-    let mut out: Vec<_> = rrf_fuse_borrowed(&borrowed, k)
-        .into_iter()
+    let mut fused = HashMap::new();
+    for list in lists {
+        accumulate_rrf_list(&mut fused, list, k);
+    }
+    let mut out: Vec<_> = fused
+        .into_values()
         .map(|(rrf, mut hit)| {
             hit.score = rrf;
             hit.score_rrf = Some(rrf);
@@ -766,7 +735,7 @@ pub fn attach_context(
     let Some(expansion) = expansion else {
         // Section labels only: one metadata read for all hits, no chunk bodies.
         let ids: Vec<&str> = hits.iter().map(|hit| hit.chunk_id.as_str()).collect();
-        let metadata = store.chunks().chunk_metadata_by_ids(&ids)?;
+        let metadata = store.chunk_metadata_by_ids(&ids)?;
         for hit in hits {
             if let Some(json) = metadata.get(&hit.chunk_id) {
                 (hit.heading_path, hit.section) = section_metadata(json);
@@ -791,56 +760,21 @@ pub fn attach_context(
     let radius = neighbor_chunks.max(1) as i32;
     let mut chunks_by_document: HashMap<String, Vec<Sectioned>> = HashMap::new();
     let mut window: Vec<Sectioned>;
-    // Neighbour windows of every hit in one read, grouped by document.
-    let neighbor_bodies: HashMap<String, Vec<Sectioned>> =
-        if matches!(expansion, ContextExpansion::Neighbors) {
-            let windows: Vec<(&str, i32, i32)> = hits
-                .iter()
-                .map(|hit| {
-                    (
-                        hit.document_id.as_str(),
-                        hit.chunk_index.saturating_sub(radius),
-                        hit.chunk_index.saturating_add(radius),
-                    )
-                })
-                .collect();
-            store
-                .chunks()
-                .list_chunk_bodies_in_windows(&windows)?
-                .into_iter()
-                .map(|(document_id, bodies)| (document_id, sectioned(bodies)))
-                .collect()
-        } else {
-            HashMap::new()
-        };
     for hit in hits {
         let chunks: &Vec<Sectioned> = match expansion {
             ContextExpansion::ParentSection | ContextExpansion::Parent => {
                 if !chunks_by_document.contains_key(&hit.document_id) {
-                    let loaded = sectioned(
-                        store
-                            .chunks()
-                            .list_chunk_bodies_for_document(&hit.document_id)?,
-                    );
+                    let loaded = sectioned(store.list_chunk_bodies_for_document(&hit.document_id)?);
                     chunks_by_document.insert(hit.document_id.clone(), loaded);
                 }
                 &chunks_by_document[&hit.document_id]
             }
             ContextExpansion::Neighbors => {
-                let (low, high) = (
+                window = sectioned(store.list_chunk_bodies_in_range(
+                    &hit.document_id,
                     hit.chunk_index.saturating_sub(radius),
                     hit.chunk_index.saturating_add(radius),
-                );
-                window = neighbor_bodies
-                    .get(&hit.document_id)
-                    .map(|bodies| {
-                        bodies
-                            .iter()
-                            .filter(|(c, _, _)| (low..=high).contains(&c.chunk_index))
-                            .cloned()
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                )?);
                 &window
             }
         };
@@ -893,7 +827,7 @@ pub fn attach_context(
             selected
                 .iter()
                 .map(|(chunk, heading_path, section)| SearchContextChunk {
-                    chunk_id: chunk.id.to_string(),
+                    chunk_id: chunk.id.clone(),
                     chunk_index: chunk.chunk_index,
                     content: chunk.content.clone(),
                     heading_path: heading_path.clone(),
@@ -948,7 +882,7 @@ fn mmr_select(hits: Vec<SearchHit>, max_per_doc: usize, limit: usize) -> Vec<Sea
     let lambda = 0.7f32;
     let token_sets: Vec<HashSet<String>> = hits
         .iter()
-        .map(|h| fts::tokenize(&h.content).into_iter().collect())
+        .map(|h| tokenize(&h.content).into_iter().collect())
         .collect();
 
     // `max_sim[i]` is hit i's highest similarity to anything selected so far;
@@ -1040,248 +974,28 @@ fn candidate_pool_size(top_k: usize) -> usize {
 // Vector search
 // ---------------------------------------------------------------------------
 
-/// Normalized vector snapshots of one database, owned by its [`Store`] (and
-/// shared by its clones). Rows are read under the connection mutex; parsing,
-/// normalizing and interning run after it is released, so writers are not
-/// blocked by a snapshot build.
-#[derive(Default)]
-pub(crate) struct VectorCache {
-    /// Database-wide snapshot of the latest generation built.
-    global: Option<Arc<VectorSnapshot>>,
-    /// The last scoped search's snapshot.
-    scoped: Option<ScopedVectorSnapshot>,
-}
-
-impl std::fmt::Debug for VectorCache {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("VectorCache")
-            .field("global", &self.global.as_ref().map(|s| s.generation))
-            .field(
-                "scoped",
-                &self.scoped.as_ref().map(|s| s.snapshot.generation),
-            )
-            .finish()
-    }
-}
+static VECTOR_SNAPSHOTS: OnceLock<Mutex<HashMap<usize, Arc<VectorSnapshot>>>> = OnceLock::new();
 
 #[derive(Debug)]
-pub(crate) struct VectorSnapshot {
+struct VectorSnapshot {
     generation: u64,
     chunks: Vec<VectorSnapshotChunk>,
-    /// Interned document ids, shared with the previous snapshot while no new
-    /// document appears.
-    documents: Arc<DocumentTable>,
-}
-
-/// Interned document ids: `VectorSnapshotChunk::document` indexes `ids`.
-/// Ids of deleted documents may linger; no chunk points at them.
-#[derive(Debug, Clone, Default)]
-struct DocumentTable {
-    ids: Vec<String>,
-    index: HashMap<String, u32>,
-}
-
-impl DocumentTable {
-    fn intern(&mut self, id: &str) -> Result<u32> {
-        if let Some(index) = self.index.get(id) {
-            return Ok(*index);
-        }
-        let index = u32::try_from(self.ids.len())
-            .map_err(|_| AppError::db("vector snapshot exceeds u32 documents"))?;
-        self.index.insert(id.to_owned(), index);
-        self.ids.push(id.to_owned());
-        Ok(index)
-    }
 }
 
 #[derive(Debug, Clone)]
 struct VectorSnapshotChunk {
-    id: Arc<str>,
-    document: u32,
+    id: String,
+    document_id: String,
     chunk_index: i32,
-    /// `chunks.embedding_digest`: lets a refresh reuse this parsed vector
+    char_start: i32,
+    char_end: i32,
+    metadata_json: String,
+    /// `chunks.embedding_digest`: lets a refresh reuse this normalized vector
     /// when the stored embedding is unchanged.
     embedding_hash: i64,
     /// Normalized vector, shared by reference across snapshot refreshes so an
     /// unchanged chunk is never copied.
     vector: Arc<[f32]>,
-}
-
-impl VectorSnapshot {
-    fn document_id(&self, chunk: &VectorSnapshotChunk) -> &str {
-        &self.documents.ids[chunk.document as usize]
-    }
-}
-
-/// A stored embedding read under the connection lock: either reused from the
-/// previous snapshot or still to be normalized.
-enum RawVector {
-    Reuse(Arc<[f32]>),
-    Parse(Vec<f32>),
-}
-
-/// One chunk row read under the lock, before parsing and interning.
-struct RawChunk {
-    id: String,
-    document_id: String,
-    chunk_index: i32,
-    embedding_hash: i64,
-    vector: RawVector,
-}
-
-/// Rows of a snapshot read under the lock; [`Self::finish`] runs without it.
-struct RawSnapshot {
-    generation: u64,
-    /// In snapshot order (document, chunk index, id).
-    rows: Vec<RawChunk>,
-    /// Change-log refresh: the previous snapshot, and per interned document
-    /// whether `rows` replaces its chunks. Other documents keep theirs.
-    base: Option<(Arc<VectorSnapshot>, Vec<bool>)>,
-}
-
-impl RawSnapshot {
-    fn finish(self) -> Result<VectorSnapshot> {
-        let Self {
-            generation,
-            rows,
-            base,
-        } = self;
-        // Reuse the previous document table unless a new document appears.
-        let mut documents = match &base {
-            Some((previous, _))
-                if rows
-                    .iter()
-                    .all(|row| previous.documents.index.contains_key(&row.document_id)) =>
-            {
-                previous.documents.clone()
-            }
-            Some((previous, _)) => Arc::new((*previous.documents).clone()),
-            None => Arc::new(DocumentTable::default()),
-        };
-        let mut fresh = Vec::with_capacity(rows.len());
-        let mut skipped: Vec<String> = Vec::new();
-        {
-            let table = Arc::make_mut(&mut documents);
-            for row in rows {
-                let vector = match row.vector {
-                    RawVector::Reuse(vector) => vector,
-                    // No stored vector (NULL, quarantined) or one with a
-                    // non-finite element: skip the chunk, not the snapshot.
-                    RawVector::Parse(raw)
-                        if raw.is_empty() || raw.iter().any(|value| !value.is_finite()) =>
-                    {
-                        skipped.push(row.id);
-                        continue;
-                    }
-                    RawVector::Parse(raw) => normalize_stored(&raw),
-                };
-                fresh.push(VectorSnapshotChunk {
-                    id: row.id.into(),
-                    document: table.intern(&row.document_id)?,
-                    chunk_index: row.chunk_index,
-                    embedding_hash: row.embedding_hash,
-                    vector,
-                });
-            }
-        }
-        if !skipped.is_empty() {
-            tracing::warn!(
-                count = skipped.len(),
-                chunk_ids = ?skipped.iter().take(20).collect::<Vec<_>>(),
-                "vector snapshot skipped chunks without a usable embedding"
-            );
-        }
-        let chunks = match base {
-            None => fresh,
-            Some((previous, changed)) => {
-                // Merge two sorted runs: the kept chunks and the fresh rows.
-                let key = |chunk: &VectorSnapshotChunk| {
-                    (
-                        documents.ids[chunk.document as usize].as_str(),
-                        chunk.chunk_index,
-                    )
-                };
-                // A chunk re-parented into a changed document is read fresh;
-                // drop its stale copy under the old (unchanged) document so a
-                // chunk id appears once, newest wins.
-                let fresh_ids: HashSet<Arc<str>> =
-                    fresh.iter().map(|chunk| chunk.id.clone()).collect();
-                let mut kept = previous
-                    .chunks
-                    .iter()
-                    .filter(|chunk| {
-                        !changed[chunk.document as usize] && !fresh_ids.contains(&chunk.id)
-                    })
-                    .peekable();
-                let mut fresh = fresh.into_iter().peekable();
-                let mut merged = Vec::with_capacity(previous.chunks.len() + fresh.len());
-                loop {
-                    let take_kept = match (kept.peek(), fresh.peek()) {
-                        (Some(old), Some(new)) => (key(old), &*old.id) <= (key(new), &*new.id),
-                        (Some(_), None) => true,
-                        (None, Some(_)) => false,
-                        (None, None) => break,
-                    };
-                    if take_kept {
-                        merged.extend(kept.next().cloned());
-                    } else {
-                        merged.extend(fresh.next());
-                    }
-                }
-                merged
-            }
-        };
-        let (chunks, documents) = compact_documents(chunks, documents);
-        Ok(VectorSnapshot {
-            generation,
-            chunks,
-            documents,
-        })
-    }
-}
-
-/// Smallest interned table [`compact_documents`] considers.
-const COMPACT_MIN_DOCUMENTS: usize = 64;
-
-/// Rebuild the interned document table when more than half of its ids have
-/// no chunk left. A change-log refresh reuses (and only ever grows) the
-/// previous table, so deleted documents would otherwise accumulate for the
-/// life of the process.
-fn compact_documents(
-    mut chunks: Vec<VectorSnapshotChunk>,
-    documents: Arc<DocumentTable>,
-) -> (Vec<VectorSnapshotChunk>, Arc<DocumentTable>) {
-    if documents.ids.len() < COMPACT_MIN_DOCUMENTS {
-        return (chunks, documents);
-    }
-    let mut live = vec![false; documents.ids.len()];
-    for chunk in &chunks {
-        live[chunk.document as usize] = true;
-    }
-    let live_count = live.iter().filter(|live| **live).count();
-    if live_count * 2 >= documents.ids.len() {
-        return (chunks, documents);
-    }
-    let mut remap = vec![u32::MAX; documents.ids.len()];
-    let mut table = DocumentTable::default();
-    for (old, id) in documents.ids.iter().enumerate() {
-        if live[old] {
-            let index = table.ids.len() as u32;
-            table.index.insert(id.clone(), index);
-            table.ids.push(id.clone());
-            remap[old] = index;
-        }
-    }
-    for chunk in &mut chunks {
-        chunk.document = remap[chunk.document as usize];
-    }
-    (chunks, Arc::new(table))
-}
-
-fn normalize_stored(raw: &[f32]) -> Arc<[f32]> {
-    normalized_vector(raw)
-        .unwrap_or_else(|| vec![0.0; raw.len()])
-        .into()
 }
 
 /// Documents a vector search may return. Titles and uris are read only for
@@ -1299,24 +1013,10 @@ enum VectorDocumentScope {
 }
 
 impl VectorDocumentScope {
-    /// Membership per interned document of `snapshot`.
-    fn mask(&self, snapshot: &VectorSnapshot) -> Vec<bool> {
+    fn contains(&self, document_id: &str) -> bool {
         match self {
-            Self::Excluding(ids) => snapshot
-                .documents
-                .ids
-                .iter()
-                .map(|id| !ids.contains(id))
-                .collect(),
-            Self::Only(ids) => {
-                let mut mask = vec![false; snapshot.documents.ids.len()];
-                for id in ids {
-                    if let Some(index) = snapshot.documents.index.get(id) {
-                        mask[*index as usize] = true;
-                    }
-                }
-                mask
-            }
+            Self::Excluding(ids) => !ids.contains(document_id),
+            Self::Only(ids) => ids.contains(document_id),
         }
     }
 
@@ -1324,15 +1024,19 @@ impl VectorDocumentScope {
     /// set (no-op for `Only`, which lists existing documents).
     fn exclude_orphan_documents(&mut self, store: &Store) -> Result<()> {
         if let Self::Excluding(ids) = self {
-            let conn = store.lock()?;
-            let mut stmt = conn.prepare(
-                "SELECT DISTINCT c.document_id FROM chunks c \
-                 WHERE NOT EXISTS (SELECT 1 FROM documents d WHERE d.id = c.document_id)",
-            )?;
-            crate::db::rows::for_each_row(&mut stmt, [], |row| {
-                ids.insert(row.get(0)?);
-                Ok(())
+            let r = store.read()?;
+            let mut candidate_docs = HashSet::new();
+            r.scan_each_projected("chunks", &["document_id"], |row| {
+                if let Some(doc_id) = cell_str(row, "document_id") {
+                    candidate_docs.insert(doc_id.to_string());
+                }
+                Ok(true)
             })?;
+            for doc_id in candidate_docs {
+                if !r.exists_by_id("documents", &doc_id)? {
+                    ids.insert(doc_id);
+                }
+            }
         }
         Ok(())
     }
@@ -1343,32 +1047,229 @@ impl VectorDocumentScope {
             Self::Only(ids) => Some(ids),
         }
     }
+
+    fn scope_cache_tag(&self) -> u64 {
+        fn fnv1a(bytes: &[u8], mut h: u64) -> u64 {
+            for &b in bytes {
+                h ^= u64::from(b);
+                h = h.wrapping_mul(0x100_0000_01b3);
+            }
+            h
+        }
+        match self {
+            Self::Excluding(ex) => {
+                if ex.is_empty() {
+                    return 0x554e_4649_4c54_4552;
+                }
+                let mut sorted: Vec<&str> = ex.iter().map(String::as_str).collect();
+                sorted.sort_unstable();
+                let mut h = 0xcbf2_9ce4_8422_2325u64 ^ 0xE1;
+                for s in sorted {
+                    h = fnv1a(s.as_bytes(), h);
+                    h = fnv1a(&[0xff], h);
+                }
+                h
+            }
+            Self::Only(only) => {
+                let mut sorted: Vec<&str> = only.iter().map(String::as_str).collect();
+                sorted.sort_unstable();
+                let mut h = 0xcbf2_9ce4_8422_2325u64 ^ 0x01;
+                for s in sorted {
+                    h = fnv1a(s.as_bytes(), h);
+                    h = fnv1a(&[0xff], h);
+                }
+                h
+            }
+        }
+    }
 }
 
-#[cfg(test)]
+struct CachedDiskVecScope {
+    manifest_generation: u64,
+    scope_key: (String, Vec<String>),
+    documents: VectorDocumentScope,
+    scope_tag: u64,
+    /// Pre-built sorted `Vec<String>` ONLY when `only_ids.len() <= 4096` (for Fast Path 1).
+    small_only_ids: Option<Vec<String>>,
+}
+
+fn disk_vec_scope_cache() -> &'static Mutex<HashMap<usize, Vec<Arc<CachedDiskVecScope>>>> {
+    static CACHE: OnceLock<Mutex<HashMap<usize, Vec<Arc<CachedDiskVecScope>>>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn get_or_load_disk_vec_scope(
+    store: &Store,
+    r: &impl LinReader,
+    eng: &lin::disk_v2::DiskEngineV2,
+    filters: &LexFilters,
+) -> Result<Arc<CachedDiskVecScope>> {
+    let manifest_gen = eng.manifest.generation;
+    let scope_key = filters.scope_where_clause("d.id");
+    let cacheable = !eng.has_active_savepoint();
+    let bkey = store.backend_key();
+
+    if cacheable
+        && let Ok(guard) = disk_vec_scope_cache().lock()
+        && let Some(entries) = guard.get(&bkey)
+        && let Some(found) = entries
+            .iter()
+            .find(|e| e.manifest_generation == manifest_gen && e.scope_key == scope_key)
+    {
+        return Ok(Arc::clone(found));
+    }
+
+    let documents = load_vector_documents(r, filters)?;
+    let scope_tag = documents.scope_cache_tag();
+    let small_only_ids = documents.only_ids().and_then(|ids| {
+        if ids.len() <= 4096 {
+            let mut v: Vec<String> = ids.iter().cloned().collect();
+            v.sort_unstable();
+            Some(v)
+        } else {
+            None
+        }
+    });
+    let built = Arc::new(CachedDiskVecScope {
+        manifest_generation: manifest_gen,
+        scope_key,
+        documents,
+        scope_tag,
+        small_only_ids,
+    });
+
+    if cacheable && let Ok(mut guard) = disk_vec_scope_cache().lock() {
+        let entries = guard.entry(bkey).or_default();
+        entries.retain(|e| e.manifest_generation == manifest_gen);
+        if entries.len() >= 16 {
+            entries.remove(0);
+        }
+        entries.push(Arc::clone(&built));
+    }
+    Ok(built)
+}
+
+fn search_vec_disk_v2(
+    store: &Store,
+    normalized_query: &[f32],
+    top_k: usize,
+    filters: &LexFilters,
+) -> Result<Option<Vec<SearchHit>>> {
+    let mut cached_scope = {
+        let r = store.read()?;
+        let Some(eng) = r.disk_v2() else {
+            return Ok(None);
+        };
+        get_or_load_disk_vec_scope(store, &r, eng, filters)?
+    };
+    let mut orphan_override: Option<VectorDocumentScope> = None;
+
+    for attempt in 0..2 {
+        let r = store.read()?;
+        let Some(eng) = r.disk_v2() else {
+            return Ok(None);
+        };
+        if orphan_override.is_none() && cached_scope.manifest_generation != eng.manifest.generation
+        {
+            cached_scope = get_or_load_disk_vec_scope(store, &r, eng, filters)?;
+        }
+        let docs_ref: &VectorDocumentScope =
+            orphan_override.as_ref().unwrap_or(&cached_scope.documents);
+        let unfiltered = matches!(docs_ref, VectorDocumentScope::Excluding(ex) if ex.is_empty());
+        let only_refs: Option<Vec<&str>> = if orphan_override.is_none() {
+            cached_scope
+                .small_only_ids
+                .as_ref()
+                .map(|v| v.iter().map(String::as_str).collect())
+        } else {
+            docs_ref.only_ids().and_then(|ids| {
+                (ids.len() <= 4096).then(|| ids.iter().map(String::as_str).collect())
+            })
+        };
+        let scope_tag = Some(if orphan_override.is_none() {
+            cached_scope.scope_tag
+        } else {
+            docs_ref.scope_cache_tag()
+        });
+
+        let winners = eng.search_vectors_out_of_core(
+            "chunks",
+            "embedding",
+            "document_id",
+            normalized_query,
+            top_k,
+            unfiltered,
+            only_refs.as_deref(),
+            scope_tag,
+            |doc_id| docs_ref.contains(doc_id),
+        )?;
+
+        let mut doc_cache: HashMap<String, Option<(String, String)>> =
+            HashMap::with_capacity(winners.len());
+        let mut hits = Vec::with_capacity(winners.len());
+        let mut missing_document = false;
+
+        for (score, chunk_row) in winners {
+            let doc_id = cell_string(&chunk_row, "document_id");
+            let doc_meta = if let Some(cached) = doc_cache.get(&doc_id) {
+                cached.clone()
+            } else {
+                let fetched = r
+                    .get_projected_by_id("documents", &doc_id, &["title", "uri"])?
+                    .map(|drow| (cell_string(&drow, "title"), cell_string(&drow, "uri")));
+                doc_cache.insert(doc_id.clone(), fetched.clone());
+                fetched
+            };
+            let Some((title, uri)) = doc_meta else {
+                missing_document = true;
+                continue;
+            };
+            let meta_json =
+                cell_nonempty_string(&chunk_row, "metadata_json").unwrap_or_else(|| "{}".into());
+            let (heading_path, section) = section_metadata(&meta_json);
+            hits.push(SearchHit {
+                chunk_id: cell_string(&chunk_row, "id"),
+                document_id: doc_id,
+                document_title: title,
+                document_uri: uri,
+                chunk_index: cell_i64(&chunk_row, "chunk_index", 0) as i32,
+                content: cell_string(&chunk_row, "content"),
+                score,
+                score_vec: Some(score),
+                score_lex: None,
+                score_rrf: None,
+                score_rerank: None,
+                snippet: None,
+                char_start: Some(cell_i64(&chunk_row, "char_start", 0) as i32),
+                char_end: Some(cell_i64(&chunk_row, "char_end", 0) as i32),
+                heading_path,
+                section,
+                context: None,
+                explanation: None,
+                rank_vec: None,
+                rank_lex: None,
+            });
+        }
+        drop(r);
+
+        if !missing_document || docs_ref.only_ids().is_some() || attempt == 1 {
+            return Ok(Some(hits));
+        }
+        let mut cloned_docs = match &cached_scope.documents {
+            VectorDocumentScope::Excluding(ex) => VectorDocumentScope::Excluding(ex.clone()),
+            VectorDocumentScope::Only(on) => VectorDocumentScope::Only(on.clone()),
+        };
+        cloned_docs.exclude_orphan_documents(store)?;
+        orphan_override = Some(cloned_docs);
+    }
+    Ok(Some(Vec::new()))
+}
+
 fn search_vec(
     store: &Store,
     query_embedding: &[f32],
     top_k: usize,
     filters: &LexFilters,
-) -> Result<Vec<SearchHit>> {
-    search_vec_ranked(
-        store,
-        query_embedding,
-        top_k,
-        filters,
-        &mut RankingCache::new(),
-    )
-}
-
-/// [`search_vec`] that also records the ranking fields of the documents it
-/// hydrates into `ranking`.
-fn search_vec_ranked(
-    store: &Store,
-    query_embedding: &[f32],
-    top_k: usize,
-    filters: &LexFilters,
-    ranking: &mut RankingCache,
 ) -> Result<Vec<SearchHit>> {
     if top_k == 0 || query_embedding.is_empty() {
         return Ok(Vec::new());
@@ -1378,9 +1279,13 @@ fn search_vec_ranked(
         return Ok(Vec::new());
     };
 
+    if let Some(disk_hits) = search_vec_disk_v2(store, &normalized_query, top_k, filters)? {
+        return Ok(disk_hits);
+    }
+
     let (snapshot, mut documents) = vector_search_inputs(store, filters)?;
     let ranked = rank_vector_candidates(&snapshot, &documents, &normalized_query, top_k);
-    let (hits, missing_document) = hydrate_vector_hits(store, &snapshot, ranked, ranking)?;
+    let (hits, missing_document) = hydrate_vector_hits(store, &snapshot, ranked)?;
     if !missing_document || documents.only_ids().is_some() {
         return Ok(hits);
     }
@@ -1390,7 +1295,7 @@ fn search_vec_ranked(
     // remain.
     documents.exclude_orphan_documents(store)?;
     let ranked = rank_vector_candidates(&snapshot, &documents, &normalized_query, top_k);
-    Ok(hydrate_vector_hits(store, &snapshot, ranked, ranking)?.0)
+    Ok(hydrate_vector_hits(store, &snapshot, ranked)?.0)
 }
 
 fn rank_vector_candidates(
@@ -1401,19 +1306,23 @@ fn rank_vector_candidates(
 ) -> Vec<RankedVectorCandidate> {
     let mut heap: BinaryHeap<Reverse<RankedVectorCandidate>> =
         BinaryHeap::with_capacity(top_k.saturating_add(1));
-    let allowed = documents.mask(snapshot);
 
     for (ordinal, chunk) in snapshot.chunks.iter().enumerate() {
-        if !allowed[chunk.document as usize] || chunk.vector.len() != normalized_query.len() {
+        if !documents.contains(&chunk.document_id) || chunk.vector.len() != normalized_query.len() {
             continue;
         }
+        let embedding = &chunk.vector;
         let score = normalized_query
             .iter()
-            .zip(chunk.vector.iter())
+            .zip(embedding.iter())
             .map(|(left, right)| left * right)
             .sum::<f32>()
             .clamp(-1.0, 1.0);
-        let candidate = RankedVectorCandidate { score, ordinal };
+        let candidate = RankedVectorCandidate {
+            score,
+            ordinal,
+            snapshot_index: ordinal,
+        };
         if heap.len() < top_k {
             heap.push(Reverse(candidate));
         } else if heap.peek().is_some_and(|lowest| candidate > lowest.0) {
@@ -1432,8 +1341,8 @@ fn rank_vector_candidates(
 #[derive(Debug)]
 struct RankedVectorCandidate {
     score: f32,
-    /// Index into the snapshot's chunks (stable SQL order).
     ordinal: usize,
+    snapshot_index: usize,
 }
 
 impl PartialEq for RankedVectorCandidate {
@@ -1454,135 +1363,100 @@ impl Ord for RankedVectorCandidate {
     fn cmp(&self, other: &Self) -> Ordering {
         self.score
             .total_cmp(&other.score)
-            // Stable SQL order wins score ties.
+            // Stable order wins score ties.
             .then_with(|| other.ordinal.cmp(&self.ordinal))
     }
-}
-
-/// What the locked phase of [`vector_search_inputs`] decided.
-enum SnapshotPlan {
-    Cached(Arc<VectorSnapshot>),
-    /// Rows read; finish outside the lock, then cache as database-wide.
-    Global(RawSnapshot),
-    /// Rows read; finish outside the lock, then cache as the scoped entry.
-    Scoped {
-        raw: RawSnapshot,
-        scope: (String, Vec<String>),
-    },
-}
-
-fn lock_cache(store: &Store) -> Result<std::sync::MutexGuard<'_, VectorCache>> {
-    store
-        .vector_cache()
-        .lock()
-        .map_err(|error| AppError::db(format!("vector snapshot lock poisoned: {error}")))
 }
 
 fn vector_search_inputs(
     store: &Store,
     filters: &LexFilters,
 ) -> Result<(Arc<VectorSnapshot>, VectorDocumentScope)> {
-    let (plan, documents) = {
-        let conn = store.lock()?;
-        let generation = fts::chunks_generation(&conn)?;
-        // Read live: metadata-only writes (placement, archive, restore) change
-        // the scope membership without advancing the chunk generation.
-        let documents = load_vector_documents(&conn, filters)?;
-        // Lock order: connection, then cache; the cache lock is never held
-        // while waiting for the connection.
-        let (global, scoped) = {
-            let cache = lock_cache(store)?;
-            (
-                cache.global.clone(),
-                cache.scoped.as_ref().map(|entry| {
-                    (
-                        entry.scope.clone(),
-                        entry.documents.clone(),
-                        entry.snapshot.clone(),
-                    )
-                }),
-            )
-        };
-        // A database-wide snapshot already built for this generation serves
-        // any scope: ranking skips chunks whose document is outside the scope.
-        let plan = match global.as_ref().filter(|s| s.generation == generation) {
-            Some(snapshot) => SnapshotPlan::Cached(snapshot.clone()),
-            None if has_selective_vector_scope(filters) => {
-                // Exact project/document searches should pay only for their
-                // matching chunks. Do not populate the database-wide cache:
-                // unrelated source-sync commits advance the global generation
-                // continuously. The last scope is cached instead, so candidate
-                // refill rounds and multi-query fan-out reuse it. It is reused
-                // only while every document now in scope was in scope when it
-                // was built; a document moved into the scope forces a rebuild.
-                let scope = filters.scope_where_clause("d.id");
-                let reusable = scoped
-                    .as_ref()
-                    .filter(|(entry_scope, entry_docs, snapshot)| {
-                        *entry_scope == scope
-                            && snapshot.generation == generation
-                            && documents
-                                .only_ids()
-                                .is_some_and(|ids| ids.iter().all(|id| entry_docs.contains(id)))
+    let r = store.read()?;
+    let generation = fts::chunks_generation(&r)?;
+    // Read live: metadata-only writes (placement, archive, restore) change the
+    // scope membership without advancing the chunk generation.
+    let documents = load_vector_documents(&r, filters)?;
+    let key = store.backend_key();
+    // A database-wide snapshot already built for this generation serves any
+    // scope: `search_vec` skips chunks whose document is outside the scope.
+    let global = cached_snapshot(vector_snapshots(), key, generation)?;
+    let snapshot = match global {
+        Some(snapshot) => snapshot,
+        None if has_selective_vector_scope(filters) => {
+            let scope = filters.scope_where_clause("d.id");
+            let scoped = scoped_vector_snapshots()
+                .lock()
+                .map_err(|error| AppError::db(format!("vector snapshot lock poisoned: {error}")))?
+                .get(&key)
+                .filter(|entry| {
+                    entry.scope == scope
+                        && entry.snapshot.generation == generation
+                        && documents
+                            .only_ids()
+                            .is_some_and(|ids| ids.iter().all(|id| entry.documents.contains(id)))
+                })
+                .map(|entry| entry.snapshot.clone());
+            match scoped {
+                Some(snapshot) => snapshot,
+                None => {
+                    let previous_scoped = scoped_vector_snapshots()
+                        .lock()
+                        .map_err(|error| {
+                            AppError::db(format!("vector snapshot lock poisoned: {error}"))
+                        })?
+                        .get(&key)
+                        .map(|entry| (entry.scope == scope, entry.snapshot.clone()));
+                    let global_previous = vector_snapshots()
+                        .lock()
+                        .map_err(|error| {
+                            AppError::db(format!("vector snapshot lock poisoned: {error}"))
+                        })?
+                        .get(&key)
+                        .cloned();
+                    let previous = match (previous_scoped, global_previous) {
+                        (Some((true, same_scope)), _) => Some(same_scope),
+                        (_, Some(global)) => Some(global),
+                        (Some((false, other_scope)), None) => Some(other_scope),
+                        (None, None) => None,
+                    };
+                    let snapshot = Arc::new(match previous {
+                        Some(previous) => {
+                            refresh_vector_snapshot(&r, &previous, generation, Some(filters))?
+                        }
+                        None => build_vector_snapshot_with_filters(&r, generation, Some(filters))?,
                     });
-                match reusable {
-                    Some((_, _, snapshot)) => SnapshotPlan::Cached(snapshot.clone()),
-                    None => {
-                        // Reuse parsed vectors (by chunk id + digest) from the
-                        // last snapshot of this scope, else from the global
-                        // snapshot, else from another scope; parse only new or
-                        // changed chunks.
-                        let previous = match (scoped, global) {
-                            (Some((entry_scope, _, same)), _) if entry_scope == scope => Some(same),
-                            (_, Some(global)) => Some(global),
-                            (Some((_, _, other)), None) => Some(other),
-                            (None, None) => None,
-                        };
-                        let raw = match previous {
-                            Some(previous) => {
-                                read_refresh(&conn, &previous, generation, Some(filters))?
-                            }
-                            None => read_full(&conn, generation, Some(filters))?,
-                        };
-                        SnapshotPlan::Scoped { raw, scope }
-                    }
+                    scoped_vector_snapshots()
+                        .lock()
+                        .map_err(|error| {
+                            AppError::db(format!("vector snapshot lock poisoned: {error}"))
+                        })?
+                        .insert(
+                            key,
+                            ScopedVectorSnapshot {
+                                scope,
+                                documents: documents.only_ids().cloned().unwrap_or_default(),
+                                snapshot: snapshot.clone(),
+                            },
+                        );
+                    snapshot
                 }
             }
-            None => {
-                // Refresh from the previous generation's snapshot when there
-                // is one; parse the whole corpus only on the first build.
-                let raw = match global {
-                    Some(previous) => read_refresh(&conn, &previous, generation, None)?,
-                    None => read_full(&conn, generation, None)?,
-                };
-                SnapshotPlan::Global(raw)
-            }
-        };
-        (plan, documents)
-    };
-    // The connection is released: parse, normalize and intern without it.
-    let snapshot = match plan {
-        SnapshotPlan::Cached(snapshot) => snapshot,
-        SnapshotPlan::Global(raw) => {
-            let snapshot = Arc::new(raw.finish()?);
-            let mut cache = lock_cache(store)?;
-            // A concurrent search may have cached a newer generation.
-            if cache
-                .global
-                .as_ref()
-                .is_none_or(|current| current.generation <= snapshot.generation)
-            {
-                cache.global = Some(snapshot.clone());
-            }
-            snapshot
         }
-        SnapshotPlan::Scoped { raw, scope } => {
-            let snapshot = Arc::new(raw.finish()?);
-            lock_cache(store)?.scoped = Some(ScopedVectorSnapshot {
-                scope,
-                documents: documents.only_ids().cloned().unwrap_or_default(),
-                snapshot: snapshot.clone(),
+        None => {
+            let previous = vector_snapshots()
+                .lock()
+                .map_err(|error| AppError::db(format!("vector snapshot lock poisoned: {error}")))?
+                .get(&key)
+                .cloned();
+            let snapshot = Arc::new(match previous {
+                Some(previous) => refresh_vector_snapshot(&r, &previous, generation, None)?,
+                None => build_vector_snapshot(&r, generation)?,
             });
+            vector_snapshots()
+                .lock()
+                .map_err(|error| AppError::db(format!("vector snapshot lock poisoned: {error}")))?
+                .insert(key, snapshot.clone());
             snapshot
         }
     };
@@ -1601,309 +1475,545 @@ fn has_selective_vector_scope(filters: &LexFilters) -> bool {
     .any(|value| value.is_some_and(|value| !value.trim().is_empty()))
 }
 
+fn vector_snapshots() -> &'static Mutex<HashMap<usize, Arc<VectorSnapshot>>> {
+    VECTOR_SNAPSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 /// The last scoped search's snapshot, with the scope it was built for.
 struct ScopedVectorSnapshot {
-    /// Scope SQL clause plus binds.
+    /// Scope clause plus binds.
     scope: (String, Vec<String>),
     /// Documents in scope when the snapshot was built.
     documents: HashSet<String>,
     snapshot: Arc<VectorSnapshot>,
 }
 
-/// `JOIN` and `WHERE` for a scoped listing; none for the database-wide one.
-fn snapshot_scope_sql(filters: Option<&LexFilters>) -> (&'static str, String, Vec<String>) {
+fn scoped_vector_snapshots() -> &'static Mutex<HashMap<usize, ScopedVectorSnapshot>> {
+    static SCOPED: OnceLock<Mutex<HashMap<usize, ScopedVectorSnapshot>>> = OnceLock::new();
+    SCOPED.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cached_snapshot(
+    cache: &Mutex<HashMap<usize, Arc<VectorSnapshot>>>,
+    key: usize,
+    generation: u64,
+) -> Result<Option<Arc<VectorSnapshot>>> {
+    Ok(cache
+        .lock()
+        .map_err(|error| AppError::db(format!("vector snapshot lock poisoned: {error}")))?
+        .get(&key)
+        .filter(|snapshot| snapshot.generation == generation)
+        .cloned())
+}
+
+fn chunk_embedding_digest(row: &lin::Row) -> i64 {
+    if let Some(digest) = cell_i64_opt(row, "embedding_digest") {
+        return digest;
+    }
+    if let Some(json) = cell_str(row, "embedding_json").filter(|s| !s.is_empty()) {
+        return super::store::embedding_digest(json);
+    }
+    if let Some(vec) = cell_arc_vec(row, "embedding") {
+        return embedding_digest_vec(&vec);
+    }
+    0
+}
+
+fn extract_normalized_vector(row: &lin::Row) -> Result<Arc<[f32]>> {
+    if let Some(raw) = cell_arc_vec(row, "embedding") {
+        let normalized = normalized_vector(&raw).unwrap_or_else(|| vec![0.0; raw.len()]);
+        return Ok(normalized.into());
+    }
+    if let Some(json) = cell_str(row, "embedding_json").filter(|s| !s.is_empty()) {
+        let raw: Vec<f32> = serde_json::from_str(json)?;
+        let normalized = normalized_vector(&raw).unwrap_or_else(|| vec![0.0; raw.len()]);
+        return Ok(normalized.into());
+    }
+    Ok(Arc::from([] as [f32; 0]))
+}
+
+fn sort_snapshot_chunks(chunks: &mut [VectorSnapshotChunk]) {
+    chunks.sort_by(|a, b| {
+        a.document_id
+            .cmp(&b.document_id)
+            .then_with(|| a.chunk_index.cmp(&b.chunk_index))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+}
+
+fn matching_document_ids_for_filters(
+    r: &impl LinReader,
+    filters: &LexFilters,
+) -> Result<HashSet<String>> {
+    if let Some(doc_id) = filters
+        .document_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let mut out = HashSet::new();
+        if let Some(row) = r.get_by_id("documents", doc_id)?
+            && filters.matches_document_row(&row)
+        {
+            out.insert(doc_id.to_string());
+        }
+        return Ok(out);
+    }
+    if let Some(uri) = filters
+        .uri
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let rows = r.find_by_eq("documents", "uri", uri)?;
+        return Ok(rows
+            .into_iter()
+            .filter(|row| filters.matches_document_row(row))
+            .filter_map(|row| cell_str(&row, "id").map(str::to_string))
+            .collect());
+    }
+    if let Some(src) = filters
+        .source_file
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let rows = r.find_by_eq("documents", "source_file", src)?;
+        return Ok(rows
+            .into_iter()
+            .filter(|row| filters.matches_document_row(row))
+            .filter_map(|row| cell_str(&row, "id").map(str::to_string))
+            .collect());
+    }
+    if let (Some(wing), Some(room)) = (
+        filters
+            .wing
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty()),
+        filters
+            .room
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty()),
+    ) {
+        let pred = lin::query::pred::and(
+            lin::query::pred::eq("wing", wing),
+            lin::query::pred::eq("room", room),
+        );
+        let rows = r.query_filter("documents", Some(pred), None)?;
+        return Ok(rows
+            .into_iter()
+            .filter(|row| filters.matches_document_row(row))
+            .filter_map(|row| cell_str(&row, "id").map(str::to_string))
+            .collect());
+    }
+    const DOC_FILTER_COLS: &[&str] = &[
+        "id",
+        "status",
+        "wing",
+        "room",
+        "layer",
+        "kind",
+        "uri",
+        "source_file",
+    ];
+    let active_single_indexed = [
+        ("wing", filters.wing.as_deref()),
+        ("room", filters.room.as_deref()),
+        ("layer", filters.layer.as_deref()),
+        ("kind", filters.kind.as_deref()),
+    ];
+    let non_empty_count = active_single_indexed
+        .iter()
+        .filter(|(_, v)| v.map(str::trim).is_some_and(|s| !s.is_empty()))
+        .count();
+    for (field, maybe_val) in active_single_indexed {
+        if let Some(val) = maybe_val.map(str::trim).filter(|s| !s.is_empty()) {
+            let mut ids = HashSet::new();
+            // Zero-`Row` fast path when filtering by a single indexed column + active status!
+            if non_empty_count == 1
+                && filters
+                    .document_id
+                    .as_deref()
+                    .map(str::trim)
+                    .is_none_or(str::is_empty)
+                && filters
+                    .uri
+                    .as_deref()
+                    .map(str::trim)
+                    .is_none_or(str::is_empty)
+                && filters
+                    .source_file
+                    .as_deref()
+                    .map(str::trim)
+                    .is_none_or(str::is_empty)
+            {
+                r.for_each_by_eq_str3(
+                    "documents",
+                    field,
+                    val,
+                    "id",
+                    "status",
+                    None,
+                    |id_opt, st_opt, _| {
+                        let Some(id) = id_opt.filter(|s| !s.is_empty()) else {
+                            return Ok(true);
+                        };
+                        if !filters.include_archived {
+                            let st = st_opt.filter(|s| !s.is_empty()).unwrap_or("active");
+                            if st == "archived" || st == "tombstone" {
+                                return Ok(true);
+                            }
+                        }
+                        ids.insert(id.to_string());
+                        Ok(true)
+                    },
+                )?;
+                return Ok(ids);
+            }
+            r.for_each_by_eq_projected("documents", field, val, Some(DOC_FILTER_COLS), |row| {
+                if filters.matches_document_row(row)
+                    && let Some(id) = cell_str(row, "id")
+                {
+                    ids.insert(id.to_string());
+                }
+                Ok(true)
+            })?;
+            return Ok(ids);
+        }
+    }
+    let mut ids = HashSet::new();
+    r.scan_each_projected("documents", DOC_FILTER_COLS, |row| {
+        if filters.matches_document_row(row)
+            && let Some(id) = cell_str(row, "id")
+        {
+            ids.insert(id.to_string());
+        }
+        Ok(true)
+    })?;
+    Ok(ids)
+}
+
+fn build_vector_snapshot(r: &impl LinReader, generation: u64) -> Result<VectorSnapshot> {
+    build_vector_snapshot_with_filters(r, generation, None)
+}
+
+fn build_vector_snapshot_with_filters(
+    r: &impl LinReader,
+    generation: u64,
+    filters: Option<&LexFilters>,
+) -> Result<VectorSnapshot> {
+    let mut chunks = Vec::new();
     match filters {
         Some(filters) => {
-            let (where_sql, bind) = filters.scope_where_clause("d.id");
-            (
-                "INNER JOIN documents d ON d.id = c.document_id",
-                where_sql,
-                bind,
-            )
+            let doc_ids = matching_document_ids_for_filters(r, filters)?;
+            for doc_id in &doc_ids {
+                let rows = r.find_by_eq("chunks", "document_id", doc_id.as_str())?;
+                for row in &rows {
+                    chunks.push(VectorSnapshotChunk {
+                        id: cell_string(row, "id"),
+                        document_id: cell_string(row, "document_id"),
+                        chunk_index: cell_i64(row, "chunk_index", 0) as i32,
+                        char_start: cell_i64(row, "char_start", 0) as i32,
+                        char_end: cell_i64(row, "char_end", 0) as i32,
+                        metadata_json: cell_nonempty_string(row, "metadata_json")
+                            .unwrap_or_else(|| "{}".into()),
+                        embedding_hash: chunk_embedding_digest(row),
+                        vector: extract_normalized_vector(row)?,
+                    });
+                }
+            }
         }
-        // No join: the database-wide snapshot must stay a function of the
-        // chunk generation alone, and creating a document row does not bump
-        // it. Orphan chunks are filtered at query time instead.
-        None => ("", String::new(), Vec::new()),
-    }
-}
-
-/// Read every chunk (of the scope) with its stored embedding.
-fn read_full(
-    conn: &duckdb::Connection,
-    generation: u64,
-    filters: Option<&LexFilters>,
-) -> Result<RawSnapshot> {
-    let (join_sql, where_sql, bind) = snapshot_scope_sql(filters);
-    let sql = format!(
-        r#"
-        SELECT c.id, c.document_id, c.chunk_index, c.embedding,
-               COALESCE(c.embedding_digest, CAST(hash(c.embedding) >> 1 AS BIGINT))
-        FROM chunks c
-        {join_sql}
-        {where_sql}
-        ORDER BY c.document_id ASC, c.chunk_index ASC, c.id ASC
-        "#
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = crate::db::rows::query_vec(&mut stmt, params_from_iter(bind.iter()), |row| {
-        Ok(RawChunk {
-            id: row.get(0)?,
-            document_id: row.get(1)?,
-            chunk_index: row.get(2)?,
-            vector: RawVector::Parse(snapshot_embedding(row, 3)),
-            embedding_hash: row.get(4)?,
-        })
-    })?;
-    Ok(RawSnapshot {
-        generation,
-        rows,
-        base: None,
-    })
-}
-
-/// Read what a snapshot at `generation` needs beyond `previous`.
-///
-/// Lists every chunk's identity, order and stored `embedding_digest` (the
-/// embedding is never read for unchanged rows), reuses the parsed vector of
-/// each chunk whose id and digest match `previous`, and reads only new or
-/// changed rows. A typical ingest touches one document, so this replaces a
-/// full-corpus parse with a cheap listing plus that document's chunks. When
-/// most rows changed a full read is cheaper and is used instead.
-fn read_refresh(
-    conn: &duckdb::Connection,
-    previous: &Arc<VectorSnapshot>,
-    generation: u64,
-    filters: Option<&LexFilters>,
-) -> Result<RawSnapshot> {
-    // Database-wide snapshot: when the change log names every document whose
-    // chunks changed since `previous`, re-read only those documents.
-    if filters.is_none() {
-        if let Some(documents) =
-            fts::changed_documents_since(conn, previous.generation, generation)?
-        {
-            return read_changed_documents(conn, previous, generation, &documents);
+        None => {
+            // No join: database-wide snapshot is a function of chunk generation alone.
+            r.scan_each("chunks", |row| {
+                chunks.push(VectorSnapshotChunk {
+                    id: cell_string(row, "id"),
+                    document_id: cell_string(row, "document_id"),
+                    chunk_index: cell_i64(row, "chunk_index", 0) as i32,
+                    char_start: cell_i64(row, "char_start", 0) as i32,
+                    char_end: cell_i64(row, "char_end", 0) as i32,
+                    metadata_json: cell_nonempty_string(row, "metadata_json")
+                        .unwrap_or_else(|| "{}".into()),
+                    embedding_hash: chunk_embedding_digest(row),
+                    vector: extract_normalized_vector(row)?,
+                });
+                Ok(true)
+            })?;
         }
     }
-    let (join_sql, where_sql, bind) = snapshot_scope_sql(filters);
-    let mut stmt = conn.prepare(&format!(
-        r#"
-        SELECT c.id, c.document_id, c.chunk_index,
-               COALESCE(c.embedding_digest, CAST(hash(c.embedding) >> 1 AS BIGINT))
-        FROM chunks c
-        {join_sql}
-        {where_sql}
-        ORDER BY c.document_id ASC, c.chunk_index ASC, c.id ASC
-        "#
-    ))?;
-    let listed = crate::db::rows::query_vec(&mut stmt, params_from_iter(bind.iter()), |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, i32>(2)?,
-            row.get::<_, i64>(3)?,
-        ))
-    })?;
-    drop(stmt);
+    sort_snapshot_chunks(&mut chunks);
+    Ok(VectorSnapshot { generation, chunks })
+}
+
+/// Bring a database-wide snapshot up to `generation` without re-normalizing
+/// unchanged vectors.
+fn refresh_vector_snapshot(
+    r: &impl LinReader,
+    previous: &VectorSnapshot,
+    generation: u64,
+    filters: Option<&LexFilters>,
+) -> Result<VectorSnapshot> {
+    struct Listed {
+        id: String,
+        document_id: String,
+        chunk_index: i32,
+        char_start: i32,
+        char_end: i32,
+        metadata_json: String,
+        embedding_hash: i64,
+    }
+    if filters.is_none()
+        && let Some(documents) = fts::changed_documents_since(r, previous.generation, generation)?
+    {
+        return refresh_changed_documents(r, previous, generation, &documents);
+    }
+
+    let mut listed = Vec::new();
+    match filters {
+        Some(filters) => {
+            let doc_ids = matching_document_ids_for_filters(r, filters)?;
+            for doc_id in &doc_ids {
+                let rows = r.find_by_eq("chunks", "document_id", doc_id.as_str())?;
+                for row in &rows {
+                    listed.push(Listed {
+                        id: cell_string(row, "id"),
+                        document_id: cell_string(row, "document_id"),
+                        chunk_index: cell_i64(row, "chunk_index", 0) as i32,
+                        char_start: cell_i64(row, "char_start", 0) as i32,
+                        char_end: cell_i64(row, "char_end", 0) as i32,
+                        metadata_json: cell_nonempty_string(row, "metadata_json")
+                            .unwrap_or_else(|| "{}".into()),
+                        embedding_hash: chunk_embedding_digest(row),
+                    });
+                }
+            }
+        }
+        None => {
+            r.scan_each("chunks", |row| {
+                listed.push(Listed {
+                    id: cell_string(row, "id"),
+                    document_id: cell_string(row, "document_id"),
+                    chunk_index: cell_i64(row, "chunk_index", 0) as i32,
+                    char_start: cell_i64(row, "char_start", 0) as i32,
+                    char_end: cell_i64(row, "char_end", 0) as i32,
+                    metadata_json: cell_nonempty_string(row, "metadata_json")
+                        .unwrap_or_else(|| "{}".into()),
+                    embedding_hash: chunk_embedding_digest(row),
+                });
+                Ok(true)
+            })?;
+        }
+    }
+    listed.sort_by(|a, b| {
+        a.document_id
+            .cmp(&b.document_id)
+            .then_with(|| a.chunk_index.cmp(&b.chunk_index))
+            .then_with(|| a.id.cmp(&b.id))
+    });
 
     let reusable: HashMap<&str, &VectorSnapshotChunk> = previous
         .chunks
         .iter()
-        .map(|chunk| (&*chunk.id, chunk))
+        .map(|chunk| (chunk.id.as_str(), chunk))
         .collect();
     let changed: Vec<&str> = listed
         .iter()
-        .filter(|(id, _, _, hash)| {
+        .filter(|row| {
             reusable
-                .get(id.as_str())
-                .is_none_or(|old| old.embedding_hash != *hash)
+                .get(row.id.as_str())
+                .is_none_or(|old| old.embedding_hash != row.embedding_hash)
         })
-        .map(|(id, _, _, _)| id.as_str())
+        .map(|row| row.id.as_str())
         .collect();
     if changed.len() * 2 > listed.len() {
-        return read_full(conn, generation, filters);
+        return build_vector_snapshot_with_filters(r, generation, filters);
     }
-    let mut stored = read_embeddings(conn, &changed)?;
-    let mut rows = Vec::with_capacity(listed.len());
-    for (id, document_id, chunk_index, embedding_hash) in listed {
-        let vector = match stored.remove(&id) {
-            Some(raw) => RawVector::Parse(raw),
-            // Unchanged: share the previous snapshot's vector, no copy.
-            None => match reusable.get(id.as_str()) {
-                Some(old) if old.embedding_hash == embedding_hash => {
-                    RawVector::Reuse(old.vector.clone())
-                }
-                // Deleted between the listing and the read: skip it.
-                _ => continue,
+
+    let parsed = parse_vectors(r, &changed)?;
+
+    let mut chunks = Vec::with_capacity(listed.len());
+    for row in listed {
+        let vector = match parsed.get(&row.id) {
+            Some(vector) => vector.clone(),
+            None => match reusable.get(row.id.as_str()) {
+                Some(old) => old.vector.clone(),
+                None => continue,
             },
         };
-        rows.push(RawChunk {
-            id,
-            document_id,
-            chunk_index,
-            embedding_hash,
+        chunks.push(VectorSnapshotChunk {
+            id: row.id,
+            document_id: row.document_id,
+            chunk_index: row.chunk_index,
+            char_start: row.char_start,
+            char_end: row.char_end,
+            metadata_json: row.metadata_json,
+            embedding_hash: row.embedding_hash,
             vector,
         });
     }
-    Ok(RawSnapshot {
-        generation,
-        rows,
-        base: None,
-    })
+    Ok(VectorSnapshot { generation, chunks })
 }
 
-/// A chunk's stored embedding for a snapshot build. A value that does not
-/// decode (a NULL element) reads as empty, so [`RawSnapshot::finish`] skips
-/// that one chunk with a warning instead of failing the whole snapshot.
-fn snapshot_embedding(row: &duckdb::Row<'_>, index: usize) -> Vec<f32> {
-    crate::db::rows::embedding(row, index).unwrap_or_else(|error| {
-        tracing::warn!(%error, "vector snapshot: unreadable stored embedding");
-        Vec::new()
-    })
-}
-
-/// Stored embeddings of `ids`, in `IN` batches.
-fn read_embeddings<S: AsRef<str>>(
-    conn: &duckdb::Connection,
+/// Extract and normalize the stored vectors of `ids`.
+fn parse_vectors<S: AsRef<str>>(
+    r: &impl LinReader,
     ids: &[S],
-) -> Result<HashMap<String, Vec<f32>>> {
-    const READ_BATCH: usize = 512;
-    let mut stored: HashMap<String, Vec<f32>> = HashMap::with_capacity(ids.len());
-    for batch in ids.chunks(READ_BATCH) {
-        let placeholders = crate::db::sql::in_placeholders(batch.len());
-        let mut stmt = conn.prepare(&format!(
-            "SELECT id, embedding FROM chunks WHERE id IN ({placeholders})"
-        ))?;
-        let binds: Vec<&str> = batch.iter().map(AsRef::as_ref).collect();
-        crate::db::rows::for_each_row(&mut stmt, params_from_iter(binds.iter()), |row| {
-            stored.insert(row.get(0)?, snapshot_embedding(row, 1));
-            Ok(())
-        })?;
+) -> Result<HashMap<String, Arc<[f32]>>> {
+    let mut parsed: HashMap<String, Arc<[f32]>> = HashMap::with_capacity(ids.len());
+    for id in ids {
+        if let Some(row) = r.get_by_id("chunks", id.as_ref())? {
+            parsed.insert(id.as_ref().to_string(), extract_normalized_vector(&row)?);
+        }
     }
-    Ok(stored)
+    Ok(parsed)
 }
 
 /// Database-wide refresh from the change log: keep every chunk of documents
 /// not in `documents`, and re-read (reusing vectors by id + digest) only the
-/// chunks of `documents`. Cost follows the change, not the corpus.
-fn read_changed_documents(
-    conn: &duckdb::Connection,
-    previous: &Arc<VectorSnapshot>,
+/// chunks of `documents`.
+fn refresh_changed_documents(
+    r: &impl LinReader,
+    previous: &VectorSnapshot,
     generation: u64,
     documents: &HashSet<String>,
-) -> Result<RawSnapshot> {
-    const DOCUMENT_BATCH: usize = 512;
-    let ids: Vec<&str> = documents.iter().map(String::as_str).collect();
-    let changed_mask: Vec<bool> = previous
-        .documents
-        .ids
-        .iter()
-        .map(|id| documents.contains(id))
-        .collect();
+) -> Result<VectorSnapshot> {
+    let mut listed: Vec<VectorSnapshotChunk> = Vec::new();
+    let mut digests: Vec<(usize, Option<Arc<[f32]>>)> = Vec::new();
     let reusable: HashMap<&str, &VectorSnapshotChunk> = previous
         .chunks
         .iter()
-        .filter(|chunk| changed_mask[chunk.document as usize])
-        .map(|chunk| (&*chunk.id, chunk))
+        .filter(|chunk| documents.contains(&chunk.document_id))
+        .map(|chunk| (chunk.id.as_str(), chunk))
         .collect();
-    let mut listed: Vec<RawChunk> = Vec::new();
-    for batch in ids.chunks(DOCUMENT_BATCH) {
-        let placeholders = crate::db::sql::in_placeholders(batch.len());
-        let mut stmt = conn.prepare(&format!(
-            "SELECT id, document_id, chunk_index, \
-                    COALESCE(embedding_digest, CAST(hash(embedding) >> 1 AS BIGINT)) \
-             FROM chunks WHERE document_id IN ({placeholders})"
-        ))?;
-        crate::db::rows::for_each_row(&mut stmt, params_from_iter(batch.iter()), |row| {
-            let id: String = row.get(0)?;
-            let embedding_hash: i64 = row.get(3)?;
-            let vector = match reusable
-                .get(id.as_str())
-                .filter(|old| old.embedding_hash == embedding_hash)
-            {
-                Some(old) => RawVector::Reuse(old.vector.clone()),
-                None => RawVector::Parse(Vec::new()),
+    for doc_id in documents {
+        let rows = r.find_by_eq("chunks", "document_id", doc_id.as_str())?;
+        for row in &rows {
+            let chunk = VectorSnapshotChunk {
+                id: cell_string(row, "id"),
+                document_id: cell_string(row, "document_id"),
+                chunk_index: cell_i64(row, "chunk_index", 0) as i32,
+                char_start: cell_i64(row, "char_start", 0) as i32,
+                char_end: cell_i64(row, "char_end", 0) as i32,
+                metadata_json: cell_nonempty_string(row, "metadata_json")
+                    .unwrap_or_else(|| "{}".into()),
+                embedding_hash: chunk_embedding_digest(row),
+                vector: Arc::from([] as [f32; 0]),
             };
-            listed.push(RawChunk {
-                id,
-                document_id: row.get(1)?,
-                chunk_index: row.get(2)?,
-                embedding_hash,
-                vector,
-            });
-            Ok(())
-        })?;
-    }
-    let changed: Vec<&str> = listed
-        .iter()
-        .filter(|row| matches!(row.vector, RawVector::Parse(_)))
-        .map(|row| row.id.as_str())
-        .collect();
-    let mut stored = read_embeddings(conn, &changed)?;
-    let mut rows = Vec::with_capacity(listed.len());
-    for mut row in listed {
-        if matches!(row.vector, RawVector::Parse(_)) {
-            match stored.remove(&row.id) {
-                Some(raw) => row.vector = RawVector::Parse(raw),
-                // Deleted between the listing and the read: skip it.
-                None => continue,
-            }
+            let reused = reusable
+                .get(chunk.id.as_str())
+                .filter(|old| old.embedding_hash == chunk.embedding_hash)
+                .map(|old| old.vector.clone());
+            digests.push((listed.len(), reused));
+            listed.push(chunk);
         }
-        rows.push(row);
     }
-    // Same order as a full listing (document, index, id).
-    rows.sort_by(|a, b| {
-        a.document_id
-            .cmp(&b.document_id)
-            .then(a.chunk_index.cmp(&b.chunk_index))
-            .then_with(|| a.id.cmp(&b.id))
-    });
-    Ok(RawSnapshot {
-        generation,
-        rows,
-        base: Some((previous.clone(), changed_mask)),
-    })
+    let changed: Vec<&str> = digests
+        .iter()
+        .filter(|(_, reused)| reused.is_none())
+        .map(|(index, _)| listed[*index].id.as_str())
+        .collect();
+    let mut parsed = parse_vectors(r, &changed)?;
+    let mut fresh = Vec::with_capacity(listed.len());
+    for ((_, reused), mut chunk) in digests.into_iter().zip(listed) {
+        chunk.vector = match reused {
+            Some(vector) => vector,
+            None => match parsed.remove(&chunk.id) {
+                Some(vector) => vector,
+                None => continue,
+            },
+        };
+        fresh.push(chunk);
+    }
+    let mut chunks: Vec<VectorSnapshotChunk> = previous
+        .chunks
+        .iter()
+        .filter(|chunk| !documents.contains(&chunk.document_id))
+        .cloned()
+        .chain(fresh)
+        .collect();
+    sort_snapshot_chunks(&mut chunks);
+    Ok(VectorSnapshot { generation, chunks })
 }
 
-fn load_vector_documents(
-    conn: &duckdb::Connection,
-    filters: &LexFilters,
-) -> Result<VectorDocumentScope> {
-    let (where_sql, bind) = filters.scope_where_clause("d.id");
-    let read_ids = |sql: &str| -> Result<HashSet<String>> {
-        let mut stmt = conn.prepare(sql)?;
-        let mut rows = stmt.query(params_from_iter(bind.iter()))?;
-        let mut ids = HashSet::new();
-        crate::db::rows::visit_rows(&mut rows, |row| {
-            ids.insert(row.get(0)?);
-            Ok(())
-        })?;
-        Ok(ids)
-    };
+fn load_vector_documents(r: &impl LinReader, filters: &LexFilters) -> Result<VectorDocumentScope> {
     if has_selective_vector_scope(filters) {
-        return Ok(VectorDocumentScope::Only(read_ids(&format!(
-            "SELECT d.id FROM documents d {where_sql}"
-        ))?));
+        return Ok(VectorDocumentScope::Only(
+            matching_document_ids_for_filters(r, filters)?,
+        ));
     }
-    let Some(predicate) = where_sql.strip_prefix("WHERE ") else {
+    let (where_sql, _) = filters.scope_where_clause("d.id");
+    if where_sql.strip_prefix("WHERE ").is_none() {
         return Ok(VectorDocumentScope::Excluding(HashSet::new()));
-    };
-    // Only status/layer/kind filters remain: list whichever side is smaller.
-    // A NULL column fails the predicate, so it counts as outside the scope.
-    let predicate = format!("COALESCE({predicate}, false)");
-    let (matching, total): (i64, i64) = conn.query_row(
-        &format!("SELECT count(*) FILTER (WHERE {predicate}), count(*) FROM documents d"),
-        params_from_iter(bind.iter()),
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
-    if matching * 2 <= total {
-        return Ok(VectorDocumentScope::Only(read_ids(&format!(
-            "SELECT d.id FROM documents d WHERE {predicate}"
-        ))?));
     }
-    Ok(VectorDocumentScope::Excluding(read_ids(&format!(
-        "SELECT d.id FROM documents d WHERE NOT {predicate}"
-    ))?))
+    let has_layer = filters
+        .layer
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|s| !s.is_empty());
+    let has_kind = filters
+        .kind
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|s| !s.is_empty());
+
+    // Fast O(#archived) secondary-index path when only the default active-status filter applies!
+    if !has_layer && !has_kind && !filters.include_archived {
+        let total = r.count_all("documents")?;
+        if total == 0 {
+            return Ok(VectorDocumentScope::Excluding(HashSet::new()));
+        }
+        let mut excluded: HashSet<String> = HashSet::new();
+        for dead_status in ["archived", "tombstone"] {
+            r.for_each_by_eq_projected("documents", "status", dead_status, Some(&["id"]), |row| {
+                if let Some(id) = cell_str(row, "id") {
+                    excluded.insert(id.to_string());
+                }
+                Ok(true)
+            })?;
+        }
+        let matching_count = total.saturating_sub(excluded.len());
+        if matching_count * 2 > total {
+            return Ok(VectorDocumentScope::Excluding(excluded));
+        }
+    }
+
+    let mut matching_ids = Vec::new();
+    let mut excluded_ids = Vec::new();
+    r.scan_each_projected(
+        "documents",
+        &[
+            "id",
+            "status",
+            "wing",
+            "room",
+            "layer",
+            "kind",
+            "uri",
+            "source_file",
+        ],
+        |row| {
+            if let Some(id) = cell_str(row, "id") {
+                if filters.matches_document_row(row) {
+                    matching_ids.push(id.to_string());
+                } else {
+                    excluded_ids.push(id.to_string());
+                }
+            }
+            Ok(true)
+        },
+    )?;
+    let total = matching_ids.len() + excluded_ids.len();
+    if matching_ids.len() * 2 <= total {
+        Ok(VectorDocumentScope::Only(
+            matching_ids.into_iter().collect(),
+        ))
+    } else {
+        Ok(VectorDocumentScope::Excluding(
+            excluded_ids.into_iter().collect(),
+        ))
+    }
 }
 
 fn normalized_vector(vector: &[f32]) -> Option<Vec<f32>> {
@@ -1915,99 +2025,68 @@ fn hydrate_vector_hits(
     store: &Store,
     snapshot: &VectorSnapshot,
     ranked: Vec<RankedVectorCandidate>,
-    ranking: &mut RankingCache,
 ) -> Result<(Vec<SearchHit>, bool)> {
-    // Candidate pools reach thousands during refill: read rows in a few
-    // `IN (...)` batches instead of one point query per candidate. Content,
-    // spans and section metadata are read only for the ranked hits.
-    const CONTENT_BATCH: usize = 512;
-    struct HitRow {
-        content: String,
-        char_start: i32,
-        char_end: i32,
-        metadata_json: Option<String>,
-    }
     let ids: Vec<&str> = ranked
         .iter()
-        .map(|candidate| &*snapshot.chunks[candidate.ordinal].id)
+        .map(|candidate| snapshot.chunks[candidate.snapshot_index].id.as_str())
         .collect();
     let document_ids: Vec<&str> = ranked
         .iter()
-        .map(|candidate| snapshot.document_id(&snapshot.chunks[candidate.ordinal]))
-        .filter(|id| !ranking.contains_key(*id))
+        .map(|candidate| {
+            snapshot.chunks[candidate.snapshot_index]
+                .document_id
+                .as_str()
+        })
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
-    let mut rows: HashMap<String, HitRow> = HashMap::with_capacity(ids.len());
+    let mut contents: HashMap<String, String> = HashMap::with_capacity(ids.len());
+    let mut documents: HashMap<String, (String, String)> =
+        HashMap::with_capacity(document_ids.len());
     {
-        let conn = store.lock()?;
-        for batch in ids.chunks(CONTENT_BATCH) {
-            let placeholders = crate::db::sql::in_placeholders(batch.len());
-            let mut stmt = conn.prepare(&format!(
-                "SELECT id, content, char_start, char_end, metadata_json \
-                 FROM chunks WHERE id IN ({placeholders})"
-            ))?;
-            crate::db::rows::for_each_row(&mut stmt, params_from_iter(batch.iter()), |row| {
-                rows.insert(
-                    row.get(0)?,
-                    HitRow {
-                        content: row.get(1)?,
-                        char_start: row.get(2)?,
-                        char_end: row.get(3)?,
-                        metadata_json: row.get(4)?,
-                    },
-                );
-                Ok(())
-            })?;
+        let r = store.read()?;
+        for id in ids {
+            if let Some(row) = r.get_by_id("chunks", id)? {
+                contents.insert(id.to_string(), cell_string(&row, "content"));
+            }
         }
-        for batch in document_ids.chunks(CONTENT_BATCH) {
-            let placeholders = crate::db::sql::in_placeholders(batch.len());
-            // Ranking fields ride along so `finalize_hits` need not read
-            // these documents again.
-            let mut stmt = conn.prepare(&format!(
-                "SELECT {RANKING_COLUMNS} FROM documents WHERE id IN ({placeholders})"
-            ))?;
-            crate::db::rows::for_each_row(&mut stmt, params_from_iter(batch.iter()), |row| {
-                let (id, fields) = RankingFields::from_row(row)?;
-                ranking.insert(id, fields);
-                Ok(())
-            })?;
+        for doc_id in document_ids {
+            if let Some(row) = r.get_by_id("documents", doc_id)? {
+                documents.insert(
+                    doc_id.to_string(),
+                    (cell_string(&row, "title"), cell_string(&row, "uri")),
+                );
+            }
         }
     }
     let mut hits = Vec::with_capacity(ranked.len());
     let mut missing_document = false;
     for candidate in ranked {
-        let chunk = &snapshot.chunks[candidate.ordinal];
-        let document_id = snapshot.document_id(chunk);
-        let Some(document) = ranking.get(document_id) else {
+        let chunk = &snapshot.chunks[candidate.snapshot_index];
+        let Some((title, uri)) = documents.get(&chunk.document_id) else {
             missing_document = true;
             continue;
         };
         // A chunk replaced after the snapshot was taken has no row left.
-        let Some(row) = rows.remove(&*chunk.id) else {
+        let Some(content) = contents.remove(&chunk.id) else {
             continue;
         };
-        let (heading_path, section) = section_metadata(
-            row.metadata_json
-                .as_deref()
-                .filter(|value| !value.is_empty())
-                .unwrap_or("{}"),
-        );
+        let (heading_path, section) = section_metadata(&chunk.metadata_json);
         hits.push(SearchHit {
-            chunk_id: chunk.id.to_string(),
-            document_id: document_id.to_owned(),
-            document_title: document.title.clone(),
-            document_uri: document.uri.clone(),
+            chunk_id: chunk.id.clone(),
+            document_id: chunk.document_id.clone(),
+            document_title: title.clone(),
+            document_uri: uri.clone(),
             chunk_index: chunk.chunk_index,
-            content: row.content,
+            content,
             score: candidate.score,
             score_vec: Some(candidate.score),
             score_lex: None,
             score_rrf: None,
             score_rerank: None,
             snippet: None,
-            char_start: Some(row.char_start),
-            char_end: Some(row.char_end),
+            char_start: Some(chunk.char_start),
+            char_end: Some(chunk.char_end),
             heading_path,
             section,
             context: None,
@@ -2017,6 +2096,34 @@ fn hydrate_vector_hits(
         });
     }
     Ok((hits, missing_document))
+}
+
+// ---------------------------------------------------------------------------
+// Lexical search (delegates to db::fts: DuckDB BM25 or TF fallback)
+// ---------------------------------------------------------------------------
+
+fn search_lex(
+    store: &Store,
+    query_text: &str,
+    top_k: usize,
+    filters: &LexFilters,
+    fts_stemmer: &str,
+) -> Result<Vec<SearchHit>> {
+    if top_k == 0 || query_text.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let hits = fts::search_bm25_with_stemmer(store, query_text, top_k, filters, Some(fts_stemmer))?;
+    debug!(
+        count = hits.len(),
+        "lex search via db::fts (BM25 or TF fallback)"
+    );
+    Ok(hits)
+}
+
+/// Lowercase alphanumeric tokens (simple, language-agnostic).
+fn tokenize(text: &str) -> Vec<String> {
+    fts::tokenize(text)
 }
 
 // ---------------------------------------------------------------------------
@@ -2030,30 +2137,22 @@ fn hydrate_vector_hits(
 /// preserved from the source lists when present.
 pub fn fuse_rrf(vec_hits: &[SearchHit], lex_hits: &[SearchHit], rrf_k: f32) -> Vec<SearchHit> {
     let k = if rrf_k > 0.0 { rrf_k } else { DEFAULT_RRF_K };
-    finish_two_list_rrf(rrf_fuse_borrowed(&[vec_hits, lex_hits], k))
-}
 
-/// [`fuse_rrf`] taking the lists by value: hits are moved into the result,
-/// never cloned.
-fn fuse_rrf_owned(
-    vec_hits: Vec<SearchHit>,
-    lex_hits: Vec<SearchHit>,
-    rrf_k: f32,
-) -> Vec<SearchHit> {
-    let k = if rrf_k > 0.0 { rrf_k } else { DEFAULT_RRF_K };
-    finish_two_list_rrf(rrf_fuse_lists(vec![vec_hits, lex_hits], k))
-}
+    // chunk_id -> accumulated RRF + best partial hit
+    let mut fused: HashMap<String, (f32, SearchHit)> = HashMap::new();
 
-/// Write the fused score and order by it (ties by chunk id).
-fn finish_two_list_rrf(fused: Vec<(f32, SearchHit)>) -> Vec<SearchHit> {
+    accumulate_rrf_list(&mut fused, vec_hits, k);
+    accumulate_rrf_list(&mut fused, lex_hits, k);
+
     let mut out: Vec<SearchHit> = fused
-        .into_iter()
+        .into_values()
         .map(|(rrf, mut hit)| {
             hit.score_rrf = Some(rrf);
             hit.score = rrf;
             hit
         })
         .collect();
+
     out.sort_by(|a, b| {
         b.score
             .partial_cmp(&a.score)
@@ -2063,84 +2162,23 @@ fn finish_two_list_rrf(fused: Vec<(f32, SearchHit)>) -> Vec<SearchHit> {
     out
 }
 
-/// One distinct chunk id of an RRF fusion: its accumulated score, the
-/// (list, rank) of its first occurrence (the base hit) and of later ones.
-struct RrfSlot {
-    rrf: f32,
-    base: (usize, usize),
-    others: Vec<(usize, usize)>,
-}
-
-/// RRF accumulation over list/position indices:
-/// `score_rrf(d) = Σ 1 / (k + rank_i(d))`. Each distinct chunk id keeps the
-/// hit of its first occurrence (list order, then rank) as the base, merged
-/// with the score fields of its later occurrences. Hits are only borrowed.
-fn rrf_slots(lists: &[&[SearchHit]], k: f32) -> Vec<RrfSlot> {
-    let mut slots: Vec<RrfSlot> = Vec::new();
-    let mut by_id: HashMap<&str, usize> =
-        HashMap::with_capacity(lists.iter().map(|hits| hits.len()).sum());
-    for (list_index, hits) in lists.iter().enumerate() {
-        for (rank0, hit) in hits.iter().enumerate() {
-            let contrib = 1.0 / (k + (rank0 + 1) as f32);
-            match by_id.get(hit.chunk_id.as_str()) {
-                Some(&slot) => {
-                    slots[slot].rrf += contrib;
-                    slots[slot].others.push((list_index, rank0));
-                }
-                None => {
-                    by_id.insert(hit.chunk_id.as_str(), slots.len());
-                    slots.push(RrfSlot {
-                        rrf: contrib,
-                        base: (list_index, rank0),
-                        others: Vec::new(),
-                    });
-                }
-            }
-        }
+fn accumulate_rrf_list(fused: &mut HashMap<String, (f32, SearchHit)>, hits: &[SearchHit], k: f32) {
+    for (rank0, hit) in hits.iter().enumerate() {
+        let rank = (rank0 + 1) as f32;
+        let contrib = 1.0 / (k + rank);
+        fused
+            .entry(hit.chunk_id.clone())
+            .and_modify(|(rrf, existing)| {
+                *rrf += contrib;
+                merge_score_fields(existing, hit);
+            })
+            .or_insert_with(|| {
+                let mut base = hit.clone();
+                // Clear rrf until final write; primary will be set after full fusion.
+                base.score_rrf = None;
+                (contrib, base)
+            });
     }
-    slots
-}
-
-/// Fused base hits of `slots`, cloning only one hit per distinct chunk.
-fn rrf_fuse_borrowed(lists: &[&[SearchHit]], k: f32) -> Vec<(f32, SearchHit)> {
-    rrf_slots(lists, k)
-        .into_iter()
-        .map(|slot| {
-            let mut base = lists[slot.base.0][slot.base.1].clone();
-            // Cleared until the caller writes the fused value.
-            base.score_rrf = None;
-            for (list, rank) in slot.others {
-                merge_score_fields(&mut base, &lists[list][rank]);
-            }
-            (slot.rrf, base)
-        })
-        .collect()
-}
-
-/// Fused base hits of `slots`, moving the hits out of `lists`.
-fn rrf_fuse_lists(lists: Vec<Vec<SearchHit>>, k: f32) -> Vec<(f32, SearchHit)> {
-    let slots = {
-        let borrowed: Vec<&[SearchHit]> = lists.iter().map(Vec::as_slice).collect();
-        rrf_slots(&borrowed, k)
-    };
-    let mut lists: Vec<Vec<Option<SearchHit>>> = lists
-        .into_iter()
-        .map(|hits| hits.into_iter().map(Some).collect())
-        .collect();
-    let mut fused = Vec::with_capacity(slots.len());
-    for slot in slots {
-        let Some(mut base) = lists[slot.base.0][slot.base.1].take() else {
-            continue;
-        };
-        base.score_rrf = None;
-        for (list, rank) in slot.others {
-            if let Some(other) = lists[list][rank].as_ref() {
-                merge_score_fields(&mut base, other);
-            }
-        }
-        fused.push((slot.rrf, base));
-    }
-    fused
 }
 
 fn merge_score_fields(dst: &mut SearchHit, src: &SearchHit) {
@@ -2213,7 +2251,7 @@ pub fn make_snippet(content: &str, query: Option<&str>, max_chars: usize) -> Opt
             lower_starts.push(lower_content.len());
             lower_content.extend(ch.to_lowercase());
         }
-        for term in fts::tokenize(q) {
+        for term in tokenize(q) {
             if term.is_empty() {
                 continue;
             }

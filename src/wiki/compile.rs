@@ -1,7 +1,7 @@
 //! LLM-assisted compile of one raw source into wiki pages.
 
 use super::*;
-use crate::llm::{parse_compile_json, system_user, ChatCompleter};
+use crate::llm::{ChatCompleter, parse_compile_json, system_user};
 use crate::util::excerpt_chars as truncate;
 
 /// Compile raw document with local LLM into wiki pages.

@@ -1,5 +1,5 @@
 use super::*;
-use crate::testkit::{temp_store, SeedDoc};
+use crate::testkit::{SeedDoc, temp_store};
 
 fn collection(id: &str, name: &str) -> Collection {
     let now = chrono::Utc::now().to_rfc3339();
@@ -34,7 +34,6 @@ fn seeded_store() -> Store {
 fn create_collection_persists_outline_order_and_dependency_order() {
     let store = seeded_store();
     let detail = store
-        .collections()
         .create_collection(
             &collection("col-1", "Course"),
             &[
@@ -87,22 +86,18 @@ fn create_collection_rejects_invalid_input_without_writing() {
     ];
     for (col, entries) in bad {
         assert!(
-            store
-                .collections()
-                .create_collection(&col, &entries)
-                .is_err(),
+            store.create_collection(&col, &entries).is_err(),
             "accepted {col:?} {entries:?}"
         );
     }
-    assert!(store.collections().list_collections().unwrap().is_empty());
-    assert!(store.collections().get_collection("x").unwrap().is_none());
+    assert!(store.list_collections().unwrap().is_empty());
+    assert!(store.get_collection("x").unwrap().is_none());
 }
 
 #[test]
 fn dependency_cycles_are_reported_instead_of_ordered() {
     let store = seeded_store();
     let detail = store
-        .collections()
         .create_collection(
             &collection("cyc", "Cycle"),
             &[
@@ -119,21 +114,14 @@ fn dependency_cycles_are_reported_instead_of_ordered() {
 #[test]
 fn list_and_get_collections() {
     let store = seeded_store();
-    assert!(store
-        .collections()
-        .get_collection("nope")
-        .unwrap()
-        .is_none());
+    assert!(store.get_collection("nope").unwrap().is_none());
     store
-        .collections()
         .create_collection(&collection("one", "One"), &[entry("a", None, &[])])
         .unwrap();
     store
-        .collections()
         .create_collection(&collection("two", "Two"), &[])
         .unwrap();
     let mut names: Vec<String> = store
-        .collections()
         .list_collections()
         .unwrap()
         .into_iter()
@@ -141,23 +129,23 @@ fn list_and_get_collections() {
         .collect();
     names.sort();
     assert_eq!(names, vec!["One", "Two"]);
-    let one = store.collections().get_collection("one").unwrap().unwrap();
+    let one = store.get_collection("one").unwrap().unwrap();
     assert_eq!(one.entries.len(), 1);
     assert_eq!(one.collection.metadata_json, r#"{"k":1}"#);
-    assert!(store
-        .collections()
-        .get_collection("two")
-        .unwrap()
-        .unwrap()
-        .entries
-        .is_empty());
+    assert!(
+        store
+            .get_collection("two")
+            .unwrap()
+            .unwrap()
+            .entries
+            .is_empty()
+    );
 }
 
 #[test]
 fn update_collection_patches_fields_and_replaces_entries() {
     let store = seeded_store();
     store
-        .collections()
         .create_collection(
             &collection("col", "Old"),
             &[entry("a", None, &[]), entry("b", None, &["a"])],
@@ -166,7 +154,6 @@ fn update_collection_patches_fields_and_replaces_entries() {
 
     // Only the name changes; description, metadata and entries are kept.
     let renamed = store
-        .collections()
         .update_collection("col", Some("  New  "), None, None, None)
         .unwrap();
     assert_eq!(renamed.collection.name, "New");
@@ -174,7 +161,6 @@ fn update_collection_patches_fields_and_replaces_entries() {
     assert_eq!(renamed.entries.len(), 2);
 
     let cleared = store
-        .collections()
         .update_collection(
             "col",
             None,
@@ -192,23 +178,27 @@ fn update_collection_patches_fields_and_replaces_entries() {
         .collect();
     assert_eq!(ids, vec!["c"]);
 
-    assert!(store
-        .collections()
-        .update_collection("col", Some(" "), None, None, None)
-        .is_err());
-    assert!(store
-        .collections()
-        .update_collection("col", None, None, Some("{"), None)
-        .is_err());
-    assert!(store
-        .collections()
-        .update_collection("col", None, None, None, Some(&[entry("zzz", None, &[])]))
-        .is_err());
-    assert!(store
-        .collections()
-        .update_collection("missing", Some("X"), None, None, None)
-        .is_err());
-    let unchanged = store.collections().get_collection("col").unwrap().unwrap();
+    assert!(
+        store
+            .update_collection("col", Some(" "), None, None, None)
+            .is_err()
+    );
+    assert!(
+        store
+            .update_collection("col", None, None, Some("{"), None)
+            .is_err()
+    );
+    assert!(
+        store
+            .update_collection("col", None, None, None, Some(&[entry("zzz", None, &[])]))
+            .is_err()
+    );
+    assert!(
+        store
+            .update_collection("missing", Some("X"), None, None, None)
+            .is_err()
+    );
+    let unchanged = store.get_collection("col").unwrap().unwrap();
     assert_eq!(unchanged.collection.name, "New");
     assert_eq!(unchanged.entries.len(), 1);
 }

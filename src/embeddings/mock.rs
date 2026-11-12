@@ -7,7 +7,7 @@ use async_trait::async_trait;
 
 use crate::error::Result;
 
-use super::{l2_normalize, EmbeddingProvider};
+use super::{EmbeddingProvider, l2_normalize};
 
 /// Deterministic hash-based embedder producing fixed-dimension L2-normalized vectors.
 #[derive(Debug, Clone)]

@@ -378,6 +378,7 @@ pub(super) fn resolve(doc: &IndexedDocument, r: &Reference) -> CallEdge {
         "lua_global_import_or_environment_unverified"
     };
     CallEdge {
+        context_evidence: None,
         reference: r.clone(),
         resolution: if candidates.len() == 1 {
             "resolved_static"
@@ -408,7 +409,7 @@ mod tests {
     }
     #[test]
     fn local_declarations_assignments_recursion_and_value_reads_have_provenance() {
-        let source="local\nfunction leaf(x) return x end\nlocal function recursive() recursive() end\nlocal worker = function(x) leaf(x); return leaf end\nworker(1)\n";
+        let source = "local\nfunction leaf(x) return x end\nlocal function recursive() recursive() end\nlocal worker = function(x) leaf(x); return leaf end\nworker(1)\n";
         let doc = facts(source);
         assert_eq!(doc.symbols.len(), 3);
         let edges = calls(&doc);
@@ -422,13 +423,17 @@ mod tests {
         assert!(doc.references.iter().any(|r| !r.is_call
             && r.name == "leaf"
             && resolve(&doc, r).resolution == "resolved_static"));
-        assert!(edges
-            .iter()
-            .all(|e| e.reference.content_hash == doc.hash && e.reference.revision == 1));
+        assert!(
+            edges
+                .iter()
+                .all(|e| e.reference.content_hash == doc.hash && e.reference.revision == 1)
+        );
     }
     #[test]
     fn local_parameters_blocks_and_member_names_do_not_alias_outer_functions() {
-        let doc=facts("local function target() end\nlocal function use(target) target() end\ndo local target=other; target() end\nM.target()\ntarget()\nlocal t={target=1,[target]=2}\n");
+        let doc = facts(
+            "local function target() end\nlocal function use(target) target() end\ndo local target=other; target() end\nM.target()\ntarget()\nlocal t={target=1,[target]=2}\n",
+        );
         let edges = calls(&doc);
         assert_eq!(edges.len(), 4);
         assert_eq!(
@@ -466,7 +471,9 @@ mod tests {
     }
     #[test]
     fn loops_and_repeat_conditions_obey_lexical_boundaries() {
-        let doc=facts("local function step() return true end\nfor step=step(),2 do step() end\nstep()\nrepeat local function check() return true end until check()\ncheck()\n");
+        let doc = facts(
+            "local function step() return true end\nfor step=step(),2 do step() end\nstep()\nrepeat local function check() return true end until check()\ncheck()\n",
+        );
         let edges = calls(&doc);
         assert_eq!(edges.len(), 5, "{edges:?}");
         assert_eq!(
@@ -485,7 +492,9 @@ mod tests {
     }
     #[test]
     fn generic_loop_bindings_and_local_initializers_shadow_only_after_values() {
-        let doc=facts("local function target() return true end\nfor target in target() do target() end\nlocal target=target()\ntarget()\n");
+        let doc = facts(
+            "local function target() return true end\nfor target in target() do target() end\nlocal target=target()\ntarget()\n",
+        );
         let edges = calls(&doc);
         assert_eq!(
             edges
@@ -502,7 +511,9 @@ mod tests {
     }
     #[test]
     fn globals_table_methods_alias_calls_and_initializer_recursion_stay_unresolved() {
-        let doc=facts("local function self() end\nfunction M.run(x) return x end\nfunction M:method() self() end\nlocal alias=self\nalias()\nlocal f=function() f() end\nrequire('foreign')\nM.run()\n");
+        let doc = facts(
+            "local function self() end\nfunction M.run(x) return x end\nfunction M:method() self() end\nlocal alias=self\nalias()\nlocal f=function() f() end\nrequire('foreign')\nM.run()\n",
+        );
         assert!(doc.symbols.iter().any(|s| s.qualified_name == "M::run"));
         assert!(doc.symbols.iter().any(|s| s.qualified_name == "M::method"));
         let edges = calls(&doc);
@@ -515,7 +526,9 @@ mod tests {
     }
     #[test]
     fn comments_long_strings_and_parse_errors_never_create_false_static_calls() {
-        let doc=facts("-- local function fake() end\nlocal text=[=[function fake2() fake() end]=]\nlocal function real() end\nreal()\n");
+        let doc = facts(
+            "-- local function fake() end\nlocal text=[=[function fake2() fake() end]=]\nlocal function real() end\nreal()\n",
+        );
         assert_eq!(doc.symbols.len(), 1);
         assert_eq!(calls(&doc).len(), 1);
         let bad = super::super::parse("b", "/p/b.lua", "local function f() f()", 1).unwrap();

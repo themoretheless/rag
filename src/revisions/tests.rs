@@ -65,14 +65,16 @@ async fn restore_creates_new_head_and_rejects_stale_cas() {
     assert_eq!((diff.from_revision, diff.to_revision), (1, 2));
     assert!(diff.added_lines > 0);
     assert!(diff.removed_lines > 0);
-    assert!(diff
-        .changes
-        .iter()
-        .any(|line| line.content.contains("first body")));
-    assert!(diff
-        .changes
-        .iter()
-        .any(|line| line.content.contains("second body")));
+    assert!(
+        diff.changes
+            .iter()
+            .any(|line| line.content.contains("first body"))
+    );
+    assert!(
+        diff.changes
+            .iter()
+            .any(|line| line.content.contains("second body"))
+    );
 
     let restored = RevisionService::new(&store, &embedder, &config)
         .restore(RestoreRevisionCommand {
@@ -106,12 +108,14 @@ async fn restore_creates_new_head_and_rejects_stale_cas() {
             .content,
         "first body [[Original]]"
     );
-    assert!(store
-        .ops_log()
-        .list_recent_ops(10)
-        .unwrap()
-        .iter()
-        .any(|entry| entry.op == "restore_revision"));
+    assert!(
+        store
+            .ops_log()
+            .list_recent_ops(10)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.op == "restore_revision")
+    );
 
     let stale = RevisionService::new(&store, &embedder, &config)
         .restore(RestoreRevisionCommand {
@@ -131,11 +135,7 @@ async fn restore_creates_new_head_and_rejects_stale_cas() {
         3
     );
 
-    store
-        .lock()
-        .unwrap()
-        .execute_batch("DROP TABLE ops_log")
-        .unwrap();
+    crate::db::store::ops_log::TEST_FAIL_OPS_LOG_APPEND.with(|f| f.set(true));
     let restored_without_audit = RevisionService::new(&store, &embedder, &config)
         .restore(RestoreRevisionCommand {
             document_id: document.id.clone(),
@@ -143,6 +143,7 @@ async fn restore_creates_new_head_and_rejects_stale_cas() {
             if_match_revision: 3,
         })
         .await;
+    crate::db::store::ops_log::TEST_FAIL_OPS_LOG_APPEND.with(|f| f.set(false));
     assert!(
         restored_without_audit.is_err(),
         "wiki restore requires its audit/journal transaction to commit"
@@ -175,11 +176,13 @@ async fn restore_creates_new_head_and_rejects_stale_cas() {
     );
 
     assert!(store.documents().delete_document("doc-1").unwrap());
-    assert!(store
-        .documents()
-        .list_document_revisions("doc-1")
-        .unwrap()
-        .is_empty());
+    assert!(
+        store
+            .documents()
+            .list_document_revisions("doc-1")
+            .unwrap()
+            .is_empty()
+    );
     assert!(matches!(
         RevisionService::new(&store, &embedder, &config).snapshot_at("doc-1", 1),
         Err(AppError::NotFound(_))

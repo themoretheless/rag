@@ -2,22 +2,14 @@
 
 use super::*;
 
-/// The corpus mutation lane: bulk-workflow guards and FTS finalization bookkeeping.
-///
-/// A repository over the shared Store connection; get one from [`Store::corpus_lane`].
-#[derive(Clone, Copy)]
-pub struct CorpusLane<'a> {
-    pub(in crate::db) store: &'a Store,
-}
-
-impl CorpusLane<'_> {
+impl Store {
     /// Process-local corpus-mutation lane shared by every store clone.
     ///
     /// Source synchronization and guarded bulk mutations own the write side
     /// through their derived-index refresh. Searches briefly
     /// own the read side, so a mutation cannot race past their idle check.
     pub fn corpus_mutation_lane(&self) -> Arc<tokio::sync::RwLock<()>> {
-        self.store.corpus_mutation_lane.clone()
+        self.corpus_mutation_lane.clone()
     }
 
     /// Acquire the exclusive side of the corpus lane without waiting.
@@ -26,7 +18,7 @@ impl CorpusLane<'_> {
     /// guarded search. Keeping this diagnostic in the store prevents
     /// each transport workflow from inventing a stale source-sync-only reason.
     pub fn try_corpus_mutation_guard(&self, operation: &str) -> Result<CorpusMutationGuard> {
-        self.store.corpus_mutation_lane
+        self.corpus_mutation_lane
             .clone()
             .try_write_owned()
             .map_err(|_| {
@@ -41,35 +33,31 @@ impl CorpusLane<'_> {
     /// `None` means an exclusive corpus mutation is active. Keeping the guard
     /// alive prevents a new mutation from starting until the guarded search ends.
     pub(crate) fn try_corpus_idle_guard(&self) -> Option<tokio::sync::OwnedRwLockReadGuard<()>> {
-        self.store
-            .corpus_mutation_lane
-            .clone()
-            .try_read_owned()
-            .ok()
+        self.corpus_mutation_lane.clone().try_read_owned().ok()
     }
 
     /// Pass an existing exclusive lease to nested application services explicitly.
     /// Only clones of this returned store may reuse the lease; ordinary clones of
     /// the original store still see a busy corpus. A guard for another store is
     /// never accepted, even when the databases happen to use the same path.
-    pub fn with_corpus_mutation_guard(&self, guard: CorpusMutationGuard) -> Result<Store> {
+    pub fn with_corpus_mutation_guard(&self, guard: CorpusMutationGuard) -> Result<Self> {
         if !Arc::ptr_eq(
             CorpusMutationGuard::rwlock(&guard),
-            &self.store.corpus_mutation_lane,
+            &self.corpus_mutation_lane,
         ) {
             return Err(AppError::config(
                 "corpus mutation guard belongs to another store",
             ));
         }
-        let mut scoped = self.store.clone();
+        let mut scoped = self.clone();
         scoped.corpus_mutation_guard = Some(Arc::new(guard));
         Ok(scoped)
     }
 
     /// Enter a bulk mutation, or reuse the explicitly inherited exclusive lease.
-    pub fn try_corpus_mutation_scope(&self, operation: &str) -> Result<Store> {
-        if self.store.corpus_mutation_guard.is_some() {
-            return Ok(self.store.clone());
+    pub fn try_corpus_mutation_scope(&self, operation: &str) -> Result<Self> {
+        if self.corpus_mutation_guard.is_some() {
+            return Ok(self.clone());
         }
         self.with_corpus_mutation_guard(self.try_corpus_mutation_guard(operation)?)
     }
@@ -82,7 +70,7 @@ impl CorpusLane<'_> {
         config: &impl EmbeddingIdentity,
         operation: &str,
     ) -> Result<EmbeddingWriteGuard> {
-        let guard = if let Some(exclusive) = &self.store.corpus_mutation_guard {
+        let guard = if let Some(exclusive) = &self.corpus_mutation_guard {
             EmbeddingWriteGuard {
                 _shared: None,
                 _exclusive: Some(exclusive.clone()),
@@ -100,12 +88,8 @@ impl CorpusLane<'_> {
         };
         // Wiki writes and revision restore take this guard on async workers.
         crate::util::blocking_section(|| {
-            self.store
-                .embedding_manifest()
-                .ensure_embedding_manifest(config)?;
-            self.store
-                .embedding_manifest()
-                .require_embedding_manifest_match(config)
+            self.ensure_embedding_manifest(config)?;
+            self.require_embedding_manifest_match(config)
         })?;
         Ok(guard)
     }
@@ -116,9 +100,9 @@ impl CorpusLane<'_> {
     /// committed. Advancing the generation is a safe false-positive: it may
     /// invalidate one vector snapshot and force one lexical rebuild, but it can
     /// never publish stale BM25 rows as current.
-    pub(in crate::db) fn mark_fts_dirty_for_retry(&self) -> Result<()> {
-        let conn = self.store.lock()?;
-        crate::db::fts::mark_fts_dirty(&conn)?;
+    pub(super) fn mark_fts_dirty_for_retry(&self) -> Result<()> {
+        let mut w = self.write()?;
+        crate::db::fts::mark_fts_dirty(&mut w)?;
         Ok(())
     }
 
@@ -141,7 +125,7 @@ impl CorpusLane<'_> {
         })
     }
 
-    pub(in crate::db) fn record_fts_finalization_failure_inner(
+    fn record_fts_finalization_failure_inner(
         &self,
         operation: &str,
         durable_mutation_committed: bool,
@@ -152,26 +136,25 @@ impl CorpusLane<'_> {
             .err()
             .map(|marker_error| marker_error.to_string());
         let log_error = self
-            .store
-            .ops_log()
-            .append_ops_log(
-                &OpsLogEntry::new(
-                    "fts_finalization_failed",
-                    "FTS",
-                    format!("{operation} FTS finalization failed"),
-                )
-                .entity(None, "corpus")
-                .payload(
-                    serde_json::json!({
-                        "operation": operation,
-                        "code": "FTS_FINALIZATION_FAILED",
-                        "durable_mutation_committed": durable_mutation_committed,
-                        "retryable": true,
-                        "dirty_marker_written": marker_error.is_none(),
-                    })
-                    .to_string(),
-                ),
-            )
+            .append_ops_log(&OpsLogEntry {
+                id: String::new(),
+                seq: 0,
+                ts: Utc::now(),
+                op: "fts_finalization_failed".into(),
+                prefix: Some("FTS".into()),
+                message: format!("{operation} FTS finalization failed"),
+                entity_id: None,
+                entity_kind: Some("corpus".into()),
+                payload_json: serde_json::json!({
+                    "operation": operation,
+                    "code": "FTS_FINALIZATION_FAILED",
+                    "durable_mutation_committed": durable_mutation_committed,
+                    "retryable": true,
+                    "dirty_marker_written": marker_error.is_none(),
+                })
+                .to_string(),
+                agent_name: None,
+            })
             .err()
             .map(|log_error| log_error.to_string());
 

@@ -1,6 +1,6 @@
 use super::*;
 use crate::models::SearchMode;
-use crate::testkit::{test_config, SeedDoc};
+use crate::testkit::{SeedDoc, test_config};
 
 fn seed_doc(store: &Store, id: &str, title: &str, content: &str, layer: &str, emb: Vec<f32>) {
     SeedDoc::new(id, title, content)
@@ -35,10 +35,12 @@ fn assert_finalization_failure_audit(
     assert_eq!(summary.op, "maintain_compress");
     let summary_payload: serde_json::Value = serde_json::from_str(&summary.payload_json).unwrap();
     assert_eq!(summary_payload["errors"].as_array().unwrap().len(), 1);
-    assert!(summary_payload["errors"][0]
-        .as_str()
-        .unwrap()
-        .contains(expected_error));
+    assert!(
+        summary_payload["errors"][0]
+            .as_str()
+            .unwrap()
+            .contains(expected_error)
+    );
 
     let failure = entries
         .iter()
@@ -87,12 +89,14 @@ fn l0_dry_run_and_apply() {
     let applied = maintain_compress(&store, &cfg, &opts).unwrap();
     assert!(!applied.dry_run);
     assert!(applied.l0.as_ref().unwrap().checkpointed);
-    assert!(store
-        .ops_log()
-        .list_ops_log(10)
-        .unwrap()
-        .iter()
-        .any(|o| o.op == "maintain_compress"));
+    assert!(
+        store
+            .ops_log()
+            .list_ops_log(10)
+            .unwrap()
+            .iter()
+            .any(|o| o.op == "maintain_compress")
+    );
 }
 
 #[test]
@@ -118,8 +122,8 @@ fn l1_merges_exact_hash_wiki_keeps_one() {
     // oldest / smaller id kept
     assert_eq!(remaining[0].id, "w1");
     let generation_after_compress = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert!(!generation_after_compress.dirty);
     assert_eq!(
@@ -140,8 +144,8 @@ fn l1_merges_exact_hash_wiki_keeps_one() {
     .unwrap();
     assert_eq!(hits.len(), 1);
     let generation_after_search = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert_eq!(generation_after_search, generation_after_compress);
 }
@@ -346,12 +350,14 @@ fn l1_dry_run_does_not_delete() {
     assert_eq!(r.docs_removed, 1); // planned
     assert_eq!(store.documents().list_documents().unwrap().len(), 2);
     assert!(r.merges.iter().any(|m| m.disposition == "planned"));
-    assert!(store
-        .ops_log()
-        .list_ops_log(5)
-        .unwrap()
-        .iter()
-        .any(|o| o.op == "maintain_compress_dry_run"));
+    assert!(
+        store
+            .ops_log()
+            .list_ops_log(5)
+            .unwrap()
+            .iter()
+            .any(|o| o.op == "maintain_compress_dry_run")
+    );
 }
 
 #[test]
@@ -381,8 +387,8 @@ fn final_fts_failure_returns_durable_merge_report_and_terminal_ops_log() {
         true,
     );
     let generation = {
-        let conn = store.lock().unwrap();
-        db::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        db::fts_generation_state(&*r).unwrap()
     };
     assert!(generation.dirty, "next lexical read must retry FTS");
 
@@ -419,8 +425,8 @@ fn final_fts_panic_returns_durable_merge_report_and_terminal_ops_log() {
         true,
     );
     let generation = {
-        let conn = store.lock().unwrap();
-        db::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        db::fts_generation_state(&*r).unwrap()
     };
     assert!(generation.dirty, "next lexical read must retry FTS");
 }

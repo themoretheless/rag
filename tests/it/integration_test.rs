@@ -6,12 +6,12 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use rag_mcp::chunking::{from_config, Chunker};
+use rag_mcp::Store;
+use rag_mcp::chunking::{Chunker, from_config};
 use rag_mcp::db::search::search_chunks;
 use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
 use rag_mcp::models::{Chunk, Document};
 use rag_mcp::testkit::open_temp_store;
-use rag_mcp::Store;
 use uuid::Uuid;
 
 const DIMS: usize = 32;
@@ -170,25 +170,31 @@ async fn ingest_search_delete_stats_roundtrip() {
 
     // Delete A; B remains.
     assert!(store.documents().delete_document(&id_a).expect("delete A"));
-    assert!(store
-        .documents()
-        .get_document(&id_a)
-        .expect("get A")
-        .is_none());
-    assert!(store
-        .chunks()
-        .list_chunks_for_document(&id_a)
-        .expect("chunks A")
-        .is_empty());
+    assert!(
+        store
+            .documents()
+            .get_document(&id_a)
+            .expect("get A")
+            .is_none()
+    );
+    assert!(
+        store
+            .chunks()
+            .list_chunks_for_document(&id_a)
+            .expect("chunks A")
+            .is_empty()
+    );
 
     let (docs2, chunks2, _, _) = store.maintenance().stats().expect("stats after delete A");
     assert_eq!(docs2, 1);
     assert_eq!(chunks2, n_b as u64);
-    assert!(store
-        .documents()
-        .get_document(&id_b)
-        .expect("get B")
-        .is_some());
+    assert!(
+        store
+            .documents()
+            .get_document(&id_b)
+            .expect("get B")
+            .is_some()
+    );
 
     // Search after delete should not surface A.
     let hits_after = search_chunks(&store, &query_emb, 5, None).expect("search after delete");
@@ -201,10 +207,12 @@ async fn ingest_search_delete_stats_roundtrip() {
     let (docs3, chunks3, _, _) = store.maintenance().stats().expect("stats empty again");
     assert_eq!(docs3, 0);
     assert_eq!(chunks3, 0);
-    assert!(!store
-        .documents()
-        .delete_document(&id_b)
-        .expect("delete missing"));
+    assert!(
+        !store
+            .documents()
+            .delete_document(&id_b)
+            .expect("delete missing")
+    );
 }
 
 #[tokio::test]
@@ -320,7 +328,7 @@ async fn multi_chunk_document_search_still_finds_doc() {
 // --- Phase 4b: structural code chunking + parent/child retrieval -----------
 
 use rag_mcp::config::Config;
-use rag_mcp::db::search::{search, ContextExpansion, SearchQuery};
+use rag_mcp::db::search::{ContextExpansion, SearchQuery, search};
 use rag_mcp::document_indexer::DocumentIndexer;
 use rag_mcp::models::SearchMode;
 

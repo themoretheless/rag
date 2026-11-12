@@ -1,15 +1,15 @@
 //! Health / readiness route for the HTTP gateway.
 
+use axum::Router;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
-use axum::Router;
 use serde::Deserialize;
 use serde_json::json;
 
-use super::error::{api_err, api_ok};
 use super::HttpState;
+use super::error::{api_err, api_ok};
 
 /// `/health` only.
 pub(super) fn routes() -> Router<HttpState> {

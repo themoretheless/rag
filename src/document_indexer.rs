@@ -7,8 +7,8 @@
 use uuid::Uuid;
 
 use crate::chunking::{
-    code_chunks, from_config, is_structural_language, markdown_section_metadata, markdown_sections,
-    structural_code_chunks, Chunker,
+    Chunker, code_chunks, from_config, is_structural_language, markdown_section_metadata,
+    markdown_sections, structural_code_chunks,
 };
 use crate::config::{CodeChunkingMode, Config};
 use crate::embeddings::EmbeddingProvider;
@@ -403,9 +403,11 @@ mod tests {
 
         assert!(!chunks.is_empty());
         assert!(chunks.iter().all(|chunk| chunk.document_id == "doc"));
-        assert!(chunks
-            .iter()
-            .any(|chunk| chunk.metadata_json.contains("Heading")));
+        assert!(
+            chunks
+                .iter()
+                .any(|chunk| chunk.metadata_json.contains("Heading"))
+        );
         assert!(chunks.iter().all(|chunk| chunk.embedding.len() == 8));
     }
 
@@ -449,9 +451,11 @@ mod tests {
         assert!(alpha.content.contains("fn alpha"));
         assert!(chunks.iter().any(|c| metadata(c)["symbol"] == "beta"));
         // No parent links: each function fits in one chunk.
-        assert!(chunks
-            .iter()
-            .all(|c| metadata(c).get("parent_chunk_id").is_none()));
+        assert!(
+            chunks
+                .iter()
+                .all(|c| metadata(c).get("parent_chunk_id").is_none())
+        );
     }
 
     #[tokio::test]

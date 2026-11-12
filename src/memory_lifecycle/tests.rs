@@ -1,5 +1,5 @@
 use super::*;
-use crate::testkit::{temp_store, SeedDoc};
+use crate::testkit::{SeedDoc, temp_store};
 
 fn ids(values: &[&str]) -> Vec<String> {
     values.iter().map(|v| v.to_string()).collect()
@@ -83,9 +83,11 @@ fn archive_selected_reports_changed_skipped_and_missing_and_is_idempotent() {
         .filter(|e| e.op == "memory_lifecycle_archive")
         .collect::<Vec<_>>();
     assert_eq!(logged.len(), 2);
-    assert!(logged
-        .iter()
-        .any(|e| e.agent_name.as_deref() == Some("tester")));
+    assert!(
+        logged
+            .iter()
+            .any(|e| e.agent_name.as_deref() == Some("tester"))
+    );
 }
 
 #[test]

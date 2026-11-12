@@ -1,14 +1,14 @@
 //! Review proposals shared by the UI and API clients; synthesis stays client-side.
 use super::{
-    error::{api_err, api_ok},
     HttpState,
+    error::{api_err, api_ok},
 };
 use crate::{
     error::AppError,
     review,
     wiki::{self, WikiWriteCommand, WriteWikiOpts},
 };
-use axum::{extract::State, response::Response, routing::get, Json, Router};
+use axum::{Json, Router, extract::State, response::Response, routing::get};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -267,9 +267,9 @@ mod tests {
             agent_name: None,
         };
         {
-            let mut conn = st.store.lock().unwrap();
-            let tx = conn.transaction().unwrap();
-            review::accept_locked(&tx, &doc, &audit).unwrap();
+            let mut w = st.store.write().unwrap();
+            let mut tx = w.begin_tx().unwrap();
+            review::accept_locked(&mut tx, &doc, &audit).unwrap();
             // Simulate a later write failure by dropping without commit.
         }
         assert_eq!(review::get(&st.store, &p.id).unwrap().status, "pending");

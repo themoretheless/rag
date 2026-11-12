@@ -1,0 +1,24 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 33.37s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 1 test
+test code_index::resolve::python_names::tests::assignment_rhs_uses_the_preceding_receiver_and_commits_the_new_type_afterwards ... FAILED
+
+failures:
+
+---- code_index::resolve::python_names::tests::assignment_rhs_uses_the_preceding_receiver_and_commits_the_new_type_afterwards stdout ----
+
+thread 'code_index::resolve::python_names::tests::assignment_rhs_uses_the_preceding_receiver_and_commits_the_new_type_afterwards' (74701823) panicked at src/code_index/resolve/python_names/tests.rs:193:9:
+assertion `left == right` failed: CallEdge { context_evidence: None, reference: Reference { start_byte: 140, document_id: "0", path: "/p/a.py", name: "work", expression: "receiver.work", line: 8, column: 29, caller: Some("0:96:entry"), is_call: true, revision: 1, content_hash: "b11fa202aa3077b6b326604e3aad10d40b76e172c37791d4380fd965c876a129", build_context: None }, candidates: ["0:63:work"], resolution: "resolved_static", provenance: "derived", resolution_basis: "receiver_type" }
+  left: ["New::work"]
+ right: ["Old::work"]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    code_index::resolve::python_names::tests::assignment_rhs_uses_the_preceding_receiver_and_commits_the_new_type_afterwards
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1436 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `--lib`

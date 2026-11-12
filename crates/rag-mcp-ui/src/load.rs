@@ -1593,42 +1593,46 @@ mod tests {
     #[cfg(feature = "direct-db")]
     #[test]
     fn direct_db_loader_uses_read_only_store_and_preserves_database_bytes() {
+        fn snapshot_dir_state(root: &Path) -> Vec<(String, Vec<u8>)> {
+            let mut entries = Vec::new();
+            fn walk(base: &Path, cur: &Path, out: &mut Vec<(String, Vec<u8>)>) {
+                let mut list: Vec<_> = fs::read_dir(cur)
+                    .expect("read_dir")
+                    .map(|e| e.expect("dir entry").path())
+                    .collect();
+                list.sort();
+                for p in list {
+                    if p.is_dir() {
+                        walk(base, &p, out);
+                    } else {
+                        let rel = p.strip_prefix(base).unwrap().to_string_lossy().into_owned();
+                        out.push((rel, fs::read(&p).expect("read file")));
+                    }
+                }
+            }
+            walk(root, root, &mut entries);
+            entries
+        }
         let suffix = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .expect("clock after epoch")
             .as_nanos();
         let dir = std::env::temp_dir().join(format!("rag-mcp-ui-read-only-{suffix}"));
         fs::create_dir_all(&dir).expect("create temp directory");
-        let db = dir.join("read-only.duckdb");
+        let db = dir.join("read-only.lin");
         let store = Store::open(&db).expect("create fixture store");
         store
             .upsert_graph_node(&node("read-only-node", "Read only"))
             .expect("seed graph node");
         drop(store);
 
-        let original_permissions = fs::metadata(&db).expect("DB metadata").permissions();
-        let mut read_only_permissions = original_permissions.clone();
-        read_only_permissions.set_readonly(true);
-        fs::set_permissions(&db, read_only_permissions).expect("make fixture read-only");
-        let bytes_before = fs::read(&db).expect("DB bytes before UI load");
-        let modified_before = fs::metadata(&db)
-            .expect("DB metadata before UI load")
-            .modified()
-            .expect("DB mtime before UI load");
-
+        let state_before = snapshot_dir_state(&db);
         let loaded = load_live_db(&db, None, 1, None, false);
-        let bytes_after = fs::read(&db).expect("DB bytes after UI load");
-        let modified_after = fs::metadata(&db)
-            .expect("DB metadata after UI load")
-            .modified()
-            .expect("DB mtime after UI load");
-        fs::set_permissions(&db, original_permissions).expect("restore DB permissions");
+        let state_after = snapshot_dir_state(&db);
 
         let loaded = loaded.expect("direct UI read-only load");
         assert_eq!(loaded.view.nodes.len(), 1);
-        assert_eq!(bytes_after, bytes_before);
-        assert_eq!(modified_after, modified_before);
-        assert!(!PathBuf::from(format!("{}.wal", db.display())).exists());
+        assert_eq!(state_after, state_before);
         fs::remove_dir_all(&dir).expect("remove temp directory");
     }
 
@@ -1637,8 +1641,9 @@ mod tests {
     fn export_graph_snapshot_from_store() {
         let dir = std::env::temp_dir().join(format!("rag-mcp-ui-export-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
-        let db = dir.join("t.duckdb");
+        let db = dir.join("t.lin");
         let out = dir.join("graph.json");
+        let _ = fs::remove_dir_all(&db);
         let _ = fs::remove_file(&db);
         let _ = fs::remove_file(&out);
 
@@ -1974,7 +1979,8 @@ mod tests {
     fn expand_neighbors_store_is_project_scoped_and_keeps_connector_edge() {
         let dir = std::env::temp_dir().join(format!("rag-mcp-ui-expand-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
-        let db = dir.join("t.duckdb");
+        let db = dir.join("t.lin");
+        let _ = fs::remove_dir_all(&db);
         let _ = fs::remove_file(&db);
 
         let store = Store::open(&db).expect("open");

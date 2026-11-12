@@ -415,7 +415,7 @@ mod tests {
     }
     #[test]
     fn srcset_tokenizer_preserves_url_commas_and_skips_invalid_descriptor_groups() {
-        let source="data:image/svg+xml,a,b 1x, wide.svg 640w 480h, zero.svg 0x, exponent.svg 1e+2x, bad.svg 1x 2x, plus.svg +1x, empty.svg 0w, unknown.svg calc(1,2), final.svg 2x";
+        let source = "data:image/svg+xml,a,b 1x, wide.svg 640w 480h, zero.svg 0x, exponent.svg 1e+2x, bad.svg 1x 2x, plus.svg +1x, empty.svg 0w, unknown.svg calc(1,2), final.svg 2x";
         let got: Vec<_> = (Srcset {
             input: source,
             position: 0,
@@ -443,7 +443,7 @@ mod tests {
     }
     #[test]
     fn html_srcset_sources_and_preloads_capture_choices_and_original_attribute_span() {
-        let source="<picture><source srcset='small.svg 400w, large.svg 800w'><img srcset=\"plain.svg?x=1&amp;y=2 1x, dense.svg 2x\"></picture><link rel='preload' as='image' imagesrcset='preload.svg 1x'>";
+        let source = "<picture><source srcset='small.svg 400w, large.svg 800w'><img srcset=\"plain.svg?x=1&amp;y=2 1x, dense.svg 2x\"></picture><link rel='preload' as='image' imagesrcset='preload.svg 1x'>";
         let doc = parsed("/p/view.html", source);
         assert_eq!(doc.file_resources.len(), 5);
         let dense = doc
@@ -459,23 +459,29 @@ mod tests {
             &source[dense.start_byte..evidence.source_end_byte],
             "\"plain.svg?x=1&amp;y=2 1x, dense.svg 2x\""
         );
-        assert!(doc
-            .file_resources
-            .iter()
-            .any(|s| s.target == "plain.svg?x=1&y=2"));
-        assert!(doc
-            .file_resources
-            .iter()
-            .any(|s| s.reference_kind == "html:link:imagesrcset"));
+        assert!(
+            doc.file_resources
+                .iter()
+                .any(|s| s.target == "plain.svg?x=1&y=2")
+        );
+        assert!(
+            doc.file_resources
+                .iter()
+                .any(|s| s.reference_kind == "html:link:imagesrcset")
+        );
     }
     #[test]
     fn invalid_or_duplicate_srcset_attributes_and_template_urls_never_bind() {
-        let doc=parsed("/p/view.html","<img srcset='valid.svg 1x, invalid.svg -1x, both.svg 2x 300w, solo.svg 40h, parens.svg future(a,b)'><img srcset='a.svg 1x' SRCSET='b.svg 2x'><img srcset='{{dynamic}} 1x'>");
+        let doc = parsed(
+            "/p/view.html",
+            "<img srcset='valid.svg 1x, invalid.svg -1x, both.svg 2x 300w, solo.svg 40h, parens.svg future(a,b)'><img srcset='a.svg 1x' SRCSET='b.svg 2x'><img srcset='{{dynamic}} 1x'>",
+        );
         assert_eq!(doc.file_resources.len(), 2);
-        assert!(doc
-            .binding_limitations
-            .iter()
-            .any(|s| s == "SRCSET_INVALID_OR_UNREPRESENTABLE_DESCRIPTOR_OMITTED"));
+        assert!(
+            doc.binding_limitations
+                .iter()
+                .any(|s| s == "SRCSET_INVALID_OR_UNREPRESENTABLE_DESCRIPTOR_OMITTED")
+        );
         let mut documents = HashMap::from([("doc".into(), doc)]);
         for (id, path) in [("valid", "/p/valid.svg"), ("invalid", "/p/invalid.svg")] {
             // Use indexable targets to test path binding independently of parser coverage.
@@ -492,13 +498,14 @@ mod tests {
     }
     #[test]
     fn css_image_sets_keep_string_and_url_images_without_type_hint_false_links() {
-        let source=".a{background:image-set('small.svg' 1x type('image/svg+xml'), url('large.svg') 2x)} .b{background:-webkit-image-set('print.svg' 192DPI)} .c{background:image-set('computed.svg' calc(1dppx + 1dppx))}";
+        let source = ".a{background:image-set('small.svg' 1x type('image/svg+xml'), url('large.svg') 2x)} .b{background:-webkit-image-set('print.svg' 192DPI)} .c{background:image-set('computed.svg' calc(1dppx + 1dppx))}";
         let doc = parsed("/p/main.css", source);
         assert_eq!(doc.file_resources.len(), 4, "{:?}", doc.file_resources);
-        assert!(doc
-            .file_resources
-            .iter()
-            .all(|s| s.reference_kind == "css:image-set"));
+        assert!(
+            doc.file_resources
+                .iter()
+                .all(|s| s.reference_kind == "css:image-set")
+        );
         let first = doc
             .file_resources
             .iter()
@@ -524,14 +531,19 @@ mod tests {
     }
     #[test]
     fn rejected_image_set_options_do_not_leak_generic_urls_or_condition_links() {
-        let doc=parsed("/p/main.css",".a{background:image-set(url('negative.svg') -1x, url('duplicate.svg') 1x 2x, image-set(url('nested.svg') 2x) 1x)} @supports (background:image-set(url('condition.svg') 1x)) {.b{background:url('real.svg')}}");
+        let doc = parsed(
+            "/p/main.css",
+            ".a{background:image-set(url('negative.svg') -1x, url('duplicate.svg') 1x 2x, image-set(url('nested.svg') 2x) 1x)} @supports (background:image-set(url('condition.svg') 1x)) {.b{background:url('real.svg')}}",
+        );
         assert_eq!(doc.file_resources.len(), 1, "{:?}", doc.file_resources);
         assert_eq!(doc.file_resources[0].target, "real.svg");
     }
     #[test]
     fn descriptors_are_bounded_but_full_descriptor_hash_and_inline_offsets_are_preserved() {
         let width = "1".repeat(400);
-        let source=format!("<img srcset='a.svg {width}w'>\n<style>\n.a{{background:image-set('b.svg' 2x)}}\n</style>");
+        let source = format!(
+            "<img srcset='a.svg {width}w'>\n<style>\n.a{{background:image-set('b.svg' 2x)}}\n</style>"
+        );
         let doc = parsed("/p/view.html", &source);
         let a = doc
             .file_resources
@@ -570,8 +582,7 @@ mod integration_tests {
     #[test]
     fn responsive_choices_drive_impact_liveness_and_immutable_descriptor_diffs() {
         let temp = tempfile::tempdir().unwrap();
-        let store =
-            crate::testkit::open_test_store(&temp.path().join("responsive.duckdb")).unwrap();
+        let store = Store::open(&temp.path().join("responsive.duckdb")).unwrap();
         let doc = |id: &str, path: &str, source: &str| Document {
             id: id.into(),
             uri: format!("file://{id}"),
@@ -592,38 +603,36 @@ mod integration_tests {
             doc("b", "/p/b.svg", "<svg/>"),
             doc("mime", "/p/image/svg+xml", "not an image"),
         ] {
-            store.documents().upsert_document(&d).unwrap();
+            store.upsert_document(&d).unwrap();
         }
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        let snapshot = crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap();
+        store.index_code().unwrap();
+        let snapshot = store.code_snapshot().unwrap();
         let q = CodeQuery {
             impact_file: Some("/p/b.svg".into()),
             ..Default::default()
         };
         let impact = snapshot.query("impact", &q);
         assert_eq!(impact["items"].as_array().unwrap().len(), 2, "{impact}");
-        assert!(impact["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|e| e["via"]["choice"]["selection_proven"] == false));
-        assert!(snapshot.query(
-            "impact",
-            &CodeQuery {
-                impact_file: Some("/p/image/svg+xml".into()),
-                ..Default::default()
-            }
-        )["items"]
-            .as_array()
-            .unwrap()
-            .is_empty());
-        let dead = crate::code_index::CodeIndex::new(&store)
-            .code_dead_files(&CodeQuery::default())
-            .unwrap();
+        assert!(
+            impact["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|e| e["via"]["choice"]["selection_proven"] == false)
+        );
+        assert!(
+            snapshot.query(
+                "impact",
+                &CodeQuery {
+                    impact_file: Some("/p/image/svg+xml".into()),
+                    ..Default::default()
+                }
+            )["items"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        let dead = store.code_dead_files(&CodeQuery::default()).unwrap();
         for id in ["a", "b"] {
             assert!(
                 dead["protected"]
@@ -635,19 +644,15 @@ mod integration_tests {
             );
         }
         page.content = "<img srcset='a.svg 1x, b.svg 3x'>".into();
-        store.documents().upsert_document(&page).unwrap();
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        store.upsert_document(&page).unwrap();
+        store.index_code().unwrap();
         let q = history::DiffQuery {
             before: 1,
             after: Some(2),
             project: None,
             limit: None,
         };
-        let diff = crate::code_index::CodeIndex::new(&store)
-            .code_index_diff(&q)
-            .unwrap();
+        let diff = store.code_index_diff(&q).unwrap();
         assert_eq!(diff["responsive_resource_relations_available"], true);
         assert!(
             diff["relations_removed"]
@@ -666,17 +671,10 @@ mod integration_tests {
             "{diff}"
         );
         page.content = "\n\n<img srcset='a.svg 1x, b.svg 3x'>".into();
-        store.documents().upsert_document(&page).unwrap();
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        assert_eq!(
-            crate::code_index::CodeIndex::new(&store)
-                .code_index_diff(&q)
-                .unwrap(),
-            diff
-        );
-        let moved = crate::code_index::CodeIndex::new(&store)
+        store.upsert_document(&page).unwrap();
+        store.index_code().unwrap();
+        assert_eq!(store.code_index_diff(&q).unwrap(), diff);
+        let moved = store
             .code_index_diff(&history::DiffQuery {
                 before: 2,
                 after: Some(3),
@@ -686,14 +684,7 @@ mod integration_tests {
             .unwrap();
         assert_eq!(moved["relations_added_total"], 0);
         assert_eq!(moved["relations_removed_total"], 0);
-        let c = store.lock().unwrap();
-        let raw: String = c
-            .query_row(
-                "SELECT graph_json FROM code_index_revisions WHERE id=1",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let raw = crate::code_index::test_get_rev_graph_json(&store, 1);
         let mut old: serde_json::Value = serde_json::from_str(&raw).unwrap();
         old.as_object_mut()
             .unwrap()
@@ -709,15 +700,8 @@ mod integration_tests {
         old_url["reference_kind"] = serde_json::json!("css:url");
         old_url.as_object_mut().unwrap().remove("choice");
         old["file_resources"] = serde_json::json!([old_url]);
-        c.execute(
-            "UPDATE code_index_revisions SET graph_json=? WHERE id=1",
-            [old.to_string()],
-        )
-        .unwrap();
-        drop(c);
-        let legacy = crate::code_index::CodeIndex::new(&store)
-            .code_index_diff(&q)
-            .unwrap();
+        crate::code_index::test_set_rev_graph_json(&store, 1, &old.to_string());
+        let legacy = store.code_index_diff(&q).unwrap();
         assert_eq!(legacy["responsive_resource_relations_available"], false);
         assert_eq!(legacy["css_url_classification_comparable"], false);
         assert_eq!(legacy["relations_added_total"], 0, "{legacy}");

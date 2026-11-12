@@ -1,0 +1,29 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 33.52s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 6 tests
+test code_index::php_names::tests::phpunit_candidates_reject_cycles_foreign_projects_and_legacy_capture ... ok
+test code_index::php_names::tests::phpunit_candidates_require_framework_base_and_public_instance_methods ... FAILED
+test code_index::affected_tests::tests::phpunit_affected_tests_keep_compatible_trait_paths_and_changed_tests ... ok
+test code_index::affected_tests::tests::phpunit_shared_trait_states_do_not_consume_test_limit ... ok
+test code_index::affected_tests::tests::phpunit_trait_witnesses_guard_missing_metadata_modes_and_budgets ... ok
+test code_index::php_names::tests::phpunit_candidates_frozen_history_guards_legacy_enrichment ... ok
+
+failures:
+
+---- code_index::php_names::tests::phpunit_candidates_require_framework_base_and_public_instance_methods stdout ----
+
+thread 'code_index::php_names::tests::phpunit_candidates_require_framework_base_and_public_instance_methods' (73174601) panicked at src/code_index/php_names/tests.rs:1652:5:
+assertion `left == right` failed
+  left: ["Suite\\AbstractTest::testAbstract", "Suite\\Good::testWorks", "Suite\\Good::works"]
+ right: ["Suite\\Good::testWorks", "Suite\\Good::works"]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    code_index::php_names::tests::phpunit_candidates_require_framework_base_and_public_instance_methods
+
+test result: FAILED. 5 passed; 1 failed; 0 ignored; 0 measured; 1352 filtered out; finished in 0.23s
+
+error: test failed, to rerun pass `--lib`

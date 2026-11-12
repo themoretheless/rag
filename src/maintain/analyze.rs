@@ -8,14 +8,14 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
+use crate::db::Store;
+pub use crate::db::analytics::{
+    ArchiveCandidate, CorpusCounts, CountBucket, DuplicateGroup, OrphanNode, SizeStats, StubInfo,
+};
 use crate::db::analytics::{
     collect_counts, collect_size_stats, find_archive_candidates, find_exact_duplicates,
     find_orphans, find_stubs, parse_ts, short_hash,
 };
-pub use crate::db::analytics::{
-    ArchiveCandidate, CorpusCounts, CountBucket, DuplicateGroup, OrphanNode, SizeStats, StubInfo,
-};
-use crate::db::Store;
 use crate::diagnostics::DiagnosticsService;
 use crate::diagnostics::DoctorReport;
 use crate::embeddings::cosine_similarity;
@@ -720,21 +720,24 @@ mod tests {
         let value = serde_json::to_value(&report.stale_wiki[0]).unwrap();
         assert!(value["raw_updated_at"].is_null());
         assert_eq!(value["link_kind"], "source_missing");
-        assert!(report
-            .issues
-            .iter()
-            .any(|issue| issue.message.contains("unavailable source")));
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.message.contains("unavailable source"))
+        );
         let plan = crate::maintain::heuristic_plan(&report, 50);
         assert!(!plan
             .actions
             .iter()
             .any(|action| action.action == crate::maintain::MaintenanceAction::RefreshStaleWiki));
-        assert!(plan.actions.iter().any(|action| action.action
-            == crate::maintain::MaintenanceAction::Noop
-            && action
-                .reason
-                .as_deref()
-                .is_some_and(|reason| reason.contains("restore or relink"))));
+        assert!(plan.actions.iter().any(|action| {
+            action.action == crate::maintain::MaintenanceAction::Noop
+                && action
+                    .reason
+                    .as_deref()
+                    .is_some_and(|reason| reason.contains("restore or relink"))
+        }));
     }
 
     #[test]

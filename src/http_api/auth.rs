@@ -4,13 +4,13 @@ use std::net::SocketAddr;
 
 use axum::{
     extract::{Request, State},
-    http::{header, HeaderValue, Method, StatusCode},
+    http::{HeaderValue, Method, StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
 };
 use ring::hmac;
 
-use crate::{access::AccessRole, AppError};
+use crate::{AppError, access::AccessRole};
 
 #[derive(Clone)]
 pub(crate) struct HttpAuth {
@@ -341,9 +341,9 @@ mod tests {
     use super::*;
 
     use axum::{
-        body::{to_bytes, Body},
-        routing::get,
         Router,
+        body::{Body, to_bytes},
+        routing::get,
     };
     use tower::ServiceExt;
 
@@ -383,16 +383,22 @@ mod tests {
     #[test]
     fn remote_bind_requires_credentials_and_distinct_valid_secrets() {
         let local = HttpAuth::from_tokens(None, None, None).unwrap();
-        assert!(local
-            .validate_bind("127.0.0.1:7432".parse().unwrap())
-            .is_ok());
-        assert!(local
-            .validate_bind("0.0.0.0:7432".parse().unwrap())
-            .is_err());
-        assert!(HttpAuth::from_tokens(Some(READ), None, None)
-            .unwrap()
-            .validate_bind("[::]:7432".parse().unwrap())
-            .is_ok());
+        assert!(
+            local
+                .validate_bind("127.0.0.1:7432".parse().unwrap())
+                .is_ok()
+        );
+        assert!(
+            local
+                .validate_bind("0.0.0.0:7432".parse().unwrap())
+                .is_err()
+        );
+        assert!(
+            HttpAuth::from_tokens(Some(READ), None, None)
+                .unwrap()
+                .validate_bind("[::]:7432".parse().unwrap())
+                .is_ok()
+        );
         assert!(HttpAuth::from_tokens(Some(READ), Some(READ), None).is_err());
         assert!(HttpAuth::from_tokens(None, None, Some("secret")).is_err());
     }
@@ -587,10 +593,12 @@ mod tests {
                 assert!(body.contains("search"));
             }
         }
-        assert!(store
-            .documents()
-            .find_by_uri("wiki://auth-page")
-            .unwrap()
-            .is_some());
+        assert!(
+            store
+                .documents()
+                .find_by_uri("wiki://auth-page")
+                .unwrap()
+                .is_some()
+        );
     }
 }

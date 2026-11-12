@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 
@@ -105,11 +105,13 @@ impl EmbeddingProvider for FailingBatchEmbedder {
 
 #[test]
 fn only_explicit_not_found_is_classified_as_deleted() {
-    assert!(metadata_means_missing(Err(std::io::Error::new(
-        std::io::ErrorKind::NotFound,
-        "gone",
-    )))
-    .unwrap());
+    assert!(
+        metadata_means_missing(Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "gone",
+        )))
+        .unwrap()
+    );
     let error = metadata_means_missing(Err(std::io::Error::new(
         std::io::ErrorKind::PermissionDenied,
         "temporarily unreadable",
@@ -179,16 +181,20 @@ fn permission_denied_source_is_reported_without_deleting_indexed_state() {
     assert!(report.deleted.is_empty());
     assert_eq!(report.errors.len(), 1);
     assert!(report.errors[0].error.contains("preserving indexed state"));
-    assert!(store
-        .documents()
-        .get_document(&document.id)
-        .unwrap()
-        .is_some());
-    assert!(store
-        .source_manifest()
-        .load_source_manifest_root(Path::new("/vault"))
-        .unwrap()
-        .contains_key(source));
+    assert!(
+        store
+            .documents()
+            .get_document(&document.id)
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        store
+            .source_manifest()
+            .load_source_manifest_root(Path::new("/vault"))
+            .unwrap()
+            .contains_key(source)
+    );
 }
 
 #[tokio::test]
@@ -248,12 +254,14 @@ async fn store_clones_serialize_source_sync_runs() {
         })
     };
     second_spawned_rx.await.unwrap();
-    assert!(tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        second_scanning.notified(),
-    )
-    .await
-    .is_err());
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            second_scanning.notified(),
+        )
+        .await
+        .is_err()
+    );
 
     release.notify_one();
     first.await.unwrap().unwrap();
@@ -504,18 +512,22 @@ async fn embedding_failure_writes_none_of_a_multi_document_batch() {
             .collect::<Vec<_>>(),
         expected_paths
     );
-    assert!(report
-        .errors
-        .iter()
-        .all(|error| error.error.contains("injected batch embedding failure")));
+    assert!(
+        report
+            .errors
+            .iter()
+            .all(|error| error.error.contains("injected batch embedding failure"))
+    );
     assert!(report.added.is_empty());
     assert_eq!(report.counters.embedded, 0);
     assert!(store.documents().list_documents().unwrap().is_empty());
-    assert!(store
-        .source_manifest()
-        .load_source_manifest_root(root.path())
-        .unwrap()
-        .is_empty());
+    assert!(
+        store
+            .source_manifest()
+            .load_source_manifest_root(root.path())
+            .unwrap()
+            .is_empty()
+    );
     assert!(store.graph().list_graph_edges().unwrap().is_empty());
 }
 
@@ -597,8 +609,8 @@ async fn cancellation_between_commits_persists_exactly_the_sorted_prefix() {
     let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     store.maintenance().ensure_fts(&config.fts_stemmer).unwrap();
     let generation_before = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     let calls = Arc::new(Mutex::new(Vec::new()));
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(RecordingEmbedder {
@@ -640,8 +652,8 @@ async fn cancellation_between_commits_persists_exactly_the_sorted_prefix() {
     assert_eq!(store.documents().list_documents().unwrap()[0].title, "a.md");
     assert_eq!(calls.lock().unwrap().len(), 1);
     let generation_after_cancel = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert!(generation_after_cancel.dirty);
     assert_eq!(
@@ -660,9 +672,11 @@ async fn cancellation_between_commits_persists_exactly_the_sorted_prefix() {
     let final_snapshot = progress.last().unwrap();
     assert_eq!(final_snapshot.phase, SourceSyncPhase::Cancelled);
     assert_eq!(final_snapshot.processed_files, 1);
-    assert!(!progress
-        .iter()
-        .any(|snapshot| snapshot.phase == SourceSyncPhase::RefreshingFts));
+    assert!(
+        !progress
+            .iter()
+            .any(|snapshot| snapshot.phase == SourceSyncPhase::RefreshingFts)
+    );
     drop(progress);
 
     let hits = crate::db::search::search(
@@ -679,8 +693,8 @@ async fn cancellation_between_commits_persists_exactly_the_sorted_prefix() {
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].document_title, "a.md");
     let generation_after_search = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert!(!generation_after_search.dirty);
     assert_eq!(
@@ -838,11 +852,13 @@ async fn sync_preflight_updates_one_changed_file_and_cleans_deleted_manifest() {
     assert_eq!(roots[0].file_count, 1);
     assert!(roots[0].last_seen.is_some());
     assert!(roots[0].last_synced.is_some());
-    assert!(store
-        .source_manifest()
-        .list_source_roots(Some("other"))
-        .unwrap()
-        .is_empty());
+    assert!(
+        store
+            .source_manifest()
+            .list_source_roots(Some("other"))
+            .unwrap()
+            .is_empty()
+    );
 
     let batches_before_repair = embed_batches.load(Ordering::Relaxed);
     store
@@ -884,16 +900,20 @@ async fn sync_preflight_updates_one_changed_file_and_cleans_deleted_manifest() {
     assert_eq!(deleted.counters.extracted, 0);
     assert_eq!(deleted.counters.embedded, 0);
     assert!(store.documents().list_documents().unwrap().is_empty());
-    assert!(store
-        .source_manifest()
-        .load_source_manifest_root(&canonical_project)
-        .unwrap()
-        .is_empty());
-    assert!(store
-        .source_manifest()
-        .list_source_roots(None)
-        .unwrap()
-        .is_empty());
+    assert!(
+        store
+            .source_manifest()
+            .load_source_manifest_root(&canonical_project)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        store
+            .source_manifest()
+            .list_source_roots(None)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -913,8 +933,8 @@ async fn completed_sync_prepares_fts_before_the_first_user_search() {
     let service = SourceSyncService::new(&store, &embedder, &config);
     store.maintenance().ensure_fts(&config.fts_stemmer).unwrap();
     let generation_state = || {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     let search = |query: &str| {
         crate::db::search::search(
@@ -1069,22 +1089,26 @@ async fn terminal_fts_failure_preserves_committed_sync_report_and_dirty_fallback
     assert!(finalization.dirty_marker_error.is_none());
     assert!(finalization.ops_log_error.is_none());
     assert_eq!(store.documents().list_documents().unwrap().len(), 1);
-    assert!(store
-        .source_manifest()
-        .load_source_manifest_root(&canonical_root)
-        .unwrap()
-        .contains_key(&canonical_source));
+    assert!(
+        store
+            .source_manifest()
+            .load_source_manifest_root(&canonical_root)
+            .unwrap()
+            .contains_key(&canonical_source)
+    );
     let generation = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert!(generation.dirty, "next lexical read must retry FTS");
-    assert!(store
-        .ops_log()
-        .list_recent_ops(10)
-        .unwrap()
-        .iter()
-        .any(|entry| entry.op == "fts_finalization_failed"));
+    assert!(
+        store
+            .ops_log()
+            .list_recent_ops(10)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.op == "fts_finalization_failed")
+    );
     let progress = progress.lock().unwrap();
     assert_eq!(progress.last().unwrap().phase, SourceSyncPhase::Completed);
     assert_eq!(progress.last().unwrap().errors, 1);
@@ -1119,8 +1143,8 @@ async fn completed_sync_with_file_error_still_prepares_fts() {
     assert_eq!(initial.added.len(), 1);
     assert!(initial.errors.is_empty());
     let generation_before = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
 
     std::fs::write(&source, "needle replacement").unwrap();
@@ -1145,8 +1169,8 @@ async fn completed_sync_with_file_error_still_prepares_fts() {
     );
     assert!(report.errors[0].error.contains("exceeds max_file_bytes"));
     let generation_after_sync = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert!(!generation_after_sync.dirty);
     assert_eq!(
@@ -1177,8 +1201,8 @@ async fn completed_sync_with_file_error_still_prepares_fts() {
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].document_title, "README.md");
     let generation_after_search = {
-        let conn = store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert_eq!(generation_after_search, generation_after_sync);
 }
@@ -1751,7 +1775,7 @@ async fn html_original_survives_style_only_sync_and_repairs_missing_or_corrupt_b
     assert!(!doc.content.contains("color:red"));
     assert!(!doc.metadata_json.contains("code_source_text"));
     assert_eq!(
-        crate::code_index::source::read(&store.lock().unwrap(), &doc.content, &doc.metadata_json)
+        crate::code_index::source::read(&*store.read().unwrap(), &doc.content, &doc.metadata_json)
             .unwrap(),
         first
     );
@@ -1763,7 +1787,7 @@ async fn html_original_survives_style_only_sync_and_repairs_missing_or_corrupt_b
     assert!(updated.revision > doc.revision);
     assert_eq!(
         crate::code_index::source::read(
-            &store.lock().unwrap(),
+            &*store.read().unwrap(),
             &updated.content,
             &updated.metadata_json
         )
@@ -1771,31 +1795,29 @@ async fn html_original_survives_style_only_sync_and_repairs_missing_or_corrupt_b
         second
     );
     for corrupt in [false, true] {
+        use crate::db::lin_engine::LinWriter;
         let hash = crate::util::content_hash(&second);
         if corrupt {
-            store
-                .lock()
-                .unwrap()
-                .execute(
-                    "UPDATE code_index_source_blobs SET content='broken' WHERE content_hash=?",
-                    [&hash],
-                )
-                .unwrap();
+            let mut w = store.write().unwrap();
+            w.upsert_by_id(
+                "code_index_source_blobs",
+                &hash,
+                crate::db::lin_engine::RecBuilder::new()
+                    .id(&hash)
+                    .str("content_hash", &hash)
+                    .str("content", "broken")
+                    .build(),
+            )
+            .unwrap();
         } else {
-            store
-                .lock()
-                .unwrap()
-                .execute(
-                    "DELETE FROM code_index_source_blobs WHERE content_hash=?",
-                    [&hash],
-                )
-                .unwrap();
+            let mut w = store.write().unwrap();
+            w.delete_by_id("code_index_source_blobs", &hash).unwrap();
         }
         let report = service.sync(command.clone()).await.unwrap();
         assert!(report.errors.is_empty(), "{report:?}");
         assert_eq!(
             crate::code_index::source::read(
-                &store.lock().unwrap(),
+                &*store.read().unwrap(),
                 &updated.content,
                 &updated.metadata_json
             )
@@ -1821,9 +1843,7 @@ async fn source_sync_code_index_failure_retains_committed_sources_and_structured
     let store = crate::testkit::open_test_store(&config.db_path).unwrap();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
     store
-        .lock()
-        .unwrap()
-        .execute_batch("DROP TABLE code_index_documents")
+        .drop_collection_for_test("code_index_documents")
         .unwrap();
     let report = SourceSyncService::new(&store, &embedder, &config)
         .sync(SourceSyncCommand::new(root.path().to_path_buf()))

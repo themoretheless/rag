@@ -311,11 +311,13 @@ async fn wiki_write_rejects_identity_mismatch_before_embedding_or_mutation() {
         );
     }
     assert_eq!(calls.load(Ordering::SeqCst), 0);
-    assert!(store
-        .documents()
-        .find_by_uri("wiki://new-page")
-        .unwrap()
-        .is_none());
+    assert!(
+        store
+            .documents()
+            .find_by_uri("wiki://new-page")
+            .unwrap()
+            .is_none()
+    );
     let after_doc = get_wiki_page(&store, "existing").unwrap();
     assert_eq!(after_doc.content, before_doc.content);
     assert_eq!(after_doc.revision, before_doc.revision);
@@ -344,11 +346,11 @@ async fn wiki_write_rejects_identity_mismatch_before_embedding_or_mutation() {
         error.to_string().contains("incomplete corpus migration"),
         "{error}"
     );
-    store
-        .lock()
-        .unwrap()
-        .execute("DELETE FROM embedding_manifest", [])
-        .unwrap();
+    {
+        use crate::db::lin_engine::{LinWriter, pred_all};
+        let mut w = store.write().unwrap();
+        w.delete_where("embedding_manifest", pred_all()).unwrap();
+    }
     let error = write_wiki_page_command(
         &store,
         &incompatible,
@@ -362,11 +364,13 @@ async fn wiki_write_rejects_identity_mismatch_before_embedding_or_mutation() {
         "{error}"
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
-    assert!(store
-        .embedding_manifest()
-        .get_embedding_manifest()
-        .unwrap()
-        .is_none());
+    assert!(
+        store
+            .embedding_manifest()
+            .get_embedding_manifest()
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -443,9 +447,11 @@ async fn wiki_write_excludes_reembed_all_through_embedding_and_commit() {
         .unwrap()
         .unwrap()
         .unwrap();
-    assert!(chunk_state(&store, &written.document_id)
-        .iter()
-        .all(|chunk| chunk.embedding.len() == 16));
+    assert!(
+        chunk_state(&store, &written.document_id)
+            .iter()
+            .all(|chunk| chunk.embedding.len() == 16)
+    );
     let report = crate::maintain::reembed_all(&store, &replacement, &migrated, usize::MAX)
         .await
         .unwrap();
@@ -454,9 +460,11 @@ async fn wiki_write_excludes_reembed_all_through_embedding_and_commit() {
         .embedding_manifest()
         .require_embedding_manifest_match(&migrated)
         .unwrap();
-    assert!(chunk_state(&store, &written.document_id)
-        .iter()
-        .all(|chunk| chunk.embedding.len() == 8));
+    assert!(
+        chunk_state(&store, &written.document_id)
+            .iter()
+            .all(|chunk| chunk.embedding.len() == 8)
+    );
     let error = write_wiki_page_command(
         &store,
         &replacement,
@@ -496,11 +504,13 @@ async fn maintenance_wiki_writes_reuse_only_the_explicit_corpus_lease() {
     .await
     .unwrap_err();
     assert!(matches!(blocked, AppError::Busy(_)));
-    assert!(store
-        .embedding_manifest()
-        .get_embedding_manifest()
-        .unwrap()
-        .is_none());
+    assert!(
+        store
+            .embedding_manifest()
+            .get_embedding_manifest()
+            .unwrap()
+            .is_none()
+    );
     let actions = [MaintenanceAction::Consolidate, MaintenanceAction::FileAnswer]
             .into_iter().enumerate().map(|(index, action)| MaintenancePlanItem {
                 action,
@@ -526,25 +536,31 @@ async fn maintenance_wiki_writes_reuse_only_the_explicit_corpus_lease() {
     assert_eq!(store.documents().count_documents().unwrap(), 2);
     let retained = scoped.clone();
     drop(scoped);
-    assert!(store
-        .corpus_lane()
-        .try_corpus_mutation_guard("still leased")
-        .is_err());
+    assert!(
+        store
+            .corpus_lane()
+            .try_corpus_mutation_guard("still leased")
+            .is_err()
+    );
     drop(retained);
-    assert!(store
-        .corpus_lane()
-        .try_corpus_mutation_guard("finished")
-        .is_ok());
+    assert!(
+        store
+            .corpus_lane()
+            .try_corpus_mutation_guard("finished")
+            .is_ok()
+    );
 
     let other_store = open_store();
     let foreign_guard = other_store
         .corpus_lane()
         .try_corpus_mutation_guard("foreign")
         .unwrap();
-    assert!(store
-        .corpus_lane()
-        .with_corpus_mutation_guard(foreign_guard)
-        .is_err());
+    assert!(
+        store
+            .corpus_lane()
+            .with_corpus_mutation_guard(foreign_guard)
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -1154,10 +1170,12 @@ async fn source_versions_ignore_metadata_changes_and_report_deleted_parents() {
         .unwrap();
     assert_eq!(refresh.stale_count, 1);
     assert!(refresh.raw_sources.is_empty());
-    assert!(refresh
-        .notes
-        .unwrap()
-        .contains("1 source reference(s) are unavailable"));
+    assert!(
+        refresh
+            .notes
+            .unwrap()
+            .contains("1 source reference(s) are unavailable")
+    );
 }
 
 #[tokio::test]
@@ -1741,9 +1759,11 @@ async fn file_answer_embedding_failure_preserves_document_chunks_graph_and_side_
     )
     .await
     .expect_err("embedding must fail before persistence");
-    assert!(error
-        .to_string()
-        .contains("injected wiki embedding failure"));
+    assert!(
+        error
+            .to_string()
+            .contains("injected wiki embedding failure")
+    );
 
     let persisted_document = store
         .documents()
@@ -1765,11 +1785,13 @@ async fn file_answer_embedding_failure_preserves_document_chunks_graph_and_side_
         outgoing_edge_state(&store, &persisted_node.id),
         original_edges
     );
-    assert!(store
-        .graph()
-        .find_nodes_by_label("New target")
-        .unwrap()
-        .is_empty());
+    assert!(
+        store
+            .graph()
+            .find_nodes_by_label("New target")
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(wiki_index_state(&store, "atomic-answer"), original_index);
     assert_eq!(
         store.ops_log().list_ops_log(100).unwrap().len(),
@@ -1817,14 +1839,7 @@ async fn wiki_graph_fault_rolls_back_document_chunks_graph_and_side_effects() {
 
     // Test-only fault injector: the graph rebuild inserts the first edge,
     // then the duplicate violates this constraint after doc/chunk writes.
-    store
-            .lock()
-            .unwrap()
-            .execute(
-                "CREATE UNIQUE INDEX wiki_rollback_edge_key ON graph_edges(source_id, target_id, rel_type)",
-                [],
-            )
-            .expect("fault index");
+    store.set_fail_derived_edge_duplicate_for_test(true);
 
     let error = update_wiki_page_cas(
         &store,
@@ -1845,6 +1860,7 @@ async fn wiki_graph_fault_rolls_back_document_chunks_graph_and_side_effects() {
     )
     .await
     .expect_err("duplicate graph edge must fail the wiki transaction");
+    store.set_fail_derived_edge_duplicate_for_test(false);
     assert!(
         error.to_string().contains("duplicate")
             || error.to_string().contains("constraint")
@@ -1872,16 +1888,20 @@ async fn wiki_graph_fault_rolls_back_document_chunks_graph_and_side_effects() {
         outgoing_edge_state(&store, &persisted_node.id),
         original_edges
     );
-    assert!(store
-        .graph()
-        .find_nodes_by_label("Repeated target")
-        .unwrap()
-        .is_empty());
-    assert!(store
-        .documents()
-        .list_document_revisions(&written.document_id)
-        .unwrap()
-        .is_empty());
+    assert!(
+        store
+            .graph()
+            .find_nodes_by_label("Repeated target")
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        store
+            .documents()
+            .list_document_revisions(&written.document_id)
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(
         wiki_index_state(&store, "atomic-wiki-update"),
         original_index
@@ -1923,20 +1943,26 @@ async fn late_catalog_fault_rolls_back_new_wiki_page_and_audit() {
     .await
     .expect_err("late catalog fault must roll back the complete wiki write");
 
-    assert!(error
-        .to_string()
-        .contains("injected wiki write failure after catalog update"));
-    assert!(store
-        .documents()
-        .find_by_uri("wiki://late-create-rollback")
-        .unwrap()
-        .is_none());
+    assert!(
+        error
+            .to_string()
+            .contains("injected wiki write failure after catalog update")
+    );
+    assert!(
+        store
+            .documents()
+            .find_by_uri("wiki://late-create-rollback")
+            .unwrap()
+            .is_none()
+    );
     assert!(wiki_index_state(&store, "late-create-rollback").is_none());
-    assert!(store
-        .graph()
-        .find_nodes_by_label("Never committed")
-        .unwrap()
-        .is_empty());
+    assert!(
+        store
+            .graph()
+            .find_nodes_by_label("Never committed")
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(store.ops_log().list_ops_log(100).unwrap().len(), ops_before);
 }
 
@@ -2004,9 +2030,11 @@ async fn late_catalog_fault_rolls_back_existing_wiki_revision_and_derived_state(
         .await
         .expect_err("late catalog fault must roll back the existing wiki update");
 
-    assert!(error
-        .to_string()
-        .contains("injected wiki write failure after catalog update"));
+    assert!(
+        error
+            .to_string()
+            .contains("injected wiki write failure after catalog update")
+    );
     let persisted = store
         .documents()
         .get_document(&written.document_id)
@@ -2028,20 +2056,24 @@ async fn late_catalog_fault_rolls_back_existing_wiki_revision_and_derived_state(
         outgoing_edge_state(&store, &persisted_node.id),
         original_edges
     );
-    assert!(store
-        .graph()
-        .find_nodes_by_label("New target")
-        .unwrap()
-        .is_empty());
+    assert!(
+        store
+            .graph()
+            .find_nodes_by_label("New target")
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(
         wiki_index_state(&store, "late-update-rollback"),
         original_index
     );
-    assert!(store
-        .documents()
-        .list_document_revisions(&written.document_id)
-        .unwrap()
-        .is_empty());
+    assert!(
+        store
+            .documents()
+            .list_document_revisions(&written.document_id)
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(
         store.ops_log().list_ops_log(100).unwrap().len(),
         original_ops_count
@@ -2321,9 +2353,11 @@ async fn apply_consolidate_proposal_writes_wiki_graph_index_and_ops() {
     }
     let stale = find_stale_wiki(&store).unwrap();
     assert_eq!(stale.len(), 2);
-    assert!(stale
-        .iter()
-        .all(|item| item.wiki_id == wr.document_id && item.link_kind == "source_version"));
+    assert!(
+        stale
+            .iter()
+            .all(|item| item.wiki_id == wr.document_id && item.link_kind == "source_version")
+    );
     let parents = stale
         .iter()
         .map(|item| item.raw_id.as_str())
@@ -2373,9 +2407,11 @@ fn stale_wiki_resolves_each_parent_array_without_graph_edges() {
     }
     let stale = find_stale_wiki(&store).unwrap();
     assert_eq!(stale.len(), 3);
-    assert!(stale
-        .iter()
-        .all(|item| item.raw_id == raw.id && item.link_kind == "metadata"));
+    assert!(
+        stale
+            .iter()
+            .all(|item| item.raw_id == raw.id && item.link_kind == "metadata")
+    );
 }
 
 #[tokio::test]
@@ -2477,11 +2513,13 @@ async fn refresh_stale_wiki_apply_without_llm_lists_only() {
         .unwrap();
     assert_eq!(report.stale_count, 1);
     assert!(!report.applied);
-    assert!(report
-        .notes
-        .as_deref()
-        .unwrap_or("")
-        .contains("no ChatClient"));
+    assert!(
+        report
+            .notes
+            .as_deref()
+            .unwrap_or("")
+            .contains("no ChatClient")
+    );
 }
 
 #[test]

@@ -11,10 +11,10 @@ use serde::{Deserialize, Serialize};
 use crate::diagnostics::StatusReport;
 use uuid::Uuid;
 
-use crate::chunking::{from_config, Chunker};
+use crate::chunking::{Chunker, from_config};
 use crate::config::Config;
-use crate::db::graph::resolve::rebuild_document_graph;
 use crate::db::Store;
+use crate::db::graph::resolve::rebuild_document_graph;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
 use crate::models::{
@@ -500,9 +500,10 @@ mod tests {
         let read = diary_read(&store, "CLAUDE", 10).expect("read");
         assert!(read.len() >= 2);
         assert!(read.iter().any(|e| e.id == w2.entry.id));
-        assert!(read
-            .iter()
-            .any(|e| e.content == "noticed the FTS index was empty"));
+        assert!(
+            read.iter()
+                .any(|e| e.content == "noticed the FTS index was empty")
+        );
 
         let ops = store.ops_log().list_ops_log(10).unwrap();
         assert!(ops.iter().any(|o| o.op == "diary_write"));

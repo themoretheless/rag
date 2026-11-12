@@ -2,7 +2,7 @@
 
 // The provider presets are configuration value types; they live in the
 // domain-layer `config::providers` and are re-exported here.
-pub use crate::config::providers::{resolve_api_key, LlmApiDialect, LlmProviderKind};
+pub use crate::config::providers::{LlmApiDialect, LlmProviderKind, resolve_api_key};
 
 #[cfg(test)]
 mod tests {

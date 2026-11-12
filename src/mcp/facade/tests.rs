@@ -10,7 +10,7 @@ use rmcp::handler::server::wrapper::Parameters;
 
 use super::*;
 use crate::db::recovery::{
-    decode_recovery_bundle, encode_recovery_bundle, BundleDocument, RecoveryBundle, BUNDLE_VERSION,
+    BUNDLE_VERSION, BundleDocument, RecoveryBundle, decode_recovery_bundle, encode_recovery_bundle,
 };
 use crate::db::schema::SCHEMA_VERSION;
 use crate::db::search::SearchQuery;
@@ -18,7 +18,7 @@ use crate::diagnostics::DiagnosticsService;
 use crate::diagnostics::{DoctorReport, StatusReport};
 use crate::embeddings::MockEmbedder;
 use crate::mcp::maintain::clamp_maintenance_max_docs;
-use crate::mcp::recovery::{prepare_recovery_bundle_for_import, LEGACY_RECOVERY_BUNDLE_VERSION};
+use crate::mcp::recovery::{LEGACY_RECOVERY_BUNDLE_VERSION, prepare_recovery_bundle_for_import};
 use crate::mcp::tools::*;
 use crate::models::{Chunk, Document, SearchMode};
 use crate::util::{check_path_allowlist, content_hash, parse_optional_timestamp};
@@ -246,12 +246,14 @@ async fn doctor_repair_rebuilds_missing_chunks() {
         }))
         .await
         .unwrap();
-    assert!(server
-        .store
-        .chunks()
-        .list_chunks_for_document("missing-chunks")
-        .unwrap()
-        .is_empty());
+    assert!(
+        server
+            .store
+            .chunks()
+            .list_chunks_for_document("missing-chunks")
+            .unwrap()
+            .is_empty()
+    );
 
     let search_guard = server
         .store
@@ -276,16 +278,18 @@ async fn doctor_repair_rebuilds_missing_chunks() {
         }))
         .await
         .unwrap();
-    assert!(!server
-        .store
-        .chunks()
-        .list_chunks_for_document("missing-chunks")
-        .unwrap()
-        .is_empty());
+    assert!(
+        !server
+            .store
+            .chunks()
+            .list_chunks_for_document("missing-chunks")
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(server.doctor_report().unwrap().documents_without_chunks, 0);
     let generation_after_repair = {
-        let conn = server.store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = server.store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert!(!generation_after_repair.dirty);
     let hits = crate::db::search::search(
@@ -301,8 +305,8 @@ async fn doctor_repair_rebuilds_missing_chunks() {
     .unwrap();
     assert_eq!(hits.len(), 1);
     let generation_after_search = {
-        let conn = server.store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = server.store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert_eq!(generation_after_search, generation_after_repair);
 }
@@ -340,17 +344,19 @@ async fn import_bundle_finishes_with_generation_clean_fts() {
                 kind: "wiki".into(),
                 ..Document::default()
             },
-            chunks: vec![Chunk {
-                id: "imported-chunk".into(),
-                document_id: "imported-document".into(),
-                chunk_index: 0,
-                content: body.into(),
-                embedding: vec![0.2; dims],
-                char_start: 0,
-                char_end: body.len() as i32,
-                metadata_json: "{}".into(),
-            }
-            .into()],
+            chunks: vec![
+                Chunk {
+                    id: "imported-chunk".into(),
+                    document_id: "imported-document".into(),
+                    chunk_index: 0,
+                    content: body.into(),
+                    embedding: vec![0.2; dims],
+                    char_start: 0,
+                    char_end: body.len() as i32,
+                    metadata_json: "{}".into(),
+                }
+                .into(),
+            ],
         }],
     };
     std::fs::write(
@@ -394,8 +400,8 @@ async fn import_bundle_finishes_with_generation_clean_fts() {
     assert_eq!(result_json["durable_mutation_committed"], true);
     assert_eq!(result_json["documents_inserted"], 1);
     let generation_after_import = {
-        let conn = server.store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = server.store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert!(!generation_after_import.dirty);
 
@@ -411,8 +417,8 @@ async fn import_bundle_finishes_with_generation_clean_fts() {
     )
     .unwrap();
     let generation_after_search = {
-        let conn = server.store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = server.store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert_eq!(generation_after_search, generation_after_import);
 }
@@ -442,17 +448,19 @@ async fn legacy_bundle_requires_opt_in_and_reembeds_before_import() {
                 content: body.into(),
                 ..Document::default()
             },
-            chunks: vec![Chunk {
-                id: "legacy-chunk".into(),
-                document_id: "legacy-document".into(),
-                chunk_index: 0,
-                content: body.into(),
-                embedding: legacy_vector.clone(),
-                char_start: 0,
-                char_end: body.len() as i32,
-                metadata_json: "{}".into(),
-            }
-            .into()],
+            chunks: vec![
+                Chunk {
+                    id: "legacy-chunk".into(),
+                    document_id: "legacy-document".into(),
+                    chunk_index: 0,
+                    content: body.into(),
+                    embedding: legacy_vector.clone(),
+                    char_start: 0,
+                    char_end: body.len() as i32,
+                    metadata_json: "{}".into(),
+                }
+                .into(),
+            ],
         }],
     };
     std::fs::write(
@@ -472,12 +480,14 @@ async fn legacy_bundle_requires_opt_in_and_reembeds_before_import() {
         .await
         .unwrap_err();
     assert!(refused.message.contains("reembed_legacy=true"));
-    assert!(server
-        .store
-        .documents()
-        .get_document("legacy-document")
-        .unwrap()
-        .is_none());
+    assert!(
+        server
+            .store
+            .documents()
+            .get_document("legacy-document")
+            .unwrap()
+            .is_none()
+    );
 
     let result = server
         .import_bundle(Parameters(ImportBundleParams {
@@ -504,11 +514,13 @@ async fn legacy_bundle_requires_opt_in_and_reembeds_before_import() {
     assert_eq!(chunks.len(), 1);
     assert_eq!(chunks[0].embedding.len(), dims);
     assert_ne!(chunks[0].embedding, legacy_vector);
-    assert!(server
-        .store
-        .embedding_manifest()
-        .embedding_manifest_matches_config(server.config.as_ref())
-        .unwrap());
+    assert!(
+        server
+            .store
+            .embedding_manifest()
+            .embedding_manifest_matches_config(server.config.as_ref())
+            .unwrap()
+    );
 }
 
 #[tokio::test]
@@ -535,17 +547,19 @@ async fn legacy_reembed_preflight_rejects_oversized_vectors_before_provider_call
                 content: "body".into(),
                 ..Document::default()
             },
-            chunks: vec![Chunk {
-                id: "legacy-large-vector-chunk".into(),
-                document_id: "legacy-large-vector".into(),
-                chunk_index: 0,
-                content: "body".into(),
-                embedding: Vec::new(),
-                char_start: 0,
-                char_end: 4,
-                metadata_json: "{}".into(),
-            }
-            .into()],
+            chunks: vec![
+                Chunk {
+                    id: "legacy-large-vector-chunk".into(),
+                    document_id: "legacy-large-vector".into(),
+                    chunk_index: 0,
+                    content: "body".into(),
+                    embedding: Vec::new(),
+                    char_start: 0,
+                    char_end: 4,
+                    metadata_json: "{}".into(),
+                }
+                .into(),
+            ],
         }],
     };
 
@@ -986,12 +1000,16 @@ async fn list_wings_rooms_taxonomy_and_status_wings() {
         .list_rooms(Some("research"))
         .expect("list_rooms");
     assert_eq!(rooms.len(), 2);
-    assert!(rooms
-        .iter()
-        .any(|r| r.room == "rag" && r.document_count == 1));
-    assert!(rooms
-        .iter()
-        .any(|r| r.room == "eval" && r.document_count == 1));
+    assert!(
+        rooms
+            .iter()
+            .any(|r| r.room == "rag" && r.document_count == 1)
+    );
+    assert!(
+        rooms
+            .iter()
+            .any(|r| r.room == "eval" && r.document_count == 1)
+    );
 
     let tax = server.store.documents().get_taxonomy().expect("taxonomy");
     assert_eq!(tax.total_documents, 3);
@@ -1284,12 +1302,14 @@ async fn delete_by_source_preview_matches_archived_and_tombstone_apply_scope() {
         serde_json::from_str(&applied.content[0].as_text().expect("text result").text).unwrap();
     assert_eq!(applied["match_count"], 3);
     assert_eq!(applied["deleted"], 3);
-    assert!(server
-        .store
-        .documents()
-        .list_documents()
-        .unwrap()
-        .is_empty());
+    assert!(
+        server
+            .store
+            .documents()
+            .list_documents()
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -1339,28 +1359,34 @@ async fn delete_by_source_finalization_failure_returns_committed_report() {
     assert_eq!(result["success"], false);
     assert_eq!(result["durable_mutation_committed"], true);
     assert_eq!(result["deleted"], 1);
-    assert!(result["errors"][0]
-        .as_str()
-        .unwrap()
-        .contains("FTS_FINALIZATION_FAILED"));
-    assert!(server
-        .store
-        .documents()
-        .get_document(&ingested.document_id)
-        .unwrap()
-        .is_none());
+    assert!(
+        result["errors"][0]
+            .as_str()
+            .unwrap()
+            .contains("FTS_FINALIZATION_FAILED")
+    );
+    assert!(
+        server
+            .store
+            .documents()
+            .get_document(&ingested.document_id)
+            .unwrap()
+            .is_none()
+    );
     let generation = {
-        let conn = server.store.lock().unwrap();
-        crate::db::fts_generation_state(&conn).unwrap()
+        let r = server.store.read().unwrap();
+        crate::db::fts_generation_state(&*r).unwrap()
     };
     assert!(generation.dirty, "next lexical read must retry FTS");
-    assert!(server
-        .store
-        .ops_log()
-        .list_recent_ops(10)
-        .unwrap()
-        .iter()
-        .any(|entry| entry.op == "fts_finalization_failed"));
+    assert!(
+        server
+            .store
+            .ops_log()
+            .list_recent_ops(10)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.op == "fts_finalization_failed")
+    );
 }
 
 #[tokio::test]
@@ -1406,8 +1432,8 @@ async fn cleanup_source_duplicates_defaults_safe_requires_confirm_and_respects_l
         .ensure_fts(&server.config.fts_stemmer)
         .unwrap();
     let generation_before = {
-        let conn = server.store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = server.store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert!(!generation_before.dirty);
 
@@ -1420,12 +1446,14 @@ async fn cleanup_source_duplicates_defaults_safe_requires_confirm_and_respects_l
     assert_eq!(preview_json["dry_run"], true);
     assert_eq!(preview_json["applied"], false);
     assert_eq!(preview_json["candidate_count"], 1);
-    assert!(server
-        .store
-        .documents()
-        .get_document("legacy")
-        .unwrap()
-        .is_some());
+    assert!(
+        server
+            .store
+            .documents()
+            .get_document("legacy")
+            .unwrap()
+            .is_some()
+    );
 
     let missing_confirm = server
         .cleanup_source_duplicates(Parameters(CleanupSourceDuplicatesParams {
@@ -1480,15 +1508,17 @@ async fn cleanup_source_duplicates_defaults_safe_requires_confirm_and_respects_l
         serde_json::from_str(&applied.content[0].as_text().expect("text result").text).unwrap();
     assert_eq!(applied_json["applied"], true);
     assert_eq!(applied_json["deleted_documents"], 1);
-    assert!(server
-        .store
-        .documents()
-        .get_document("legacy")
-        .unwrap()
-        .is_none());
+    assert!(
+        server
+            .store
+            .documents()
+            .get_document("legacy")
+            .unwrap()
+            .is_none()
+    );
     let generation_after = {
-        let conn = server.store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = server.store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert!(!generation_after.dirty);
     assert_eq!(
@@ -1733,12 +1763,14 @@ async fn add_drawer_check_duplicate_delete_by_source() {
         serde_json::from_str(&dry.content[0].as_text().expect("text result").text).unwrap();
     assert_eq!(dry_json["match_count"], 1);
     assert_eq!(dry_json["deleted"], 0);
-    assert!(server
-        .store
-        .documents()
-        .get_document(&ing.document_id)
-        .expect("get")
-        .is_some());
+    assert!(
+        server
+            .store
+            .documents()
+            .get_document(&ing.document_id)
+            .expect("get")
+            .is_some()
+    );
 
     let search_guard = server
         .store
@@ -1766,12 +1798,14 @@ async fn add_drawer_check_duplicate_delete_by_source() {
     let deleted_json: serde_json::Value =
         serde_json::from_str(&deleted.content[0].as_text().expect("text result").text).unwrap();
     assert_eq!(deleted_json["deleted"], 1);
-    assert!(server
-        .store
-        .documents()
-        .get_document(&ing.document_id)
-        .expect("get after")
-        .is_none());
+    assert!(
+        server
+            .store
+            .documents()
+            .get_document(&ing.document_id)
+            .expect("get after")
+            .is_none()
+    );
     assert!(
         !server
             .store
@@ -1781,8 +1815,8 @@ async fn add_drawer_check_duplicate_delete_by_source() {
             .is_duplicate
     );
     let generation_after_delete = {
-        let conn = server.store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = server.store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert!(!generation_after_delete.dirty);
 }
@@ -1824,8 +1858,8 @@ async fn single_reembed_refuses_identity_migration_until_full_reembed() {
         .list_chunks_for_document(&ingest.document_id)
         .expect("chunks before mismatch");
     let generation_before = {
-        let conn = server.store.lock().unwrap();
-        crate::db::fts::chunks_generation(&conn).unwrap()
+        let r = server.store.read().unwrap();
+        crate::db::fts::chunks_generation(&*r).unwrap()
     };
 
     // Same provider/model/dims is still a mismatch when a persisted
@@ -1850,9 +1884,11 @@ async fn single_reembed_refuses_identity_migration_until_full_reembed() {
         .reembed_document_pipeline(&ingest.document_id)
         .await
         .expect_err("single-document refresh must not migrate identity");
-    assert!(error
-        .to_string()
-        .contains("reembed_document cannot migrate embedding identity"));
+    assert!(
+        error
+            .to_string()
+            .contains("reembed_document cannot migrate embedding identity")
+    );
     assert_eq!(calls.load(Ordering::Relaxed), calls_after_ingest);
     assert_eq!(
         server
@@ -1869,8 +1905,8 @@ async fn single_reembed_refuses_identity_migration_until_full_reembed() {
             .collect::<Vec<_>>()
     );
     let generation_after_refusal = {
-        let conn = server.store.lock().unwrap();
-        crate::db::fts::chunks_generation(&conn).unwrap()
+        let r = server.store.read().unwrap();
+        crate::db::fts::chunks_generation(&*r).unwrap()
     };
     assert_eq!(generation_after_refusal, generation_before);
     assert_eq!(
@@ -1968,21 +2004,37 @@ async fn recovery_tools_refuse_oversized_io_without_publishing_an_artifact() {
     assert!(import_error.message.contains("verified DuckDB backup"));
 
     {
-        let conn = server.store.lock().unwrap();
-        conn.execute(
-            r#"
-            INSERT INTO documents (
-                id, uri, title, content, metadata_json, created_at, updated_at
-            )
-            SELECT
-                'portable-limit-' || CAST(i AS VARCHAR),
-                'recovery://portable-limit/' || CAST(i AS VARCHAR),
-                'limit', '', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-            FROM range(0, ?) AS generated(i)
-            "#,
-            [i64::try_from(crate::db::recovery::PORTABLE_RECOVERY_MAX_DOCUMENTS + 1).unwrap()],
-        )
-        .unwrap();
+        use crate::db::lin_engine::{LinWriter, RecBuilder};
+        let mut w = server.store.write().unwrap();
+        let now = crate::util::format_db_timestamp(Utc::now());
+        let total = crate::db::recovery::PORTABLE_RECOVERY_MAX_DOCUMENTS + 1;
+        let mut batch = Vec::with_capacity(512);
+        for i in 0..total {
+            batch.push(
+                RecBuilder::new()
+                    .id(format!("portable-limit-{i}"))
+                    .str("uri", format!("recovery://portable-limit/{i}"))
+                    .str("title", "limit")
+                    .str("content", "")
+                    .str("metadata_json", "{}")
+                    .str("created_at", &now)
+                    .str("updated_at", &now)
+                    .str("status", "active")
+                    .str("layer", "raw")
+                    .str("kind", "document")
+                    .i64("revision", 1)
+                    .bool("pinned", false)
+                    .f64("boost", 0.0)
+                    .build(),
+            );
+            if batch.len() >= 512 {
+                w.insert_records("documents", std::mem::take(&mut batch))
+                    .unwrap();
+            }
+        }
+        if !batch.is_empty() {
+            w.insert_records("documents", batch).unwrap();
+        }
     }
     let output = root.path().join("must-not-exist.json");
     let export_error = server

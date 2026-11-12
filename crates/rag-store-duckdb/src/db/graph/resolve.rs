@@ -2,22 +2,25 @@
 
 use std::path::Path;
 
-use duckdb::{params, Connection};
 use uuid::Uuid;
 
+use crate::db::Store;
 use crate::db::graph::{
-    delete_derived_edges_from_locked, find_node_by_document_id_locked as find_node_by_document_id,
+    DerivedEdge, delete_derived_edges_from_locked,
+    find_node_by_document_id_locked as find_node_by_document_id,
     find_node_by_uri_locked as find_node_by_uri, find_nodes_by_label_locked as find_nodes_by_label,
     insert_derived_graph_edges_locked as insert_graph_edges,
-    upsert_graph_node_locked as upsert_graph_node, DerivedEdge,
+    upsert_graph_node_locked as upsert_graph_node,
 };
-use crate::db::Store;
+use crate::db::lin_engine::{
+    LinReader, LinWriter, cell_i64, cell_nonempty_string, cell_str, cell_string,
+};
 use crate::error::Result;
-use crate::models::{Document, GraphEdge, GraphNode, Layer, NodeKind};
-use crate::util::{slugify, wiki_slug_from_uri, SlugPolicy};
-use rag_mcp_markup::extract::{
-    extract_links_with, ExtractOptions, ExtractedLink, DEFAULT_MAX_LINKS_PER_DOC,
+use crate::graph::extract::{
+    DEFAULT_MAX_LINKS_PER_DOC, ExtractOptions, ExtractedLink, extract_links_with,
 };
+use crate::models::{Document, GraphEdge, GraphNode, Layer, NodeKind};
+use crate::util::{SlugPolicy, slugify, wiki_slug_from_uri};
 
 /// Rebuild the object-graph slice for `doc`.
 ///
@@ -27,19 +30,12 @@ use rag_mcp_markup::extract::{
 ///
 /// Returns `(node_id, edge_count)` for the document node and edges written this pass.
 pub fn rebuild_document_graph(store: &Store, doc: &Document) -> Result<(String, usize)> {
-    let mut conn = store.lock()?;
-    let tx = conn.transaction()?;
-    let result = rebuild_document_graph_locked(&tx, doc)?;
-    tx.commit()?;
-    Ok(result)
+    store.with_tx(|tx| rebuild_document_graph_locked(tx, doc))
 }
 
 /// Transaction-aware graph rebuild used by atomic document writes.
-///
-/// `duckdb::Transaction` dereferences to [`Connection`], so callers can run the
-/// exact same resolution logic under their surrounding document/chunk transaction.
 pub(crate) fn rebuild_document_graph_locked(
-    conn: &Connection,
+    conn: &mut impl LinWriter,
     doc: &Document,
 ) -> Result<(String, usize)> {
     let node_id = ensure_document_node(conn, &doc.id, &doc.title, &doc.uri)?;
@@ -105,23 +101,24 @@ pub(crate) fn rebuild_document_graph_locked(
 }
 
 /// §4.5: `(chunk id, char_start, char_end)` for a document, in document order.
-fn load_chunk_spans(conn: &Connection, document_id: &str) -> Result<Vec<(String, i64, i64)>> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT id, char_start, char_end
-        FROM chunks
-        WHERE document_id = ?
-        ORDER BY chunk_index ASC
-        "#,
-    )?;
-    let spans = crate::db::rows::query_vec(&mut stmt, params![document_id], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, i64>(1)?,
-            row.get::<_, i64>(2)?,
-        ))
-    })?;
-    Ok(spans)
+fn load_chunk_spans(r: &impl LinReader, document_id: &str) -> Result<Vec<(String, i64, i64)>> {
+    let rows = r.find_by_eq("chunks", "document_id", document_id)?;
+    let mut indexed: Vec<(i64, String, i64, i64)> = rows
+        .iter()
+        .map(|row| {
+            (
+                cell_i64(row, "chunk_index", 0),
+                cell_string(row, "id"),
+                cell_i64(row, "char_start", 0),
+                cell_i64(row, "char_end", 0),
+            )
+        })
+        .collect();
+    indexed.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    Ok(indexed
+        .into_iter()
+        .map(|(_, id, cs, ce)| (id, cs, ce))
+        .collect())
 }
 
 /// Id of the chunk holding a link span (§4.5). A span that straddles a boundary
@@ -191,7 +188,7 @@ fn document_supports_knowledge_markup(doc: &Document) -> bool {
 /// This keeps otherwise linkless source files inside a navigable hierarchy
 /// without producing an O(n²) clique between sibling files.
 fn append_structural_edges(
-    conn: &Connection,
+    conn: &mut impl LinWriter,
     doc: &Document,
     document_node_id: &str,
     edges: &mut Vec<DerivedEdge>,
@@ -241,7 +238,7 @@ fn append_structural_edges(
 }
 
 fn ensure_structural_node(
-    conn: &Connection,
+    conn: &mut impl LinWriter,
     structural_kind: &str,
     label: &str,
     uri: &str,
@@ -290,7 +287,7 @@ fn structural_edge(source_id: &str, target_id: String, context: &str) -> Derived
 /// reuse keeps the existing node id so edges written before the document arrived
 /// stay attached after promotion.
 fn ensure_document_node(
-    conn: &Connection,
+    conn: &mut impl LinWriter,
     document_id: &str,
     title: &str,
     uri: &str,
@@ -330,7 +327,7 @@ fn ensure_document_node(
 
 /// Mark an existing node as the document node for `document_id`, keeping its id.
 fn bind_as_document_node(
-    conn: &Connection,
+    conn: &mut impl LinWriter,
     mut node: GraphNode,
     document_id: &str,
     title: &str,
@@ -347,7 +344,7 @@ fn bind_as_document_node(
 }
 
 fn create_document_node(
-    conn: &Connection,
+    conn: &mut impl LinWriter,
     document_id: &str,
     title: &str,
     uri: &str,
@@ -413,7 +410,7 @@ fn uri_basename(uri: &str) -> Option<String> {
     }
 }
 
-fn resolve_target(conn: &Connection, link: &ExtractedLink) -> Result<String> {
+fn resolve_target(conn: &mut impl LinWriter, link: &ExtractedLink) -> Result<String> {
     match link.rel_type.as_str() {
         "tagged" => upsert_tag_node(conn, &link.target_label),
         _ => resolve_wikilink_target(conn, &link.target_label),
@@ -424,8 +421,8 @@ fn resolve_target(conn: &Connection, link: &ExtractedLink) -> Result<String> {
 ///
 /// Every tag writer (extraction and maintenance `set_tags`) goes through this so
 /// `#Alpha`, `alpha` and legacy `tag://{label}` nodes resolve to one hub.
-pub(crate) fn upsert_tag_node(conn: &Connection, label: &str) -> Result<String> {
-    let key = rag_mcp_markup::normalize::tag_key(label);
+pub(crate) fn upsert_tag_node(conn: &mut impl LinWriter, label: &str) -> Result<String> {
+    let key = crate::graph::normalize::tag_key(label);
     let uri = format!("tag://{key}");
     if let Some(node) = find_node_by_uri(conn, &uri)? {
         return Ok(node.id);
@@ -441,7 +438,7 @@ pub(crate) fn upsert_tag_node(conn: &Connection, label: &str) -> Result<String> 
     let node = GraphNode {
         id: Uuid::new_v4().to_string(),
         kind: "tag".into(),
-        label: rag_mcp_markup::normalize::display_label(label),
+        label: crate::graph::normalize::display_label(label),
         document_id: None,
         uri: Some(uri),
         resolved: true,
@@ -460,7 +457,7 @@ pub(crate) fn upsert_tag_node(conn: &Connection, label: &str) -> Result<String> 
 /// 3. Document by those uris → its graph node
 /// 4. `wiki_index.slug` → page document node
 /// 5. Create a new stub (label only; uri left unset until page write)
-fn resolve_wikilink_target(conn: &Connection, label: &str) -> Result<String> {
+fn resolve_wikilink_target(conn: &mut impl LinWriter, label: &str) -> Result<String> {
     let label = label.trim();
     if label.is_empty() {
         // Should not happen from extract; keep a stable empty stub.
@@ -518,37 +515,27 @@ fn resolve_wikilink_target(conn: &Connection, label: &str) -> Result<String> {
 }
 
 fn pick_wikilink_node(matches: &[GraphNode]) -> Option<&GraphNode> {
-    // §5.3: a wikilink names a page, so it binds to a *unique* resolved document
-    // node, or to an unresolved stub. Tag hubs and structural entities are never
-    // wikilink targets — binding [[inbox]] to the #inbox hub would make a tag
-    // look like a note.
     let mut documents = matches
         .iter()
         .filter(|n| NodeKind::Document.is(&n.kind) && n.resolved);
     let document = documents.next()?;
     if documents.next().is_some() {
-        // Two documents share one label_key: that is ambiguity, not a match. Stay
-        // on a stub and let `link_health` surface it instead of picking a winner.
         return pick_stub_node(matches);
     }
     Some(document)
 }
 
-/// Existing promotion target for a wikilink: an unresolved stub-like node. Both
-/// tag and structural-entity nodes carry `resolved = true`, so they never match.
 fn pick_stub_node(matches: &[GraphNode]) -> Option<&GraphNode> {
     matches
         .iter()
         .find(|n| NodeKind::Stub.is(&n.kind) || !n.resolved)
 }
 
-fn upsert_stub(conn: &Connection, label: &str) -> Result<String> {
+fn upsert_stub(conn: &mut impl LinWriter, label: &str) -> Result<String> {
     let matches = find_nodes_by_label(conn, label)?;
     if let Some(n) = pick_stub_node(&matches) {
         return Ok(n.id.clone());
     }
-    // A label that only matches resolved documents is an ambiguous or mistyped
-    // target: mint an unbound stub for the link rather than borrowing that node.
     let node = GraphNode {
         id: Uuid::new_v4().to_string(),
         kind: "stub".into(),
@@ -563,52 +550,48 @@ fn upsert_stub(conn: &Connection, label: &str) -> Result<String> {
     Ok(id)
 }
 
-fn find_document_by_uri(conn: &Connection, uri: &str) -> Result<Option<(String, String, String)>> {
-    find_document_node_data(
-        conn,
-        "SELECT id, title, uri FROM documents WHERE uri = ? LIMIT 1",
-        uri,
-    )
+fn find_document_by_uri(r: &impl LinReader, uri: &str) -> Result<Option<(String, String, String)>> {
+    let rows = r.find_by_eq("documents", "uri", uri)?;
+    Ok(rows.first().map(|row| {
+        (
+            cell_string(row, "id"),
+            cell_string(row, "title"),
+            cell_string(row, "uri"),
+        )
+    }))
 }
 
 fn find_document_by_id(
-    conn: &Connection,
+    r: &impl LinReader,
     document_id: &str,
 ) -> Result<Option<(String, String, String)>> {
-    find_document_node_data(
-        conn,
-        "SELECT id, title, uri FROM documents WHERE id = ? LIMIT 1",
-        document_id,
-    )
+    Ok(r.get_by_id("documents", document_id)?.map(|row| {
+        (
+            cell_string(&row, "id"),
+            cell_string(&row, "title"),
+            cell_string(&row, "uri"),
+        )
+    }))
 }
 
-fn find_document_node_data(
-    conn: &Connection,
-    sql: &str,
-    value: &str,
-) -> Result<Option<(String, String, String)>> {
-    let mut stmt = conn.prepare_cached(sql)?;
-    let mut rows = stmt.query(params![value])?;
-    match rows.next()? {
-        Some(row) => Ok(Some((row.get(0)?, row.get(1)?, row.get(2)?))),
-        None => Ok(None),
+fn find_wiki_index_page_id(r: &impl LinReader, slug: &str) -> Result<Option<String>> {
+    if let Some(row) = r.get_by_id("wiki_index", slug)? {
+        return Ok(cell_nonempty_string(&row, "page_id")
+            .or_else(|| cell_nonempty_string(&row, "document_id")));
     }
-}
-
-fn find_wiki_index_page_id(conn: &Connection, slug: &str) -> Result<Option<String>> {
-    let mut stmt = conn.prepare_cached(
-        r#"
-        SELECT COALESCE(page_id, document_id)
-        FROM wiki_index
-        WHERE slug = ? OR label = ? OR id = ?
-        LIMIT 1
-        "#,
-    )?;
-    let mut rows = stmt.query(params![slug, slug, slug])?;
-    match rows.next()? {
-        Some(row) => Ok(row.get(0)?),
-        None => Ok(None),
-    }
+    let mut found: Option<String> = None;
+    r.scan_each("wiki_index", |row| {
+        if cell_str(row, "slug") == Some(slug)
+            || cell_str(row, "label") == Some(slug)
+            || cell_str(row, "id") == Some(slug)
+        {
+            found = cell_nonempty_string(row, "page_id")
+                .or_else(|| cell_nonempty_string(row, "document_id"));
+            return Ok(false);
+        }
+        Ok(true)
+    })?;
+    Ok(found)
 }
 
 /// Light slug for link targets (keep dots for file names; collapse spaces).
@@ -617,4 +600,708 @@ fn slugify_link(s: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn open_temp() -> Store {
+        crate::testkit::temp_store()
+    }
+
+    fn doc(id: &str, title: &str, uri: &str, content: &str) -> Document {
+        let now = Utc::now();
+        Document {
+            id: id.into(),
+            uri: uri.into(),
+            title: title.into(),
+            content: content.into(),
+            metadata_json: "{}".into(),
+            created_at: now,
+            updated_at: now,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn rebuild_creates_doc_stub_and_tag() {
+        let store = open_temp();
+        let d = doc(
+            "d1",
+            "Home",
+            "doc://home",
+            "See [[Other Note]] and #inbox stuff.",
+        );
+        store.upsert_document(&d).unwrap();
+
+        let (node_id, edge_count) = rebuild_document_graph(&store, &d).unwrap();
+        assert!(!node_id.is_empty());
+        assert_eq!(edge_count, 2);
+
+        let node = store.find_node_by_document_id("d1").unwrap().expect("node");
+        assert_eq!(node.id, node_id);
+        assert_eq!(node.kind, "document");
+        assert!(node.resolved);
+
+        let stubs = store.find_nodes_by_label("Other Note").unwrap();
+        assert_eq!(stubs.len(), 1);
+        assert_eq!(stubs[0].kind, "stub");
+        assert!(!stubs[0].resolved);
+
+        let tags = store.find_nodes_by_label("inbox").unwrap();
+        assert_eq!(tags[0].kind, "tag");
+    }
+
+    #[test]
+    fn rebuild_preserves_explicit_edges_even_when_their_type_is_extractable() {
+        let store = open_temp();
+        let mut source = doc("source", "Source", "doc://source", "[[Old target]] #oldtag");
+        let target = doc("target", "Target", "doc://target", "Target body");
+        store.upsert_document(&source).unwrap();
+        store.upsert_document(&target).unwrap();
+        let (source_node, _) = rebuild_document_graph(&store, &source).unwrap();
+        let (target_node, _) = rebuild_document_graph(&store, &target).unwrap();
+        let manual = ["related", "tunnel", "wikilink", "tagged"].map(|relation| {
+            store
+                .link_nodes(&source_node, &target_node, relation, 1.0)
+                .unwrap()
+                .id
+        });
+        source.content = "[[New target]]".into();
+        store.upsert_document(&source).unwrap();
+        for _ in 0..2 {
+            rebuild_document_graph(&store, &source).unwrap();
+        }
+        let r = store.read().unwrap();
+        for id in manual {
+            let row = r
+                .get_by_id("graph_edges", &id)
+                .unwrap()
+                .expect("manual edge");
+            assert_eq!(cell_str(&row, "origin"), Some("explicit"));
+        }
+        let derived = r
+            .find_by_eq("graph_edges", "source_id", source_node.as_str())
+            .unwrap()
+            .into_iter()
+            .filter(|row| cell_str(row, "origin") == Some("extract"))
+            .count();
+        assert_eq!(
+            derived, 1,
+            "rebuild replaces rather than duplicates extracted edges"
+        );
+    }
+
+    /// §4.1/§6.1 step 5: an extracted edge carries the span, alias, heading,
+    /// occurrence and containing chunk it was read from, while an explicit
+    /// `link_nodes` edge keeps those columns NULL — it has no source span.
+    #[test]
+    fn rebuild_records_link_provenance_and_explicit_edges_stay_bare() {
+        let store = open_temp();
+        let body = "Intro [[Target#Chapter|see]].";
+        let source = doc("src", "Src", "doc://src", body);
+        store.upsert_document(&source).unwrap();
+        store
+            .insert_chunks(&[
+                chunk("c-head", "src", 0, "Intro ", 0, 6),
+                chunk("c-link", "src", 1, "[[Target#Chapter|see]].", 6, 29),
+            ])
+            .unwrap();
+
+        let (node_id, _) = rebuild_document_graph(&store, &source).unwrap();
+
+        #[derive(Debug)]
+        struct Row {
+            rel: String,
+            origin: Option<String>,
+            alias: Option<String>,
+            heading: Option<String>,
+            chunk_id: Option<String>,
+            char_start: Option<i64>,
+            char_end: Option<i64>,
+            occurrence: Option<i64>,
+        }
+        let rows = {
+            let r = store.read().unwrap();
+            let mut found: Vec<Row> = r
+                .find_by_eq("graph_edges", "source_id", node_id.as_str())
+                .unwrap()
+                .iter()
+                .map(|row| Row {
+                    rel: cell_string(row, "rel_type"),
+                    origin: crate::db::lin_engine::cell_opt_string(row, "origin"),
+                    alias: crate::db::lin_engine::cell_opt_string(row, "alias"),
+                    heading: crate::db::lin_engine::cell_opt_string(row, "heading"),
+                    chunk_id: crate::db::lin_engine::cell_opt_string(row, "chunk_id"),
+                    char_start: crate::db::lin_engine::cell_i64_opt(row, "char_start"),
+                    char_end: crate::db::lin_engine::cell_i64_opt(row, "char_end"),
+                    occurrence: crate::db::lin_engine::cell_i64_opt(row, "occurrence"),
+                })
+                .collect();
+            found.sort_by(|a, b| a.rel.cmp(&b.rel));
+            found
+        };
+
+        let wikilink = rows
+            .iter()
+            .find(|r| r.rel == "wikilink")
+            .expect("wikilink edge");
+        assert_eq!(wikilink.origin.as_deref(), Some("extract"));
+        assert_eq!(wikilink.alias.as_deref(), Some("see"));
+        assert_eq!(wikilink.heading.as_deref(), Some("Chapter"));
+        assert_eq!(wikilink.chunk_id.as_deref(), Some("c-link"));
+        assert_eq!(wikilink.char_start, Some(6));
+        assert_eq!(wikilink.char_end, Some(28));
+        assert_eq!(wikilink.occurrence, Some(0));
+
+        let stub_id = store
+            .find_nodes_by_label("Target")
+            .unwrap()
+            .into_iter()
+            .find(|n| n.kind == "stub")
+            .expect("stub for the link target")
+            .id;
+        store
+            .link_nodes(&node_id, &stub_id, "related", 1.0)
+            .unwrap();
+        let explicit = {
+            let r = store.read().unwrap();
+            r.find_by_eq("graph_edges", "source_id", node_id.as_str())
+                .unwrap()
+                .into_iter()
+                .filter(|row| cell_str(row, "rel_type") == Some("related"))
+                .map(|row| {
+                    (
+                        crate::db::lin_engine::cell_opt_string(&row, "origin"),
+                        crate::db::lin_engine::cell_opt_string(&row, "alias"),
+                        crate::db::lin_engine::cell_opt_string(&row, "heading"),
+                        crate::db::lin_engine::cell_opt_string(&row, "chunk_id"),
+                        crate::db::lin_engine::cell_i64_opt(&row, "char_start"),
+                        crate::db::lin_engine::cell_i64_opt(&row, "char_end"),
+                        crate::db::lin_engine::cell_i64_opt(&row, "occurrence"),
+                    )
+                })
+                .collect::<Vec<_>>()
+        }
+        .remove(0);
+        assert_eq!(explicit.0.as_deref(), Some("explicit"));
+        assert!(
+            explicit.1.is_none()
+                && explicit.2.is_none()
+                && explicit.3.is_none()
+                && explicit.4.is_none()
+                && explicit.5.is_none()
+                && explicit.6.is_none(),
+            "explicit edges carry no invented span: {explicit:?}"
+        );
+    }
+
+    fn chunk(
+        id: &str,
+        document_id: &str,
+        index: i32,
+        content: &str,
+        char_start: i32,
+        char_end: i32,
+    ) -> crate::models::Chunk {
+        crate::models::Chunk {
+            id: id.into(),
+            document_id: document_id.into(),
+            chunk_index: index,
+            content: content.into(),
+            embedding: vec![0.0; 8],
+            char_start,
+            char_end,
+            metadata_json: "{}".into(),
+        }
+    }
+
+    /// A database upgraded from the pre-§1.6 vocabulary has no `origin`; the
+    /// migrate backfill has to claim extraction-owned relations as `extract` and
+    /// leave everything else on the side rebuild never deletes.
+    #[test]
+    fn legacy_edges_are_attributed_by_the_origin_backfill() {
+        let store = open_temp();
+        let source = doc("source", "Source", "doc://source", "Updated [[Old target]]");
+        store.upsert_document(&source).unwrap();
+        let (node, _) = rebuild_document_graph(&store, &source).unwrap();
+        let target = store.find_nodes_by_label("Old target").unwrap().remove(0);
+        let explicit = store.link_nodes(&node, &target.id, "related", 1.0).unwrap();
+        {
+            let mut w = store.write().unwrap();
+            let all_ids: Vec<String> = w
+                .filter_map_rows("graph_edges", |r| Ok(Some(cell_string(r, "id"))))
+                .unwrap();
+            for eid in all_ids {
+                w.update_where(
+                    "graph_edges",
+                    lin::query::pred::eq("id", eid.as_str()),
+                    crate::db::lin_engine::RecBuilder::new()
+                        .opt_str("origin", None)
+                        .build(),
+                )
+                .unwrap();
+            }
+        }
+
+        {
+            let mut conn = store.write().unwrap();
+            let attributed = crate::db::schema::backfill_graph_edge_origins(&mut conn).unwrap();
+            assert_eq!(attributed, 2, "both legacy rows gain an owner");
+        }
+
+        rebuild_document_graph(&store, &source).unwrap();
+        let counts = {
+            let r = store.read().unwrap();
+            let rows = r
+                .find_by_eq("graph_edges", "source_id", node.as_str())
+                .unwrap();
+            let ext = rows
+                .iter()
+                .filter(|row| cell_str(row, "origin") == Some("extract"))
+                .count() as i64;
+            let exp = rows
+                .iter()
+                .filter(|row| cell_str(row, "origin") == Some("explicit"))
+                .count() as i64;
+            (ext, exp)
+        };
+        assert_eq!(
+            counts,
+            (1, 1),
+            "the wikilink is re-extracted once while the explicit edge survives"
+        );
+        let remaining = store.list_graph_edges().unwrap();
+        assert_eq!(remaining.len(), 2);
+        assert!(remaining.iter().any(|edge| edge.id == explicit.id));
+    }
+
+    #[test]
+    fn legacy_membership_edges_are_attributed_by_their_structural_context() {
+        let store = open_temp();
+        let mut source = doc("d-legacy", "Legacy", "file:///notes/legacy.md", "Body");
+        source.wing = Some("notes".into());
+        source.source_file = Some("/notes/legacy.md".into());
+        store.upsert_document(&source).unwrap();
+        let (node, _) = rebuild_document_graph(&store, &source).unwrap();
+        let project = store
+            .find_node_by_uri("project://notes")
+            .unwrap()
+            .expect("project node");
+        let hand_made = store
+            .link_nodes(&node, &project.id, "related", 1.0)
+            .unwrap();
+
+        {
+            let mut w = store.write().unwrap();
+            let all_ids: Vec<String> = w
+                .filter_map_rows("graph_edges", |r| Ok(Some(cell_string(r, "id"))))
+                .unwrap();
+            for eid in all_ids {
+                w.update_where(
+                    "graph_edges",
+                    lin::query::pred::eq("id", eid.as_str()),
+                    crate::db::lin_engine::RecBuilder::new()
+                        .opt_str("origin", None)
+                        .opt_str("edge_origin", None)
+                        .build(),
+                )
+                .unwrap();
+            }
+        }
+        let attributed = {
+            let mut conn = store.write().unwrap();
+            crate::db::schema::backfill_graph_edge_origins(&mut conn).unwrap()
+        };
+        assert_eq!(attributed, 3, "two membership edges plus the hand-made one");
+
+        let owners = || {
+            let r = store.read().unwrap();
+            let mut ext = 0i64;
+            let mut exp = 0i64;
+            r.scan_each("graph_edges", |row| {
+                match cell_str(row, "origin") {
+                    Some("extract") => ext += 1,
+                    Some("explicit") => exp += 1,
+                    _ => {}
+                }
+                Ok(true)
+            })
+            .unwrap();
+            (ext, exp)
+        };
+        assert_eq!(
+            owners(),
+            (2, 1),
+            "only the context-free hand-made edge stays explicit"
+        );
+
+        rebuild_document_graph(&store, &source).unwrap();
+        assert_eq!(
+            owners(),
+            (2, 1),
+            "the rebuild re-creates the membership edges in place instead of duplicating them"
+        );
+        let survives = {
+            let r = store.read().unwrap();
+            r.get_by_id("graph_edges", &hand_made.id)
+                .unwrap()
+                .filter(|row| cell_str(row, "origin") == Some("explicit"))
+                .map_or(0i64, |_| 1)
+        };
+        assert_eq!(
+            survives, 1,
+            "a hand-made `related` edge outlives the rebuild"
+        );
+    }
+
+    #[test]
+    fn re_ingest_keeps_stable_node_id() {
+        let store = open_temp();
+        let d1 = doc("d1", "Home", "doc://home", "Link [[X]]");
+        store.upsert_document(&d1).unwrap();
+        let (id1, _) = rebuild_document_graph(&store, &d1).unwrap();
+
+        let d2 = doc("d1", "Home", "doc://home", "Link [[Y]] #t");
+        store.upsert_document(&d2).unwrap();
+        let (id2, edges) = rebuild_document_graph(&store, &d2).unwrap();
+        assert_eq!(id1, id2);
+        assert_eq!(edges, 2);
+    }
+
+    #[test]
+    fn equal_titles_with_different_uris_keep_distinct_nodes() {
+        let store = open_temp();
+        let first = doc("d1", "README.md", "file:///project-a/README.md", "A");
+        let second = doc("d2", "README.md", "file:///project-b/README.md", "B");
+        store.upsert_document(&first).unwrap();
+        store.upsert_document(&second).unwrap();
+
+        let (first_node, _) = rebuild_document_graph(&store, &first).unwrap();
+        let (second_node, _) = rebuild_document_graph(&store, &second).unwrap();
+
+        assert_ne!(first_node, second_node);
+        assert_eq!(
+            store.find_node_by_document_id("d1").unwrap().unwrap().id,
+            first_node
+        );
+        assert_eq!(
+            store.find_node_by_document_id("d2").unwrap().unwrap().id,
+            second_node
+        );
+    }
+
+    #[test]
+    fn filesystem_document_is_linked_to_project_and_directory() {
+        let store = open_temp();
+        let mut source = doc("d1", "tab.rs", "file:///work/rag/src/tab.rs", "");
+        source.wing = Some("rag".into());
+        source.source_file = Some("/work/rag/src/tab.rs".into());
+        store.upsert_document(&source).unwrap();
+
+        let (document_node_id, edge_count) = rebuild_document_graph(&store, &source).unwrap();
+        assert_eq!(edge_count, 2);
+
+        let project = store
+            .find_node_by_uri("project://rag")
+            .unwrap()
+            .expect("project node");
+        let directory = store
+            .find_node_by_uri("directory:///work/rag/src")
+            .unwrap()
+            .expect("directory node");
+        assert_eq!(project.kind, "entity");
+        assert_eq!(directory.label, "src");
+
+        let edges = store.list_graph_edges().unwrap();
+        assert!(edges.iter().any(|edge| {
+            edge.source_id == document_node_id
+                && edge.target_id == project.id
+                && edge.rel_type == "related"
+        }));
+        assert!(edges.iter().any(|edge| {
+            edge.source_id == document_node_id
+                && edge.target_id == directory.id
+                && edge.rel_type == "related"
+        }));
+
+        let (_, rebuilt_count) = rebuild_document_graph(&store, &source).unwrap();
+        assert_eq!(rebuilt_count, 2);
+        assert_eq!(store.list_graph_edges().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn source_code_brackets_do_not_create_fake_wikilink_stubs() {
+        let store = open_temp();
+        let mut source = doc(
+            "shell",
+            "check.sh",
+            "file:///work/check.sh",
+            "if [[ ! -f \"$path\" ]]; then exit 1; fi",
+        );
+        source.wing = Some("project".into());
+        source.source_file = Some("/work/check.sh".into());
+        store.upsert_document(&source).unwrap();
+
+        let (_, edge_count) = rebuild_document_graph(&store, &source).unwrap();
+        assert_eq!(edge_count, 2, "only project and directory edges remain");
+        assert!(
+            store
+                .find_nodes_by_label("! -f \"$path\"")
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn markdown_source_files_still_create_wikilinks() {
+        let store = open_temp();
+        let mut source = doc(
+            "readme",
+            "README.md",
+            "file:///work/README.md",
+            "See [[Architecture]]",
+        );
+        source.wing = Some("project".into());
+        source.source_file = Some("/work/README.md".into());
+        store.upsert_document(&source).unwrap();
+
+        let (_, edge_count) = rebuild_document_graph(&store, &source).unwrap();
+        assert_eq!(edge_count, 3);
+        assert_eq!(store.find_nodes_by_label("Architecture").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn promote_stub_on_title_match() {
+        let store = open_temp();
+        let a = doc("da", "A", "doc://a", "See [[B]]");
+        store.upsert_document(&a).unwrap();
+        rebuild_document_graph(&store, &a).unwrap();
+
+        let stub = store.find_nodes_by_label("B").unwrap();
+        assert_eq!(stub[0].kind, "stub");
+        let stub_id = stub[0].id.clone();
+
+        let b = doc("db", "B", "doc://b", "I am B");
+        store.upsert_document(&b).unwrap();
+        let (node_id, _) = rebuild_document_graph(&store, &b).unwrap();
+        assert_eq!(node_id, stub_id);
+        let promoted = store.find_node_by_id(&stub_id).unwrap().unwrap();
+        assert_eq!(promoted.kind, "document");
+        assert!(promoted.resolved);
+        assert_eq!(promoted.document_id.as_deref(), Some("db"));
+
+        // The backlink written before the page existed must still point at it.
+        let incoming = store
+            .list_graph_edges()
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.target_id == stub_id)
+            .collect::<Vec<_>>();
+        assert_eq!(incoming.len(), 1, "promotion keeps the incoming wikilink");
+    }
+
+    /// §5.3: `[[inbox]]` names a page, not the `#inbox` hub, so it must land on a
+    /// stub. Binding tag nodes made every popular tag look like a document.
+    #[test]
+    fn wikilink_never_binds_a_tag_hub() {
+        let store = open_temp();
+        let tagged = doc("tagged", "Tagged", "doc://tagged", "triage #inbox");
+        store.upsert_document(&tagged).unwrap();
+        rebuild_document_graph(&store, &tagged).unwrap();
+
+        let linker = doc("linker", "Linker", "doc://linker", "See [[inbox]].");
+        store.upsert_document(&linker).unwrap();
+        let (node_id, _) = rebuild_document_graph(&store, &linker).unwrap();
+
+        let edge = store
+            .list_graph_edges()
+            .unwrap()
+            .into_iter()
+            .find(|e| e.source_id == node_id && e.rel_type == "wikilink")
+            .expect("wikilink edge");
+        let target = store.find_node_by_id(&edge.target_id).unwrap().unwrap();
+        assert_eq!(target.kind, "stub");
+        assert!(!target.resolved);
+        // One hub per tag, and the stub is a separate node sharing its label_key.
+        assert_eq!(
+            store
+                .find_nodes_by_label("inbox")
+                .unwrap()
+                .iter()
+                .filter(|n| n.kind == "tag")
+                .count(),
+            1
+        );
+    }
+
+    /// §5.3 step 2: several documents under one `label_key` is ambiguity. The
+    /// linker stays on an unresolved stub instead of silently picking a winner.
+    #[test]
+    fn ambiguous_label_binds_neither_of_two_same_titled_documents() {
+        let store = open_temp();
+        let first = doc("first", "Duplicate", "file:///one/Duplicate.md", "A body");
+        let second = doc("second", "Duplicate", "file:///two/Duplicate.md", "B body");
+        for d in [&first, &second] {
+            store.upsert_document(d).unwrap();
+            rebuild_document_graph(&store, d).unwrap();
+        }
+        let documents = store
+            .find_nodes_by_label("Duplicate")
+            .unwrap()
+            .into_iter()
+            .filter(|n| n.kind == "document")
+            .map(|n| n.id)
+            .collect::<Vec<_>>();
+        assert_eq!(documents.len(), 2, "equal titles keep distinct nodes");
+
+        let linker = doc("linker", "Linker", "doc://linker", "See [[Duplicate]].");
+        store.upsert_document(&linker).unwrap();
+        let (node_id, _) = rebuild_document_graph(&store, &linker).unwrap();
+        let edge = store
+            .list_graph_edges()
+            .unwrap()
+            .into_iter()
+            .find(|e| e.source_id == node_id && e.rel_type == "wikilink")
+            .expect("wikilink edge");
+        assert!(!documents.contains(&edge.target_id));
+        let target = store.find_node_by_id(&edge.target_id).unwrap().unwrap();
+        assert_eq!(target.kind, "stub");
+
+        // Rebuild is idempotent: the ambiguity stub is reused, not minted again.
+        rebuild_document_graph(&store, &linker).unwrap();
+        assert_eq!(
+            store
+                .list_graph_edges()
+                .unwrap()
+                .into_iter()
+                .filter(|e| e.source_id == node_id && e.rel_type == "wikilink")
+                .count(),
+            1
+        );
+    }
+
+    /// §5.2 step 2: uri reuse is for the *same* document surviving a re-ingest.
+    /// Taking another document's node would fuse two identities into one.
+    #[test]
+    fn uri_owned_by_another_document_is_not_stolen() {
+        let store = open_temp();
+        let (first, second, first_node) = {
+            let mut conn = store.write().unwrap();
+            let first = ensure_document_node(&mut conn, "doc-a", "First", "wiki://shared").unwrap();
+            let second =
+                ensure_document_node(&mut conn, "doc-b", "Second", "wiki://shared").unwrap();
+            // The original owner is untouched by the second document's arrival.
+            let first_node = crate::db::graph::find_node_by_document_id_locked(&conn, "doc-a")
+                .unwrap()
+                .unwrap();
+            (first, second, first_node)
+        };
+        assert_ne!(first, second, "one uri is not the identity of two docs");
+        assert_eq!(first_node.id, first);
+        assert_eq!(first_node.document_id.as_deref(), Some("doc-a"));
+        assert_eq!(first_node.label, "First");
+    }
+
+    /// §5.2 step 3: promotion may consume a stub, never a tag hub or a structural
+    /// entity that happens to carry the document's title.
+    #[test]
+    fn promote_skips_tag_and_structural_entity_nodes() {
+        let store = open_temp();
+        {
+            let mut conn = store.write().unwrap();
+            for (kind, label, uri) in [
+                ("tag", "Deploy Runbook", "tag://deploy-runbook"),
+                ("entity", "Deploy Runbook", "directory:///deploy"),
+            ] {
+                crate::db::graph::upsert_graph_node_locked(
+                    &mut conn,
+                    &GraphNode {
+                        id: Uuid::new_v4().to_string(),
+                        kind: kind.into(),
+                        label: label.into(),
+                        document_id: None,
+                        uri: Some(uri.into()),
+                        resolved: kind == "tag",
+                        metadata_json: "{}".into(),
+                    },
+                )
+                .unwrap();
+            }
+        }
+
+        let doc_row = doc("runbook", "Deploy Runbook", "wiki://deploy-runbook", "body");
+        store.upsert_document(&doc_row).unwrap();
+        let (node_id, _) = rebuild_document_graph(&store, &doc_row).unwrap();
+        let nodes = store.find_nodes_by_label("Deploy Runbook").unwrap();
+        let promoted = nodes.iter().find(|n| n.id == node_id).unwrap();
+        assert_eq!(promoted.kind, "document");
+        assert_eq!(
+            nodes.iter().filter(|n| n.kind == "document").count(),
+            1,
+            "the tag and entity hubs keep their own nodes"
+        );
+    }
+
+    #[test]
+    fn wikilink_resolves_by_slug_when_title_differs() {
+        // Page exists first with title ≠ slug; later page links via [[slug]].
+        let store = open_temp();
+        let target = doc(
+            "t1",
+            "rag-mcp: обзор проекта",
+            "wiki://rag-mcp-overview",
+            "# Overview",
+        );
+        store.upsert_document(&target).unwrap();
+        rebuild_document_graph(&store, &target).unwrap();
+
+        let linker = doc(
+            "l1",
+            "Architecture",
+            "wiki://rag-mcp-architecture",
+            "See [[rag-mcp-overview]] for context.",
+        );
+        store.upsert_document(&linker).unwrap();
+        let (_, edges) = rebuild_document_graph(&store, &linker).unwrap();
+        assert_eq!(edges, 1);
+
+        let stubs = store.find_nodes_by_label("rag-mcp-overview").unwrap();
+        // Should not leave a stub; edge points at resolved document node.
+        let overview = store
+            .find_node_by_document_id("t1")
+            .unwrap()
+            .expect("overview node");
+        assert!(overview.resolved);
+        assert_eq!(overview.kind, "document");
+        // No unresolved stub with that label, or if label match exists it is the document.
+        if let Some(n) = stubs.first() {
+            assert!(n.resolved || n.kind == "document");
+            assert_eq!(n.id, overview.id);
+        }
+    }
+
+    #[test]
+    fn promote_stub_by_wiki_slug_when_title_differs() {
+        // Stub created first via [[slug]]; page written later with different title.
+        let store = open_temp();
+        let a = doc("da", "Arch", "wiki://arch", "See [[rag-mcp-overview]]");
+        store.upsert_document(&a).unwrap();
+        rebuild_document_graph(&store, &a).unwrap();
+        let stub = store.find_nodes_by_label("rag-mcp-overview").unwrap();
+        assert_eq!(stub[0].kind, "stub");
+        let stub_id = stub[0].id.clone();
+
+        let page = doc(
+            "db",
+            "rag-mcp: обзор проекта",
+            "wiki://rag-mcp-overview",
+            "Body",
+        );
+        store.upsert_document(&page).unwrap();
+        let (node_id, _) = rebuild_document_graph(&store, &page).unwrap();
+        assert_eq!(node_id, stub_id);
+        let promoted = store.find_node_by_id(&stub_id).unwrap().unwrap();
+        assert!(promoted.resolved);
+        assert_eq!(promoted.kind, "document");
+    }
+}

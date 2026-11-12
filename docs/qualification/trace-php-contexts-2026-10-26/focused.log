@@ -1,0 +1,21 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.31s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 14 tests
+test code_index::paths::tests::php_trace_contexts_root_wildcard_keeps_distinct_conditional_paths_to_shared_target ... ok
+test code_index::paths::tests::php_trace_values_and_real_target_ambiguity_keep_existing_opt_in ... ok
+test code_index::paths::tests::php_trace_enum_and_reverse_wildcard_root_retain_consumer_identity ... ok
+test code_index::paths::tests::php_trace_nested_inherited_trait_frames_keep_different_source_and_target_owners ... ok
+test code_index::paths::tests::php_trace_contexts_match_forward_back_and_both_without_crossing_consumers ... ok
+test code_index::paths::tests::php_trace_stale_consumer_metadata_is_not_a_fresh_path_bridge ... ok
+test code_index::paths::tests::php_trace_missing_entry_or_body_context_never_uses_union_as_a_bridge ... ok
+test code_index::paths::tests::php_trace_context_work_inspection_is_shared_with_graph_and_result_budgets ... ok
+test code_index::paths::tests::endpoints_projects_and_stale_bridges_never_guess ... ok
+test code_index::paths::tests::ambiguous_edges_require_opt_in_and_cannot_cross_project ... ok
+test code_index::paths::tests::missing_trait_frame_does_not_discard_independent_nontrait_ambiguity_candidates ... ok
+test code_index::paths::tests::budgets_depth_reverse_and_value_relations_are_explicit ... ok
+test code_index::paths::tests::paths_are_breadth_first_deterministic_and_preserve_each_occurrence ... ok
+test code_index::paths::tests::inheritance_and_override_paths_retain_candidate_semantics ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 1336 filtered out; finished in 0.30s
+

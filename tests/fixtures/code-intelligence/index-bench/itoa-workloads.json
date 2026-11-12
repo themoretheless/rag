@@ -1,0 +1,47 @@
+{
+  "contract_version": 1,
+  "name": "itoa-1577ed901354d0d7448ac162328f9dbf5183124c",
+  "upstream_commit": "1577ed901354d0d7448ac162328f9dbf5183124c",
+  "input_recipe": "Cargo.toml and src/**/*.rs; captured default-feature library configuration",
+  "expected_inputs": {
+    "Cargo.toml": "3727dc5bf842fd5a6b100a3dae94b5dfcb4ec33f20dd8f2eceac3d175d782101",
+    "src/lib.rs": "e962338e1886873aa7c3399ec89aa5378ccbfed712b9690f043628079390a34f",
+    "src/u128_ext.rs": "498cc94f13805e551248fd82f47cc318f51d953a5002a9f8698858cd12fbae3c"
+  },
+  "phases": [
+    {
+      "name": "body",
+      "edits": [
+        {
+          "path": "src/u128_ext.rs",
+          "before": "u128::from(x_hi) * u128::from(y_hi) + high1 + high2",
+          "after": "(u128::from(x_hi) * u128::from(y_hi) + high1) + high2"
+        }
+      ]
+    },
+    {
+      "name": "signature",
+      "edits": [
+        {
+          "path": "src/u128_ext.rs",
+          "before": "fn mulhi(x: u128, y: u128)",
+          "after": "fn mulhi(x: u128, y: u128, _benchmark_tag: ())"
+        },
+        {
+          "path": "src/lib.rs",
+          "before": "u128_ext::mulhi(n, M_HIGH)",
+          "after": "u128_ext::mulhi(n, M_HIGH, ())"
+        }
+      ]
+    },
+    {
+      "name": "manifest_metadata",
+      "edits": [
+        {
+          "path": "Cargo.toml",
+          "append": "\n[package.metadata.index_benchmark]\nnonce=1\n"
+        }
+      ]
+    }
+  ]
+}

@@ -1,14 +1,14 @@
 //! Web ingestion endpoints (`POST /v1/ingest/url`).
 
-use axum::{extract::State, response::IntoResponse, routing::post, Json, Router};
+use axum::{Json, Router, extract::State, response::IntoResponse, routing::post};
 use serde::Deserialize;
 use serde_json::json;
 
 use crate::ingest::IngestUrlCommand;
 
 use super::{
-    error::{api_err, api_ok},
     HttpState,
+    error::{api_err, api_ok},
 };
 
 pub(super) fn routes() -> Router<HttpState> {

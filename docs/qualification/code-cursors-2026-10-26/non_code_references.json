@@ -1,7 +1,7 @@
 {
   "status": "passed",
   "versions": {
-    "index_format": 68,
+    "index_format": 70,
     "package": "0.1.0",
     "store_schema": 25
   },

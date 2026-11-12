@@ -23,8 +23,8 @@ impl RagServer {
     }
 
     /// The full tool router, built once per process.
-    pub(super) fn shared_tool_router(
-    ) -> std::sync::Arc<rmcp::handler::server::router::tool::ToolRouter<Self>> {
+    pub(super) fn shared_tool_router()
+    -> std::sync::Arc<rmcp::handler::server::router::tool::ToolRouter<Self>> {
         static ROUTER: std::sync::OnceLock<
             std::sync::Arc<rmcp::handler::server::router::tool::ToolRouter<RagServer>>,
         > = std::sync::OnceLock::new();

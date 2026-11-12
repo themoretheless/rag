@@ -1,22 +1,22 @@
 use axum::{
+    Json, Router,
     body::Body,
     extract::{Query, State},
-    http::{header, HeaderValue, StatusCode},
+    http::{HeaderValue, StatusCode, header},
     response::IntoResponse,
     routing::{get, post},
-    Json, Router,
 };
 use serde::Deserialize;
 use serde_json::json;
 
 use super::{
-    error::{api_err, api_ok},
     HttpState,
+    error::{api_err, api_ok},
 };
 use crate::app::{MultiGetCommand, PackContextRequest, TraceOptions};
-use crate::db::{DocumentCatalogFilter, DEFAULT_CATALOG_PAGE_SIZE, MAX_CATALOG_PAGE_SIZE};
+use crate::db::{DEFAULT_CATALOG_PAGE_SIZE, DocumentCatalogFilter, MAX_CATALOG_PAGE_SIZE};
 use crate::error::AppError;
-use crate::eval::{source_versions_json, RetrievalTrace, SpanBuilder};
+use crate::eval::{RetrievalTrace, SpanBuilder, source_versions_json};
 use crate::models::SearchHit;
 use crate::retrieval::{self, SimilarDocumentsQuery};
 use crate::revisions::{RestoreRevisionCommand, RevisionService};
@@ -688,9 +688,11 @@ mod tests {
                 crate::search_pack::estimate_tokens(result["context_text"].as_str().unwrap()),
                 result["total_tokens"].as_u64().unwrap() as usize
             );
-            assert!(!String::from_utf8(bytes.to_vec())
-                .unwrap()
-                .contains("hidden source"));
+            assert!(
+                !String::from_utf8(bytes.to_vec())
+                    .unwrap()
+                    .contains("hidden source")
+            );
             if budget < 32 {
                 assert!(result["hits"].as_array().unwrap().is_empty());
             } else {

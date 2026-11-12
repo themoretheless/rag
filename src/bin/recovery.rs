@@ -2,11 +2,11 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use rag_mcp::db::recovery::{
-    backup_inventory, decode_recovery_bundle, encode_recovery_bundle, publish_recovery_artifact,
-    read_recovery_bundle_file, retention_preview, verify_backup, ConflictPolicy, RecoveryBundle,
-    BUNDLE_VERSION,
+    BUNDLE_VERSION, ConflictPolicy, RecoveryBundle, backup_inventory, decode_recovery_bundle,
+    encode_recovery_bundle, publish_recovery_artifact, read_recovery_bundle_file,
+    retention_preview, verify_backup,
 };
 use rag_mcp::util::refuse_live_database_target;
 
@@ -305,7 +305,7 @@ fn decode_bundle(input: &str, format: &str) -> Result<RecoveryBundle> {
 mod tests {
     use super::{decode_bundle, prepare_offline_import_bundle};
     use chrono::Utc;
-    use rag_mcp::db::recovery::{BundleDocument, RecoveryBundle, BUNDLE_VERSION};
+    use rag_mcp::db::recovery::{BUNDLE_VERSION, BundleDocument, RecoveryBundle};
     use rag_mcp::models::{Chunk, Document};
 
     const EXPORTED_AT: &str = "2026-09-02T12:34:56Z";
@@ -350,17 +350,19 @@ mod tests {
             embedding_manifest: None,
             documents: vec![BundleDocument {
                 document: Document::default(),
-                chunks: vec![Chunk {
-                    id: "legacy-chunk".into(),
-                    document_id: String::new(),
-                    chunk_index: 0,
-                    content: "legacy".into(),
-                    embedding: vec![1.0],
-                    char_start: 0,
-                    char_end: 6,
-                    metadata_json: "{}".into(),
-                }
-                .into()],
+                chunks: vec![
+                    Chunk {
+                        id: "legacy-chunk".into(),
+                        document_id: String::new(),
+                        chunk_index: 0,
+                        content: "legacy".into(),
+                        embedding: vec![1.0],
+                        char_start: 0,
+                        char_end: 6,
+                        metadata_json: "{}".into(),
+                    }
+                    .into(),
+                ],
             }],
         };
         let error = prepare_offline_import_bundle(with_vector)

@@ -1,0 +1,14 @@
+{
+  "status": "verified_backup",
+  "archive": "/Users/themoretheless/Documents/Sources/rag/.rag/artifacts/index-release-dab96adb738e/verified-build.tar.gz",
+  "archive_sha256": "3cef5c5af0fb9d833e8f04882079373374aed759ff5ebbb01dee0e307beb36d6",
+  "archive_bytes": 33276960,
+  "source_files": 1880,
+  "binary_sha256": "dab96adb738e01528410810122a0a7002edfa5ae1090761963be0201be3ea3fe",
+  "restore_root": "/private/tmp/rag-index-release-20261026",
+  "compiler_output_hardlink": "target/release/rag-mcp",
+  "production_binary_replaced": false,
+  "limitations": [
+    "restore only into a new empty original owned build root; archive metadata contains its absolute build paths"
+  ]
+}

@@ -9,10 +9,31 @@
 use std::borrow::Cow;
 use std::sync::{Arc, RwLock};
 
-use duckdb::Connection;
-
+use super::lin_engine::LinWriter;
 use crate::error::Result;
 use crate::models::Document;
+
+/// Object-safe writer handle exposed to [`DocumentWriteHook`] inside a store transaction.
+pub trait HookWriter {
+    /// Insert or replace a record by primary key inside `col` within the active transaction.
+    fn upsert_record(
+        &mut self,
+        col: &str,
+        id: &str,
+        fields: Vec<(String, lin::Value)>,
+    ) -> Result<()>;
+}
+
+impl<W: LinWriter + ?Sized> HookWriter for W {
+    fn upsert_record(
+        &mut self,
+        col: &str,
+        id: &str,
+        fields: Vec<(String, lin::Value)>,
+    ) -> Result<()> {
+        self.upsert_by_id(col, id, fields)
+    }
+}
 
 /// Runs inside the document upsert transaction, before the CAS check and the
 /// row write. The returned document is the one that gets written.
@@ -20,11 +41,11 @@ pub trait DocumentWriteHook: Send + Sync + 'static {
     /// Stable name; a second registration under the same name is ignored.
     fn name(&self) -> &'static str;
 
-    /// Normalize `doc` using `conn` (the open write transaction). Writes made
-    /// through `conn` commit or roll back with the document write.
+    /// Normalize `doc` using `writer` (the open write transaction). Writes made
+    /// through `writer` commit or roll back with the document write.
     fn before_document_write<'a>(
         &self,
-        conn: &Connection,
+        writer: &mut dyn HookWriter,
         doc: &'a Document,
     ) -> Result<Cow<'a, Document>>;
 }
@@ -42,7 +63,7 @@ pub fn register_document_write_hook(hook: Arc<dyn DocumentWriteHook>) {
 
 /// Apply the registered hooks in registration order.
 pub(crate) fn run_document_write_hooks<'a>(
-    conn: &Connection,
+    writer: &mut dyn HookWriter,
     doc: &'a Document,
 ) -> Result<Cow<'a, Document>> {
     let hooks: Vec<Arc<dyn DocumentWriteHook>> = HOOKS
@@ -54,8 +75,8 @@ pub(crate) fn run_document_write_hooks<'a>(
     let mut current = Cow::Borrowed(doc);
     for hook in hooks {
         current = match current {
-            Cow::Borrowed(d) => hook.before_document_write(conn, d)?,
-            Cow::Owned(d) => Cow::Owned(hook.before_document_write(conn, &d)?.into_owned()),
+            Cow::Borrowed(d) => hook.before_document_write(writer, d)?,
+            Cow::Owned(d) => Cow::Owned(hook.before_document_write(writer, &d)?.into_owned()),
         };
     }
     Ok(current)

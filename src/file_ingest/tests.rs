@@ -258,9 +258,11 @@ fn html_extract_handles_fragment_without_body() {
 
 #[test]
 fn pdf_quality_warning_flags_empty_and_garbled() {
-    assert!(pdf_quality_warning("   \n  ")
-        .unwrap()
-        .contains("no extractable text"));
+    assert!(
+        pdf_quality_warning("   \n  ")
+            .unwrap()
+            .contains("no extractable text")
+    );
     let garbled = "\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}ab";
     assert!(pdf_quality_warning(garbled).unwrap().contains("garbled"));
     assert!(pdf_quality_warning("A normal sentence with mostly letters and words.").is_none());
@@ -303,11 +305,19 @@ fn byte_capture_archive(path: &Path, part: &str, body: &str) {
         .unwrap();
     archive.write_all(body.as_bytes()).unwrap();
     if part.starts_with("xl/") {
-        for (name,xml) in [
-            ("xl/workbook.xml","<workbook xmlns:r='r'><sheets><sheet name='Main' sheetId='1' r:id='rId1'/></sheets></workbook>"),
-            ("xl/_rels/workbook.xml.rels","<Relationships><Relationship Id='rId1' Target='worksheets/sheet1.xml'/></Relationships>")
+        for (name, xml) in [
+            (
+                "xl/workbook.xml",
+                "<workbook xmlns:r='r'><sheets><sheet name='Main' sheetId='1' r:id='rId1'/></sheets></workbook>",
+            ),
+            (
+                "xl/_rels/workbook.xml.rels",
+                "<Relationships><Relationship Id='rId1' Target='worksheets/sheet1.xml'/></Relationships>",
+            ),
         ] {
-            archive.start_file(name,zip::write::SimpleFileOptions::default()).unwrap();
+            archive
+                .start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
             archive.write_all(xml.as_bytes()).unwrap();
         }
     }
@@ -340,7 +350,7 @@ fn source_byte_capture_separates_decoded_text_from_original_encoding() {
 fn office_capture_hashes_original_archive_and_uses_stable_snapshot() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("source.docx");
-    let xml="<w:document xmlns:w='w'><w:body><w:p><w:r><w:t>PRIVATE_CAPTURE</w:t></w:r></w:p></w:body></w:document>";
+    let xml = "<w:document xmlns:w='w'><w:body><w:p><w:r><w:t>PRIVATE_CAPTURE</w:t></w:r></w:p></w:body></w:document>";
     byte_capture_archive(&path, "word/document.xml", xml);
     let bytes = std::fs::read(&path).unwrap();
     let extracted = extract_file(&path).unwrap();
@@ -374,7 +384,11 @@ fn office_capture_hashes_original_archive_and_uses_stable_snapshot() {
 fn xlsx_capture_and_original_source_error_paths() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("source.xlsx");
-    byte_capture_archive(&path,"xl/worksheets/sheet1.xml","<worksheet><sheetData><row><c t='inlineStr'><is><t>PRIVATE_SHEET</t></is></c></row></sheetData></worksheet>");
+    byte_capture_archive(
+        &path,
+        "xl/worksheets/sheet1.xml",
+        "<worksheet><sheetData><row><c t='inlineStr'><is><t>PRIVATE_SHEET</t></is></c></row></sheetData></worksheet>",
+    );
     let extracted = extract_file(&path).unwrap();
     assert!(extracted.text.contains("PRIVATE_SHEET"));
     assert_eq!(

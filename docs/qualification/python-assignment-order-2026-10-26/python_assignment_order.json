@@ -1,0 +1,27 @@
+{
+  "status": "passed",
+  "checks": [
+    "rhs_uses_preceding_type",
+    "new_type_after_assignment",
+    "first_assignment_uninitialized_guard",
+    "annotation_only_local_scope",
+    "annotation_retains_existing_value",
+    "augmented_result_type_unknown",
+    "chained_NFKC_commit",
+    "module_and_class_rhs_global",
+    "source_bytes",
+    "impact_consistency",
+    "project_isolation",
+    "warm_and_full_resolution_equivalence",
+    "capability_scope",
+    "stale_exclusion",
+    "source_sync_type_refresh"
+  ],
+  "versions": {
+    "index_format": 88,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "production_database_touched": false,
+  "Python_sources_executed": false
+}

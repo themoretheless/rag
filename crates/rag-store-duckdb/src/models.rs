@@ -554,9 +554,9 @@ pub struct VacuumStoreReport {
 }
 
 pub use rag_mcp_core::{
-    pkb_node_kinds, pkb_rel_types, GraphEdge, GraphFilter, GraphNode, GraphView, Layer, NodeKind,
-    SearchContextChunk, SearchExplanation, SearchHit, PKB_CORE_REL_TYPES, PKB_NODE_KINDS,
-    UI_GRAPH_EXPORT_MAX_NODES, WIKI_SEMANTIC_REL_TYPES,
+    GraphEdge, GraphFilter, GraphNode, GraphView, Layer, NodeKind, PKB_CORE_REL_TYPES,
+    PKB_NODE_KINDS, SearchContextChunk, SearchExplanation, SearchHit, UI_GRAPH_EXPORT_MAX_NODES,
+    WIKI_SEMANTIC_REL_TYPES, pkb_node_kinds, pkb_rel_types,
 };
 
 /// Aggregate counts for the object graph (`graph_stats` tool).
@@ -1301,8 +1301,8 @@ pub use crate::finding_codes;
 #[cfg(test)]
 mod tests {
     use super::{
-        format_document_etag, parse_document_etag, Document, ProjectId, WikiPageListItem,
-        UI_GRAPH_EXPORT_MAX_NODES, WIKI_SEMANTIC_REL_TYPES,
+        Document, ProjectId, UI_GRAPH_EXPORT_MAX_NODES, WIKI_SEMANTIC_REL_TYPES, WikiPageListItem,
+        format_document_etag, parse_document_etag,
     };
 
     #[test]

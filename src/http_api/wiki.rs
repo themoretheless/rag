@@ -15,8 +15,8 @@ use crate::db::{DEFAULT_CATALOG_PAGE_SIZE, MAX_CATALOG_PAGE_SIZE};
 use crate::error::AppError;
 use crate::wiki;
 
-use super::error::{api_err, api_ok};
 use super::HttpState;
+use super::error::{api_err, api_ok};
 use crate::app::{WikiWriteCommand, WikiWriteMode};
 
 /// Wiki routes: `GET|POST|PUT /v1/wiki`, `GET /v1/backlinks`.

@@ -50,19 +50,20 @@ impl CodeSnapshot {
         );
         result["index_rev"] = serde_json::json!(self.index_revision);
         result["view"] = serde_json::json!("fresh_subset_of_revision_inputs");
-        result["binding_diagnostics"] = serde_json::json!(self
-            .binding_diagnostics
-            .iter()
-            .filter(|d| {
-                if q.project.is_none() && q.path_prefix.is_none() {
-                    return true;
-                }
-                d.get("document_id")
-                    .and_then(|id| id.as_str())
-                    .and_then(|id| self.document_scopes.get(id).map(|scope| (id, scope)))
-                    .is_some_and(|(id, scope)| q.includes(self, id, &scope.path))
-            })
-            .collect::<Vec<_>>());
+        result["binding_diagnostics"] = serde_json::json!(
+            self.binding_diagnostics
+                .iter()
+                .filter(|d| {
+                    if q.project.is_none() && q.path_prefix.is_none() {
+                        return true;
+                    }
+                    d.get("document_id")
+                        .and_then(|id| id.as_str())
+                        .and_then(|id| self.document_scopes.get(id).map(|scope| (id, scope)))
+                        .is_some_and(|(id, scope)| q.includes(self, id, &scope.path))
+                })
+                .collect::<Vec<_>>()
+        );
         result
     }
 }
@@ -282,7 +283,6 @@ mod tests {
     use crate::models::Document;
     fn put(store: &Store, id: &str, path: &str, text: &str) {
         store
-            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("file://{path}"),
@@ -295,7 +295,7 @@ mod tests {
     #[test]
     fn file_graph_ranks_central_api_and_rounds_do_not_starve_other_files() {
         let root = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&root.path().join("map.duckdb")).unwrap();
+        let store = Store::open(&root.path().join("map.duckdb")).unwrap();
         put(
             &store,
             "a",
@@ -314,12 +314,8 @@ mod tests {
             "/p/callback.py",
             "from api import work\nregistered = work\n",
         );
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        let snapshot = crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap();
+        store.index_code().unwrap();
+        let snapshot = store.code_snapshot().unwrap();
         let q = CodeQuery {
             limit: Some(2),
             ..Default::default()
@@ -334,17 +330,14 @@ mod tests {
         assert_eq!(map["ranking_edges"], 2);
         assert_eq!(map, snapshot.query("repo_map", &q));
         put(&store, "c", "/p/callback.py", "registered = None\n");
-        let stale = crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap()
-            .query("repo_map", &q);
+        let stale = store.code_snapshot().unwrap().query("repo_map", &q);
         assert_eq!(stale["ranking_edges"], 1);
         assert!(!stale["stale_documents"].as_array().unwrap().is_empty());
     }
     #[test]
     fn oversized_early_entries_do_not_hide_later_fitting_symbols() {
         let root = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&root.path().join("budget.duckdb")).unwrap();
+        let store = Store::open(&root.path().join("budget.duckdb")).unwrap();
         put(
             &store,
             "a",
@@ -352,19 +345,14 @@ mod tests {
             &format!("def {}(): pass\n", "x".repeat(200)),
         );
         put(&store, "b", "/p/б.py", "def коротко(): pass\n");
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        let map = crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap()
-            .query(
-                "repo_map",
-                &CodeQuery {
-                    budget_chars: Some(128),
-                    ..Default::default()
-                },
-            );
+        store.index_code().unwrap();
+        let map = store.code_snapshot().unwrap().query(
+            "repo_map",
+            &CodeQuery {
+                budget_chars: Some(128),
+                ..Default::default()
+            },
+        );
         let text = map["map"].as_str().unwrap();
         assert!(text.contains("коротко"), "{map}");
         assert_eq!(
@@ -377,7 +365,6 @@ mod tests {
     }
     fn scoped_put(store: &Store, id: &str, project: &str, path: &str, text: &str) {
         store
-            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("doc://{id}"),
@@ -391,7 +378,7 @@ mod tests {
     #[test]
     fn projects_with_identical_paths_keep_separate_graphs_and_coverage() {
         let root = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&root.path().join("scopes.duckdb")).unwrap();
+        let store = Store::open(&root.path().join("scopes.duckdb")).unwrap();
         for (project, name) in [("a", "local"), ("b", "foreign")] {
             scoped_put(
                 &store,
@@ -408,23 +395,18 @@ mod tests {
                 &format!("from lib.api import {name}\ndef run(): {name}()\n"),
             );
         }
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
+        store.index_code().unwrap();
         let q = RepoMapQuery {
             project: Some("a".into()),
             ..Default::default()
         };
-        let first = crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap()
-            .repo_map(&q);
+        let first = store.code_snapshot().unwrap().repo_map(&q);
         assert!(first["map"].as_str().unwrap().contains("local"));
         assert!(!first["map"].as_str().unwrap().contains("foreign"));
         assert_eq!(first["ranking_nodes"], 2);
         assert_eq!(first["ranking_edges"], 1);
         assert_eq!(first["total_files"], 2);
-        let all = crate::code_index::CodeIndex::new(&store)
+        let all = store
             .code_snapshot()
             .unwrap()
             .repo_map(&RepoMapQuery::default());
@@ -446,15 +428,12 @@ mod tests {
             "/src/new.py",
             "def unindexed(): pass\n",
         );
-        let scoped = crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap()
-            .repo_map(&q);
+        let scoped = store.code_snapshot().unwrap().repo_map(&q);
         assert_eq!(
             first, scoped,
             "another project's stale/unindexed sources must not change this map"
         );
-        let all = crate::code_index::CodeIndex::new(&store)
+        let all = store
             .code_snapshot()
             .unwrap()
             .repo_map(&RepoMapQuery::default());
@@ -464,7 +443,7 @@ mod tests {
     #[test]
     fn directory_scope_uses_path_components_and_token_budget_can_return_empty() {
         let root = tempfile::tempdir().unwrap();
-        let store = crate::testkit::open_test_store(&root.path().join("prefix.duckdb")).unwrap();
+        let store = Store::open(&root.path().join("prefix.duckdb")).unwrap();
         scoped_put(&store, "one", "a", "/src/lib/a.py", "def привет(): pass\n");
         scoped_put(
             &store,
@@ -473,12 +452,8 @@ mod tests {
             "/src/lib-copy/b.py",
             "def excluded(): pass\n",
         );
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        let snapshot = crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .unwrap();
+        store.index_code().unwrap();
+        let snapshot = store.code_snapshot().unwrap();
         let mut q = RepoMapQuery {
             project: Some("a".into()),
             path_prefix: Some("/src/lib".into()),
@@ -509,39 +484,29 @@ mod tests {
     #[test]
     fn scoped_snapshot_does_not_decode_foreign_corrupt_payloads() {
         let root = tempfile::tempdir().unwrap();
-        let store =
-            crate::testkit::open_test_store(&root.path().join("corrupt-foreign.duckdb")).unwrap();
+        let store = Store::open(&root.path().join("corrupt-foreign.duckdb")).unwrap();
         scoped_put(&store, "a", "a", "/p/a.py", "def local(): pass\n");
         scoped_put(&store, "b", "b", "/p/b.py", "def foreign(): pass\n");
-        crate::code_index::CodeIndex::new(&store)
-            .index_code()
-            .unwrap();
-        store
-            .lock()
-            .unwrap()
-            .execute(
-                "UPDATE code_index_documents SET payload='not JSON' WHERE document_id='b'",
-                [],
-            )
-            .unwrap();
-        assert!(crate::code_index::CodeIndex::new(&store)
-            .code_snapshot()
-            .is_err());
+        store.index_code().unwrap();
+        crate::code_index::test_set_code_doc_payload(&store, "b", "not JSON");
+        assert!(store.code_snapshot().is_err());
         let q = RepoMapQuery {
             project: Some("a".into()),
             ..Default::default()
         };
-        let map = crate::code_index::CodeIndex::new(&store)
+        let map = store
             .code_snapshot_in_project(q.project.as_deref())
             .unwrap()
             .repo_map(&q);
         assert_eq!(map["total_symbols"], 1);
         assert!(map["map"].as_str().unwrap().contains("local"));
         let injection = "a' OR 1=1 --";
-        assert!(crate::code_index::CodeIndex::new(&store)
-            .code_snapshot_in_project(Some(injection))
-            .unwrap()
-            .symbols
-            .is_empty());
+        assert!(
+            store
+                .code_snapshot_in_project(Some(injection))
+                .unwrap()
+                .symbols
+                .is_empty()
+        );
     }
 }

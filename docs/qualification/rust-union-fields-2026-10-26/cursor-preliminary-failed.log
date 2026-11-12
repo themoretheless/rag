@@ -1,0 +1,19 @@
+    Blocking waiting for file lock on build directory
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 24.26s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 1 test
+
+thread 'code_index::code_read::tests::code_cursor_rechunk_changes_or_deleted_ids_conflict_without_source_revision_change' (70908060) panicked at src/code_index/code_read.rs:987:9:
+chunk reshape must invalidate the cursor
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test code_index::code_read::tests::code_cursor_rechunk_changes_or_deleted_ids_conflict_without_source_revision_change ... FAILED
+
+failures:
+
+failures:
+    code_index::code_read::tests::code_cursor_rechunk_changes_or_deleted_ids_conflict_without_source_revision_change
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1278 filtered out; finished in 0.26s
+
+error: test failed, to rerun pass `--lib`

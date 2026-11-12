@@ -1,0 +1,25 @@
+{
+  "binary_sha256": "2cccdc3db3674c1c2a5e2d8d6d56ded6e2b394b3d4029ca96bcf6bb381b67929",
+  "source_sha256": {
+    "src/code_index.rs": "7ac607b968fbb9f413565f57f701de342d2d1a08dc3e76f2471af511e6d7a30a",
+    "src/code_index/resolve.rs": "126bd2869c7062207ecf9ad45a44a71c5fddb421f6bc739add2fffdfeac3ecb4",
+    "src/code_index/history.rs": "5961603ec601f8298a091cefe05cc484ece2235a4b0ba8e1b04e90b4566d4d53",
+    "src/code_index/policy.rs": "2459e9054d6383a48ec017b5451c16ebcff7246b7e058060e3739b8f45d16c0d",
+    "src/code_index/php_names.rs": "585c6063753fbae37fd20bc742aaba10f918d25407bb5240e2b43805c32b1abd",
+    "src/code_index/php_names/resolve.rs": "480e72e198099cd55a1d81747d59e02c94bf408e47f7f0920145f2cd18302b0c",
+    "src/code_index/php_names/tests.rs": "20d2ef792e2205f87fa52ce12d5f98b1c03be337889cf6e8779f739d3fc1f0af",
+    "src/code_index/php_names/capture.rs": "967a7c7068231893f7b5b39b9e53815530b1e747795bb2c5ea23d329f1cafc09",
+    "scripts/smoke_php_names.py": "c6b7f777ef6e6f3018b81fee63933f9b00c2c203596eaa8a9338c33c9b00fd0d"
+  },
+  "shared_checkout": true,
+  "frozen_checkout_proven": false,
+  "deployment_proven": false,
+  "binary_sha256_after": "2cccdc3db3674c1c2a5e2d8d6d56ded6e2b394b3d4029ca96bcf6bb381b67929",
+  "binary_unchanged": true,
+  "workspace_tests": {
+    "passed": 1538,
+    "failed": 0,
+    "ignored": 1
+  },
+  "mcp_suites_passed": 8
+}

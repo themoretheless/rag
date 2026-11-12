@@ -53,10 +53,12 @@ fn status_and_doctor_use_canonical_embedding_identity() {
     assert!(!doctor.embed_ok);
     assert!(!doctor.ready_for_search);
     assert!(!doctor.ok);
-    assert!(doctor
-        .repair_hint
-        .as_deref()
-        .is_some_and(|hint| hint.contains("complete uncapped reembed_all")));
+    assert!(
+        doctor
+            .repair_hint
+            .as_deref()
+            .is_some_and(|hint| hint.contains("complete uncapped reembed_all"))
+    );
 
     stale.content_fingerprint = None;
     store
@@ -442,20 +444,24 @@ async fn repair_final_fts_failure_returns_committed_report() {
     assert_eq!(report.after.documents_without_chunks, 0);
     assert_eq!(report.errors.len(), 1);
     assert!(report.errors[0].contains("FTS_FINALIZATION_FAILED"));
-    assert!(!store
-        .chunks()
-        .list_chunks_for_document("missing-chunks")
-        .unwrap()
-        .is_empty());
+    assert!(
+        !store
+            .chunks()
+            .list_chunks_for_document("missing-chunks")
+            .unwrap()
+            .is_empty()
+    );
     let generation = {
-        let conn = store.lock().unwrap();
-        crate::db::fts_generation_state(&conn).unwrap()
+        let r = store.read().unwrap();
+        crate::db::fts_generation_state(&*r).unwrap()
     };
     assert!(generation.dirty, "next lexical read must retry FTS");
-    assert!(store
-        .ops_log()
-        .list_recent_ops(10)
-        .unwrap()
-        .iter()
-        .any(|entry| entry.op == "fts_finalization_failed"));
+    assert!(
+        store
+            .ops_log()
+            .list_recent_ops(10)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.op == "fts_finalization_failed")
+    );
 }

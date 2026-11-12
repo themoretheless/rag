@@ -162,6 +162,7 @@ fn is_type(s: &Symbol) -> bool {
             | "class_declaration"
             | "interface_declaration"
             | "struct_item"
+            | "union_item"
             | "enum_item"
             | "trait_item"
     )
@@ -224,6 +225,10 @@ pub(super) fn edges(
 ) -> Vec<InheritanceEdge> {
     let mut result = Vec::new();
     for (id, doc) in docs {
+        if doc.php_names.is_some() {
+            result.extend(super::php_names::edges(docs, doc));
+            continue;
+        }
         if doc.powershell.is_some() {
             result.extend(super::powershell::edges(docs, doc));
             continue;
@@ -310,6 +315,9 @@ pub(super) fn overrides(
     docs: &HashMap<String, IndexedDocument>,
 ) -> Vec<OverrideEdge> {
     let mut result = Vec::new();
+    for doc in docs.values().filter(|d| d.php_names.is_some()) {
+        result.extend(super::php_names::overrides(docs, doc));
+    }
     for ty in symbols
         .iter()
         .filter(|s| matches!(s.kind.as_str(), "class_definition" | "class_declaration"))
@@ -602,27 +610,58 @@ mod tests {
     }
     #[test]
     fn method_relations_link_nearest_declared_member_without_a_call() {
-        for (path,source) in [
-            ("/p/a.py","class A:\n    def work(self): pass\nclass B(A):\n    def work(self): pass\nclass C(B):\n    def work(self): pass\n"),
-            ("/p/a.ts","class A { work() {} } class B extends A { work() {} } class C extends B { work() {} }"),
-            ("/p/a.js","class A { work() {} } class B extends A { work() {} } class C extends B { work() {} }")
+        for (path, source) in [
+            (
+                "/p/a.py",
+                "class A:\n    def work(self): pass\nclass B(A):\n    def work(self): pass\nclass C(B):\n    def work(self): pass\n",
+            ),
+            (
+                "/p/a.ts",
+                "class A { work() {} } class B extends A { work() {} } class C extends B { work() {} }",
+            ),
+            (
+                "/p/a.js",
+                "class A { work() {} } class B extends A { work() {} } class C extends B { work() {} }",
+            ),
         ] {
-            let snap=snapshot(&[(path,source)]);
-            assert_eq!(snap.overrides.len(),2,"{path}: {:?}",snap.overrides);
-            for (derived,base) in [("B::work","A::work"),("C::work","B::work")] {
-                let id=&snap.symbols.iter().find(|s|s.qualified_name==derived).unwrap().id;
-                let e=snap.overrides.iter().find(|e|&e.derived==id).unwrap();
-                assert_eq!(e.candidates.len(),1);assert!(!e.semantic_override_proven);
-                assert_eq!(snap.symbols.iter().find(|s|s.id==e.candidates[0]).unwrap().qualified_name,base);
+            let snap = snapshot(&[(path, source)]);
+            assert_eq!(snap.overrides.len(), 2, "{path}: {:?}", snap.overrides);
+            for (derived, base) in [("B::work", "A::work"), ("C::work", "B::work")] {
+                let id = &snap
+                    .symbols
+                    .iter()
+                    .find(|s| s.qualified_name == derived)
+                    .unwrap()
+                    .id;
+                let e = snap.overrides.iter().find(|e| &e.derived == id).unwrap();
+                assert_eq!(e.candidates.len(), 1);
+                assert!(!e.semantic_override_proven);
+                assert_eq!(
+                    snap.symbols
+                        .iter()
+                        .find(|s| s.id == e.candidates[0])
+                        .unwrap()
+                        .qualified_name,
+                    base
+                );
             }
-            let q=CodeQuery{symbol:Some("A::work".into()),..Default::default()};
-            assert_eq!(snap.query("inheritance",&q)["method_relations"]["total"],1);
-            assert_eq!(snap.query("references",&q)["method_relations"]["total"],1);
+            let q = CodeQuery {
+                symbol: Some("A::work".into()),
+                ..Default::default()
+            };
+            assert_eq!(
+                snap.query("inheritance", &q)["method_relations"]["total"],
+                1
+            );
+            assert_eq!(snap.query("references", &q)["method_relations"]["total"], 1);
         }
     }
     #[test]
     fn method_relations_respect_c3_and_do_not_guess_unknown_or_blocked_bases() {
-        let snap=snapshot(&[("/p/a.py","class A:\n    def work(self): pass\nclass B(A): pass\nclass C(A):\n    def work(self): pass\nclass D(B,C):\n    def work(self): pass\n")]);
+        let snap = snapshot(&[(
+            "/p/a.py",
+            "class A:\n    def work(self): pass\nclass B(A): pass\nclass C(A):\n    def work(self): pass\nclass D(B,C):\n    def work(self): pass\n",
+        )]);
         let d = &snap
             .symbols
             .iter()
@@ -643,11 +682,22 @@ mod tests {
             "class A:\n    work=unknown\nclass B(A):\n    def work(self): pass\n",
             "class A:\n    @property\n    def work(self): pass\nclass B(A):\n    def work(self): pass\n",
             "class A(B):\n    def work(self): pass\nclass B(A):\n    def work(self): pass\n",
-        ] {assert!(snapshot(&[("/p/a.py",source)]).overrides.is_empty(),"{source}");}
+        ] {
+            assert!(
+                snapshot(&[("/p/a.py", source)]).overrides.is_empty(),
+                "{source}"
+            );
+        }
     }
     #[test]
     fn method_relations_bind_imports_and_keep_reference_windows_separate() {
-        let snap=snapshot(&[("/p/base.py","class Base:\n    def work(self): pass\n"),("/p/main.py","from base import Base as Parent\nclass Child(Parent):\n    def work(self): pass\nclass Other(Parent):\n    def work(self): pass\n")]);
+        let snap = snapshot(&[
+            ("/p/base.py", "class Base:\n    def work(self): pass\n"),
+            (
+                "/p/main.py",
+                "from base import Base as Parent\nclass Child(Parent):\n    def work(self): pass\nclass Other(Parent):\n    def work(self): pass\n",
+            ),
+        ]);
         assert_eq!(snap.overrides.len(), 2);
         let q = CodeQuery {
             symbol: Some("Base::work".into()),
@@ -668,18 +718,45 @@ mod tests {
     }
     #[test]
     fn inherited_methods_imported_bases_and_overrides() {
-        for (path,main,base_path,base) in [
-            ("/p/main.py","from base import Base as Parent\nclass Child(Parent):\n    def run(self):\n        self.work()\n", "/p/base.py","class Base:\n    def work(self):\n        pass\n"),
-            ("/p/main.ts","import {Base as Parent} from './base'; class Child extends Parent { run() { this.work(); } }", "/p/base.ts","export class Base { work() {} }"),
-            ("/p/main.js","import Parent from './base'; class Child extends Parent { run() { this.work(); } }", "/p/base.js","export default class Base { work() {} }"),
+        for (path, main, base_path, base) in [
+            (
+                "/p/main.py",
+                "from base import Base as Parent\nclass Child(Parent):\n    def run(self):\n        self.work()\n",
+                "/p/base.py",
+                "class Base:\n    def work(self):\n        pass\n",
+            ),
+            (
+                "/p/main.ts",
+                "import {Base as Parent} from './base'; class Child extends Parent { run() { this.work(); } }",
+                "/p/base.ts",
+                "export class Base { work() {} }",
+            ),
+            (
+                "/p/main.js",
+                "import Parent from './base'; class Child extends Parent { run() { this.work(); } }",
+                "/p/base.js",
+                "export default class Base { work() {} }",
+            ),
         ] {
-            let snap=snapshot(&[(path,main),(base_path,base)]);
-            let call=snap.calls.iter().find(|c|c.reference.name=="work").unwrap();
-            assert_eq!(call.resolution,"resolved_static","{path}: {call:?}");
-            let target=snap.symbols.iter().find(|s|call.candidates.contains(&s.id)).unwrap();assert_eq!(target.qualified_name,"Base::work");
-            assert_eq!(snap.inheritance[0].resolution,"resolved_static");
+            let snap = snapshot(&[(path, main), (base_path, base)]);
+            let call = snap
+                .calls
+                .iter()
+                .find(|c| c.reference.name == "work")
+                .unwrap();
+            assert_eq!(call.resolution, "resolved_static", "{path}: {call:?}");
+            let target = snap
+                .symbols
+                .iter()
+                .find(|s| call.candidates.contains(&s.id))
+                .unwrap();
+            assert_eq!(target.qualified_name, "Base::work");
+            assert_eq!(snap.inheritance[0].resolution, "resolved_static");
         }
-        let snap=snapshot(&[("/p/a.ts","class Base { work() {} } class Child extends Base { work() {} run(){ this.work(); super.work(); } }")]);
+        let snap = snapshot(&[(
+            "/p/a.ts",
+            "class Base { work() {} } class Child extends Base { work() {} run(){ this.work(); super.work(); } }",
+        )]);
         let targets: Vec<_> = snap
             .calls
             .iter()
@@ -697,7 +774,10 @@ mod tests {
     }
     #[test]
     fn c3_diamond_order_cycles_and_unknown_bases() {
-        let snap=snapshot(&[("/p/a.py","class A:\n    def work(self):\n        pass\nclass B(A):\n    pass\nclass C(A):\n    def work(self):\n        pass\nclass D(B,C):\n    def run(self):\n        self.work()\n")]);
+        let snap = snapshot(&[(
+            "/p/a.py",
+            "class A:\n    def work(self):\n        pass\nclass B(A):\n    pass\nclass C(A):\n    def work(self):\n        pass\nclass D(B,C):\n    def run(self):\n        self.work()\n",
+        )]);
         let call = snap
             .calls
             .iter()
@@ -725,18 +805,25 @@ mod tests {
     }
     #[test]
     fn python_super_skips_override_and_rust_trait_defaults() {
-        let snap=snapshot(&[("/p/a.py","class Base(object):\n    def work(self):\n        pass\nclass Child(Base):\n    def work(self):\n        super().work()\n")]);
+        let snap = snapshot(&[(
+            "/p/a.py",
+            "class Base(object):\n    def work(self):\n        pass\nclass Child(Base):\n    def work(self):\n        super().work()\n",
+        )]);
         let call = snap
             .calls
             .iter()
             .find(|c| c.reference.name == "work")
             .unwrap();
         assert_eq!(call.resolution_basis, "super_method");
-        assert!(snap
-            .symbols
-            .iter()
-            .any(|s| s.qualified_name == "Base::work" && call.candidates.contains(&s.id)));
-        let snap=snapshot(&[("/p/src/main.rs","trait Work { fn work(&self) {} } struct Worker; impl Work for Worker {} fn run(w: Worker) { w.work(); }")]);
+        assert!(
+            snap.symbols
+                .iter()
+                .any(|s| s.qualified_name == "Base::work" && call.candidates.contains(&s.id))
+        );
+        let snap = snapshot(&[(
+            "/p/src/main.rs",
+            "trait Work { fn work(&self) {} } struct Worker; impl Work for Worker {} fn run(w: Worker) { w.work(); }",
+        )]);
         let call = snap
             .calls
             .iter()
@@ -752,14 +839,28 @@ mod override_tests {
     use super::*;
     #[test]
     fn fields_and_properties_do_not_fall_through_to_base_methods() {
-        for (path,source) in [
-            ("/p/a.py","class Base:\n    def work(self):\n        pass\nclass Child(Base):\n    work = None\n    def run(self):\n        self.work()\n"),
-            ("/p/a.ts","class Base { work() {} } class Child extends Base { work = null; run() { this.work(); } }"),
-            ("/p/a.py","class Base:\n    def work(self):\n        pass\nclass Child(Base):\n    @property\n    def work(self):\n        return None\n    def run(self):\n        self.work()\n"),
+        for (path, source) in [
+            (
+                "/p/a.py",
+                "class Base:\n    def work(self):\n        pass\nclass Child(Base):\n    work = None\n    def run(self):\n        self.work()\n",
+            ),
+            (
+                "/p/a.ts",
+                "class Base { work() {} } class Child extends Base { work = null; run() { this.work(); } }",
+            ),
+            (
+                "/p/a.py",
+                "class Base:\n    def work(self):\n        pass\nclass Child(Base):\n    @property\n    def work(self):\n        return None\n    def run(self):\n        self.work()\n",
+            ),
         ] {
-            let doc=parse("d",path,source,1).unwrap();assert!(!doc.parse_errors);
-            let docs=HashMap::from([("d".into(),doc.clone())]);
-            let call=resolve::calls(&doc.symbols,&docs).into_iter().find(|c|c.reference.name=="work").unwrap();assert!(call.candidates.is_empty(),"{path}: {call:?}");
+            let doc = parse("d", path, source, 1).unwrap();
+            assert!(!doc.parse_errors);
+            let docs = HashMap::from([("d".into(), doc.clone())]);
+            let call = resolve::calls(&doc.symbols, &docs)
+                .into_iter()
+                .find(|c| c.reference.name == "work")
+                .unwrap();
+            assert!(call.candidates.is_empty(), "{path}: {call:?}");
         }
     }
     #[test]
@@ -768,8 +869,13 @@ mod override_tests {
             "class A(A.Missing):\n    def run(self):\n        self.work()\n",
             "class X:\n    pass\nclass Y:\n    pass\nclass A(X,Y):\n    def work(self):\n        pass\nclass B(Y,X):\n    pass\nclass C(A,B):\n    def run(self):\n        self.work()\n",
         ] {
-            let doc=parse("d","/p/a.py",source,1).unwrap();let docs=HashMap::from([("d".into(),doc.clone())]);
-            let call=resolve::calls(&doc.symbols,&docs).into_iter().find(|c|c.reference.name=="work").unwrap();assert!(call.candidates.is_empty(),"{call:?}");
+            let doc = parse("d", "/p/a.py", source, 1).unwrap();
+            let docs = HashMap::from([("d".into(), doc.clone())]);
+            let call = resolve::calls(&doc.symbols, &docs)
+                .into_iter()
+                .find(|c| c.reference.name == "work")
+                .unwrap();
+            assert!(call.candidates.is_empty(), "{call:?}");
         }
     }
 }

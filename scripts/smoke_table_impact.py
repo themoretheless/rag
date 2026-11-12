@@ -26,6 +26,7 @@ def main():
             "alpha/api.py": "def load():\n    q = 'SELECT * FROM users'\ndef save():\n    q = 'INSERT INTO users(id) VALUES(1)'\ndef screen(): load()\ndef submit(): save()\ndef dashboard(): screen()\n",
             "alpha/raw.sql": "SELECT * FROM users;",
             "alpha/ambiguous.sql": "SELECT * FROM public.logs; SELECT * FROM admin.logs;",
+            "alpha/schema.sql": "CREATE TABLE public.events(id INT); CREATE TABLE audit.events(id INT);",
             "beta/other.sql": "SELECT * FROM users;",
         }
         for name, content in fixtures.items():
@@ -91,10 +92,14 @@ def main():
                 assert schemas["needs_disambiguation"] and schemas["table_candidates_total"] == 2,schemas
                 qualified=call("impact",dict(impact_table="public.logs",impact_project="alpha"))
                 assert qualified["direct_total"] == 1 and qualified["items"] == [],qualified
+                schema_only=call("impact",dict(impact_table="events",impact_project="alpha",impact_table_mode="read",path=str(source/"alpha/raw.sql")))
+                assert schema_only["needs_disambiguation"] and schema_only["table_candidates_total"] == 2,schema_only
+                observed=call("impact",dict(impact_table="audit.events",impact_project="alpha",impact_table_mode="write"))
+                assert observed["target_observed"] and not observed["direct_usage_found"] and observed["direct_total"] == 0 and not observed["items"],observed
                 invalid=call("impact",dict(impact_table="users; DROP TABLE users"))
                 assert "error" in invalid,invalid
                 noop=call("sync_sources",dict(path=str(source/"alpha"),wing="alpha"))
-                assert noop["code_index"]["unchanged"] == 4,noop
+                assert noop["code_index"]["unchanged"] == 5,noop
                 path=source/"alpha/api.py"
                 path.write_text(fixtures["alpha/api.py"].replace("FROM users","FROM accounts"))
                 call("ingest_file",dict(path=str(path),wing="alpha"))
@@ -104,7 +109,7 @@ def main():
                 refreshed=call("impact",args)
                 assert refreshed["direct_total"] == 2 and len(refreshed["items"]) == 1,refreshed
                 evidence=dict(status="passed",transport="stdio MCP JSON-RPC",production_database_touched=False,source_sql_executed=False,
-                    checks=["direct_readers_writers","ownerless_sql_preserved","indirect_code_chain","read_write_filters","independent_direct_budget","untruncated_owner_roots","project_disambiguation","schema_disambiguation","qualified_target","identifier_validation","warm_reuse","stale_exclusion","sync_refresh"],
+                    checks=["direct_readers_writers","ownerless_sql_preserved","indirect_code_chain","read_write_filters","independent_direct_budget","untruncated_owner_roots","project_disambiguation","schema_disambiguation","schema_only_identity_before_filters","schema_only_observed_without_usage","qualified_target","identifier_validation","warm_reuse","stale_exclusion","sync_refresh"],
                     runtime_impact_proven=False)
                 if report:
                     report.parent.mkdir(parents=True, exist_ok=True)

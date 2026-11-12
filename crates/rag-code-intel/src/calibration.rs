@@ -1,24 +1,24 @@
 //! Reproducible confidence-threshold reports. Never silently applies learned thresholds.
+#[cfg(test)]
+pub(crate) use crate::testkit::StoreCodeIntelTestExt;
 use crate::{
-    db::Store,
+    analysis_tasks,
+    db::{
+        Store,
+        lin_engine::{LinReader, LinWriter, RecBuilder, cell_i64, cell_str, cell_string},
+    },
     error::{AppError, Result},
     util::content_hash,
 };
-use duckdb::params;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashSet};
-/// This module's tables, registered at composition and ensured by its repository.
+
 pub const SCHEMA: crate::db::schema::SchemaExtension = crate::db::schema::SchemaExtension {
     name: "calibration",
-    ddl: DDL,
+    ddl: "",
 };
-pub(crate) const DDL: &str = r#"
-CREATE TABLE IF NOT EXISTS analysis_calibrations (
- seq BIGINT PRIMARY KEY, id VARCHAR UNIQUE NOT NULL, created_ms BIGINT NOT NULL,
- kind VARCHAR NOT NULL, sample_size BIGINT NOT NULL, index_rev BIGINT, report_json VARCHAR NOT NULL
-);
-"#;
+
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Sample {
@@ -77,8 +77,8 @@ fn metrics(rows: &[Sample], threshold: Option<f64>) -> Metrics {
         }
     }
     let predicted = tp + fp;
-    let precision = (predicted > 0).then(|| tp as f64 / predicted as f64);
-    let recall = (tp + fn_ > 0).then(|| tp as f64 / (tp + fn_) as f64);
+    let precision = (predicted > 0).then_some(tp as f64 / predicted as f64);
+    let recall = (tp + fn_ > 0).then_some(tp as f64 / (tp + fn_) as f64);
     let f1 = if 2 * tp + fp + fn_ > 0 {
         2.0 * tp as f64 / (2 * tp + fp + fn_) as f64
     } else {
@@ -253,9 +253,8 @@ fn fit(kind: &str, min: f64, samples: &Samples) -> Value {
     };
     json!({"status":status,"kind":kind,"dataset_name":samples.dataset_name,"dataset_fingerprint":fingerprint,"score_domain":"caller_supplied_0_to_1_confidence","acceptance_rule":"score_greater_than_or_equal_to_threshold","selection_objective":"maximize_training_F1_subject_to_precision_floor_then_larger_threshold","min_precision":min,"selected_threshold":threshold,"training_size":samples.training.len(),"validation_size":samples.validation.len(),"class_counts":{"training_positive":pos,"training_negative":samples.training.len()-pos,"validation_positive":validation_pos,"validation_negative":samples.validation.len()-validation_pos},"measured_sample_size":samples.training.len()+samples.validation.len(),"training_metrics":train,"validation_metrics":validation,"validation_point_target_met":target_met,"validation_precision_lower_bound_meets_target":lower_met,"params":samples.params,"applied":false,"production_qualified":false,"not_checked":["label_accuracy","representativeness","score_semantics","hidden_cross_split_duplicates","future_distribution_shift"],"notice":"A held-out report is not a deployment decision. No runtime thresholds were changed."})
 }
-/// Calibration reports repository over the store connection.
 pub struct Calibrations<'a> {
-    store: &'a Store,
+    pub(crate) store: &'a Store,
 }
 
 impl<'a> Calibrations<'a> {
@@ -265,19 +264,13 @@ impl<'a> Calibrations<'a> {
         }
         Self { store }
     }
-
     pub fn calibrate_confidence(&self, q: &CalibrationQuery) -> Result<Value> {
         let (kind, min, samples) = validate(q)?;
         let mut report = fit(&kind, min, &samples);
-        self.store.with_conn(|conn| {
-            let tx = conn.transaction()?;
-            let seq: i64 = tx.query_row(
-                "SELECT COALESCE(MAX(seq),0)+1 FROM analysis_calibrations",
-                [],
-                |r| r.get(0),
-            )?;
-            let rev: Option<i64> =
-                tx.query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| r.get(0))?;
+        let sample_size = (samples.training.len() + samples.validation.len()) as i64;
+        self.store.with_tx(|tx| {
+            let seq = analysis_tasks::next_seq(tx, "analysis_calibrations")?;
+            let rev = analysis_tasks::latest_code_index_rev(tx)?;
             let id = uuid::Uuid::new_v4().to_string();
             let at = chrono::Utc::now().timestamp_millis();
             let o = report.as_object_mut().unwrap();
@@ -285,52 +278,61 @@ impl<'a> Calibrations<'a> {
             o.insert("seq".into(), json!(seq));
             o.insert("created_ms".into(), json!(at));
             o.insert("index_rev".into(), json!(rev));
-            tx.execute(
-                "INSERT INTO analysis_calibrations VALUES (?,?,?,?,?,?,?)",
-                params![
-                    seq,
-                    id,
-                    at,
-                    kind,
-                    (samples.training.len() + samples.validation.len()) as i64,
-                    rev,
-                    serde_json::to_string(&report)?
-                ],
+            let report_json = serde_json::to_string(&report)?;
+            tx.insert_one(
+                "analysis_calibrations",
+                RecBuilder::new()
+                    .id(seq.to_string())
+                    .i64("seq", seq)
+                    .str("calibration_id", &id)
+                    .i64("created_ms", at)
+                    .str("kind", &kind)
+                    .i64("sample_size", sample_size)
+                    .opt_i64("index_rev", rev)
+                    .str("report_json", report_json)
+                    .build(),
             )?;
-            tx.commit()?;
-            Ok(report)
-        })
+            Ok(())
+        })?;
+        Ok(report)
     }
-
     pub fn calibration_reports(&self, q: &ReportsQuery) -> Result<Value> {
         let limit = q.limit.unwrap_or(20).clamp(1, 200);
-        self.store.with_conn(|conn| {
-            let mut stmt=conn.prepare("SELECT report_json FROM analysis_calibrations WHERE (? IS NULL OR kind=?) AND (? IS NULL OR seq<?) ORDER BY seq DESC LIMIT ?")?;
-            let rows = stmt.query_map(
-                params![q.kind, q.kind, q.before_seq, q.before_seq, limit as i64 + 1],
-                |r| r.get::<_, String>(0),
-            )?;
-            let mut items = vec![];
-            let mut bytes = 0usize;
-            let mut more = false;
-            for row in rows {
-                let row = row?;
-                if items.len() >= limit || bytes + row.len() > 256 * 1024 {
-                    more = true;
-                    break;
-                }
-                bytes += row.len();
-                items.push(serde_json::from_str::<Value>(&row)?);
+        let r = self.store.read()?;
+        let mut matched: Vec<(i64, String)> = Vec::new();
+        r.scan_each("analysis_calibrations", |row| {
+            if let Some(k) = q.kind.as_deref()
+                && cell_str(row, "kind") != Some(k)
+            {
+                return Ok(true);
             }
-            let next = if more {
-                items.last().and_then(|v| v["seq"].as_i64())
-            } else {
-                None
-            };
-            Ok(
-                json!({"items":items,"next_before_seq":next,"truncated":more,"applied":false,"ordering":"seq_desc","source":"calibration_report","report_bytes":bytes,"response_report_budget_bytes":256*1024}),
-            )
-        })
+            let seq = cell_i64(row, "seq", 0);
+            if q.before_seq.is_some_and(|b| seq >= b) {
+                return Ok(true);
+            }
+            matched.push((seq, cell_string(row, "report_json")));
+            Ok(true)
+        })?;
+        matched.sort_by_key(|a| std::cmp::Reverse(a.0));
+        let mut items = vec![];
+        let mut bytes = 0usize;
+        let mut more = false;
+        for (_, row) in matched.into_iter().take(limit + 1) {
+            if items.len() >= limit || bytes + row.len() > 256 * 1024 {
+                more = true;
+                break;
+            }
+            bytes += row.len();
+            items.push(serde_json::from_str::<Value>(&row)?);
+        }
+        let next = if more {
+            items.last().and_then(|v| v["seq"].as_i64())
+        } else {
+            None
+        };
+        Ok(
+            json!({"items":items,"next_before_seq":next,"truncated":more,"applied":false,"ordering":"seq_desc","source":"calibration_report","report_bytes":bytes,"response_report_budget_bytes":256*1024}),
+        )
     }
 }
 #[cfg(test)]
@@ -394,8 +396,8 @@ mod tests {
     #[test]
     fn assertions_are_not_labels_and_reports_survive_restart_with_stable_cursors() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("c.duckdb");
-        let store = crate::testkit::open_test_store(&path).unwrap();
+        let path = dir.path().join("c.lin");
+        let store = Store::open(&path).unwrap();
         let q = CalibrationQuery {
             samples: Some(Samples {
                 sample_size: Some(1000),
@@ -404,9 +406,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        let r = crate::calibration::Calibrations::new(&store)
-            .calibrate_confidence(&q)
-            .unwrap();
+        let r = store.calibrate_confidence(&q).unwrap();
         assert_eq!(r["measured_sample_size"], 0);
         assert_eq!(r["status"], "recorded_unvalidated");
         let legacy: CalibrationQuery =
@@ -416,10 +416,8 @@ mod tests {
         assert_eq!(legacy["params"]["threshold"], 0.6);
         assert_eq!(legacy["measured_sample_size"], 0);
 
-        crate::calibration::Calibrations::new(&store)
-            .calibrate_confidence(&q)
-            .unwrap();
-        let page = crate::calibration::Calibrations::new(&store)
+        store.calibrate_confidence(&q).unwrap();
+        let page = store
             .calibration_reports(&ReportsQuery {
                 limit: Some(1),
                 ..Default::default()
@@ -427,15 +425,15 @@ mod tests {
             .unwrap();
         let cursor = page["next_before_seq"].as_i64().unwrap();
         drop(store);
-        let store = crate::testkit::open_test_store(&path).unwrap();
-        let older = crate::calibration::Calibrations::new(&store)
+        let store = Store::open(&path).unwrap();
+        let older = store
             .calibration_reports(&ReportsQuery {
                 before_seq: Some(cursor),
                 ..Default::default()
             })
             .unwrap();
         assert_eq!(older["items"][0]["id"], r["id"]);
-        assert!(store.documents().list_documents().unwrap().is_empty());
+        assert!(store.list_documents().unwrap().is_empty());
     }
     #[test]
     fn invalid_scores_duplicate_ids_and_cross_split_leakage_are_rejected() {

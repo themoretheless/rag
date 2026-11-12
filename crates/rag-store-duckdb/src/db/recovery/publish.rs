@@ -1,5 +1,6 @@
 //! Filesystem publication: staging, fsync, no-clobber publish, verification and inventory.
 
+use super::import::validate_embedding_manifest;
 use super::*;
 
 /// Atomically publish one recovery artifact after fully staging and syncing it.
@@ -81,15 +82,12 @@ pub fn verify_backup(path: &Path) -> Result<BackupVerification> {
                 path.display()
             )));
         }
-        // Core schema only: the checks below read core tables, and opening
-        // with no extensions keeps the result independent of which schema
-        // extensions this process happened to register.
-        let store = Store::open_with_extensions(temporary.path(), &[])?;
-        let schema_version = store.maintenance().schema_version()?.unwrap_or(0);
-        let (documents, chunks, nodes, edges) = store.maintenance().stats()?;
+        let store = Store::open(temporary.path())?;
+        let schema_version = store.schema_version()?.unwrap_or(0);
+        let (documents, chunks, nodes, edges) = store.stats()?;
         let (_, orphan_chunks, orphan_document_nodes, orphan_edges, _) =
-            store.maintenance().integrity_counts()?;
-        let embedding_manifest = store.embedding_manifest().get_embedding_manifest()?;
+            store.integrity_counts()?;
+        let embedding_manifest = store.get_embedding_manifest()?;
         let (embedding_contract_ok, quarantined_chunks) =
             verify_embedding_contract(&store, chunks, embedding_manifest.as_ref())?;
         drop(store);
@@ -127,54 +125,60 @@ pub fn verify_backup(path: &Path) -> Result<BackupVerification> {
     verification
 }
 
-/// Returns whether the embedding contract holds and how many chunks were
-/// skipped because the v26 migration quarantined their legacy vector
-/// (`chunk_embedding_quarantine`). A quarantined chunk keeps a NULL embedding
-/// until it is re-embedded; that NULL is expected and not a violation.
 pub(super) fn verify_embedding_contract(
     store: &Store,
     chunk_count: u64,
     manifest: Option<&EmbeddingManifest>,
 ) -> Result<(bool, u64)> {
-    let quarantined = {
-        let conn = store.lock()?;
-        let count: i64 = conn.query_row(
-            "SELECT count(*) FROM chunks c WHERE c.embedding IS NULL AND EXISTS \
-             (SELECT 1 FROM chunk_embedding_quarantine q WHERE q.chunk_id = c.id)",
-            [],
-            |row| row.get(0),
-        )?;
-        u64::try_from(count).unwrap_or(0)
-    };
+    let r = store.read()?;
+    let mut quarantined_ids = std::collections::HashSet::new();
+    if r.has_collection("chunk_embedding_quarantine") {
+        r.scan_each("chunk_embedding_quarantine", |row| {
+            let cid =
+                cell_nonempty_string(row, "chunk_id").or_else(|| cell_nonempty_string(row, "id"));
+            if let Some(cid) = cid {
+                quarantined_ids.insert(cid);
+            }
+            Ok(true)
+        })?;
+    }
     let Some(manifest) = manifest else {
-        return Ok((chunk_count == quarantined, quarantined));
+        return Ok((chunk_count == 0, 0));
     };
     if validate_embedding_manifest(manifest, "backup").is_err() {
-        return Ok((false, quarantined));
+        return Ok((false, 0));
     }
     if chunk_count == 0 {
-        return Ok((true, quarantined));
+        return Ok((true, 0));
     }
     let expected_dims = match usize::try_from(manifest.dims) {
         Ok(dims) if dims > 0 => dims,
-        _ => return Ok((false, quarantined)),
+        _ => return Ok((false, 0)),
     };
-    let conn = store.lock()?;
-    // Every stored vector must have the manifest's dimensions and no NULL
-    // element (a NULL would not decode as `f32`). A NULL vector is allowed
-    // only for a chunk recorded in the quarantine table.
-    let inconsistent: i64 = conn.query_row(
-        "SELECT count(*) FROM chunks c \
-         WHERE (c.embedding IS NULL AND NOT EXISTS \
-                (SELECT 1 FROM chunk_embedding_quarantine q WHERE q.chunk_id = c.id)) \
-            OR len(c.embedding) <> ? OR list_count(c.embedding) <> len(c.embedding)",
-        [expected_dims as i64],
-        |row| row.get(0),
-    )?;
-    Ok((inconsistent == 0, quarantined))
+    let mut consistent = true;
+    let mut quarantined_count = 0u64;
+    r.scan_each("chunks", |row| {
+        let cid = cell_str(row, "id").unwrap_or_default();
+        if quarantined_ids.contains(cid) {
+            quarantined_count += 1;
+            return Ok(true);
+        }
+        if let Some(raw_json) = cell_str(row, "embedding_json")
+            && !raw_json.is_empty()
+        {
+            consistent = serde_json::from_str::<Vec<f32>>(raw_json)
+                .is_ok_and(|embedding| embedding.len() == expected_dims);
+        } else if let Some(lin::Cell::Vec(v)) = row.get("embedding") {
+            consistent = v.len() == expected_dims;
+        } else {
+            consistent = false;
+        }
+        Ok(consistent)
+    })?;
+    Ok((consistent, quarantined_count))
 }
 
-/// `.duckdb` snapshots in `dir`, newest first; the newest and any named
+/// `.lin` and `.duckdb` snapshots in `dir`, newest first; the newest and any named
 /// `*final*` are protected.
 pub fn backup_inventory(dir: &Path) -> Result<Vec<BackupInventoryItem>> {
     if !dir.exists() {
@@ -184,10 +188,16 @@ pub fn backup_inventory(dir: &Path) -> Result<Vec<BackupInventoryItem>> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().and_then(|v| v.to_str()) != Some("duckdb") {
+        if !matches!(
+            path.extension().and_then(|v| v.to_str()),
+            Some("lin" | "duckdb")
+        ) {
             continue;
         }
         let metadata = entry.metadata()?;
+        if !metadata.is_file() {
+            continue;
+        }
         let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
         let modified_at: DateTime<Utc> = modified.into();
         let protected = path
@@ -535,18 +545,10 @@ pub(super) fn stage_file_copy(source: &Path, destination: &Path) -> Result<(Path
     result
 }
 
-pub(super) fn quote_duckdb_identifier(identifier: &str) -> String {
-    format!("\"{}\"", identifier.replace('"', "\"\""))
-}
-
-pub(super) fn quote_duckdb_string(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
-}
-
-/// Create a transactionally consistent DuckDB snapshot without retaining the
-/// process-wide Store mutex during the potentially long copy.
-pub(super) fn stage_database_snapshot<F>(
-    snapshot_conn: duckdb::Connection,
+/// Stream a transactionally consistent `DiskEngineV2` portable `LIN\x04` backup directly to a
+/// staged artifact file in 512-row Zstd chunks without buffering a multi-GB snapshot in RAM!
+pub(super) fn stage_disk_v2_backup<F>(
+    view: lin::disk_v2::DiskEngineV2,
     source: &Path,
     destination: &Path,
     mut copy_hook: F,
@@ -554,64 +556,70 @@ pub(super) fn stage_database_snapshot<F>(
 where
     F: FnMut() -> Result<()>,
 {
-    static NEXT_CATALOG_ID: AtomicU64 = AtomicU64::new(0);
-
-    let temporary_path = create_temporary_database_artifact(destination)?;
+    let (temporary_path, temporary_file) = create_temporary_artifact(destination)?;
+    drop(temporary_file);
     let result = (|| -> Result<(PathBuf, u64)> {
-        let temporary_utf8 = temporary_path.to_str().ok_or_else(|| {
-            AppError::config(format!(
-                "DuckDB snapshot staging path '{}' must be valid UTF-8",
-                temporary_path.display()
-            ))
-        })?;
-        let source_catalog: String =
-            snapshot_conn.query_row("SELECT current_database()", [], |row| row.get(0))?;
-        let catalog = format!(
-            "rag_backup_snapshot_{}_{}",
-            std::process::id(),
-            NEXT_CATALOG_ID.fetch_add(1, Ordering::Relaxed)
-        );
-        let attach = format!(
-            "ATTACH {} AS {}",
-            quote_duckdb_string(temporary_utf8),
-            quote_duckdb_identifier(&catalog)
-        );
-        snapshot_conn.execute_batch(&attach)?;
-        snapshot_conn.execute_batch("BEGIN TRANSACTION")?;
-        let source_catalog = quote_duckdb_identifier(&source_catalog);
-        let catalog = quote_duckdb_identifier(&catalog);
-        let copy = (|| -> Result<()> {
-            // Pin the source snapshot before releasing the hook. COPY SCHEMA
-            // and COPY DATA then observe one MVCC-consistent generation.
-            snapshot_conn.query_row(
-                &format!("SELECT COUNT(*) FROM {source_catalog}.main.schema_version"),
-                [],
-                |_row| Ok(()),
-            )?;
-            copy_hook()?;
-            snapshot_conn
-                .execute_batch(&format!("COPY FROM DATABASE {source_catalog} TO {catalog}"))?;
-            Ok(())
-        })();
-        let transaction_end =
-            snapshot_conn.execute_batch(if copy.is_ok() { "COMMIT" } else { "ROLLBACK" });
-        let detach = snapshot_conn.execute_batch(&format!("DETACH {catalog}"));
-        copy?;
-        transaction_end?;
-        detach?;
-        sync_file(&temporary_path)?;
-        if let Ok(metadata) = fs::metadata(source) {
-            fs::set_permissions(&temporary_path, metadata.permissions())?;
+        copy_hook()?;
+        view.export_portable_backup_file(&temporary_path)?;
+        if let Ok(metadata) = fs::metadata(source)
+            && metadata.is_file()
+        {
+            let _ = fs::set_permissions(&temporary_path, metadata.permissions());
         }
         let bytes = fs::metadata(&temporary_path)?.len();
         Ok((temporary_path.clone(), bytes))
     })();
-    drop(snapshot_conn);
     if result.is_err() {
         let _ = fs::remove_file(&temporary_path);
-        let mut wal = temporary_path.as_os_str().to_os_string();
-        wal.push(".wal");
-        let _ = fs::remove_file(PathBuf::from(wal));
+    }
+    result
+}
+
+/// Create a transactionally consistent `lin` portable snapshot without retaining the
+/// process-wide Store lock during the potentially long serialization/compression pass.
+pub(super) fn stage_database_snapshot<F>(
+    snapshot: lin::persist::Snapshot,
+    source: &Path,
+    destination: &Path,
+    mut copy_hook: F,
+) -> Result<(PathBuf, u64)>
+where
+    F: FnMut() -> Result<()>,
+{
+    let (temporary_path, temporary_file) = create_temporary_artifact(destination)?;
+    let result = (|| -> Result<(PathBuf, u64)> {
+        copy_hook()?;
+        let snap_ref = lin::persist::SnapshotRef {
+            r#gen: snapshot.r#gen,
+            embed_id: &snapshot.embed_id,
+            next_id: snapshot.next_id,
+            catalog_hash: &snapshot.catalog_hash,
+            log_offset: snapshot.log_offset,
+            collections: &snapshot.collections,
+            edges: &snapshot.edges,
+            extra_collections: &snapshot.extra_collections,
+            extra_rels: &snapshot.extra_rels,
+            extra_indexes: &snapshot.extra_indexes,
+            extra_filters: &snapshot.extra_filters,
+            extra_owned: &snapshot.extra_owned,
+            cold_collections: &[],
+        };
+        let mut writer = std::io::BufWriter::with_capacity(128 * 1024, temporary_file);
+        lin::persist::encode_snapshot_ref_to_writer(&mut writer, &snap_ref)?;
+        writer.flush()?;
+        let file = writer.into_inner().map_err(|e| e.into_error())?;
+        file.sync_all()?;
+        drop(file);
+        if let Ok(metadata) = fs::metadata(source)
+            && metadata.is_file()
+        {
+            let _ = fs::set_permissions(&temporary_path, metadata.permissions());
+        }
+        let bytes = fs::metadata(&temporary_path)?.len();
+        Ok((temporary_path.clone(), bytes))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary_path);
     }
     result
 }
@@ -703,54 +711,6 @@ pub(super) fn create_temporary_artifact(destination: &Path) -> Result<(PathBuf, 
     )))
 }
 
-pub(super) fn create_temporary_database_artifact(destination: &Path) -> Result<PathBuf> {
-    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
-    let file_name = destination
-        .file_name()
-        .ok_or_else(|| AppError::config("backup destination must name a file"))?;
-    for _ in 0..100 {
-        let mut temporary_name = file_name.to_os_string();
-        temporary_name.push(format!(
-            ".rag-backup-tmp-{}-{}",
-            std::process::id(),
-            uuid::Uuid::new_v4()
-        ));
-        let temporary_path = parent.join(temporary_name);
-        let reservation = match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary_path)
-        {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(error.into()),
-        };
-        drop(reservation);
-        fs::remove_file(&temporary_path)?;
-        match duckdb::Connection::open(&temporary_path) {
-            Ok(conn) => {
-                let initialized = conn.execute_batch("CHECKPOINT");
-                drop(conn);
-                match initialized {
-                    Ok(()) => return Ok(temporary_path),
-                    Err(error) => {
-                        let _ = fs::remove_file(&temporary_path);
-                        return Err(error.into());
-                    }
-                }
-            }
-            Err(error) => {
-                let _ = fs::remove_file(&temporary_path);
-                return Err(error.into());
-            }
-        }
-    }
-    Err(AppError::conflict(format!(
-        "could not allocate a temporary DuckDB backup artifact beside '{}'",
-        destination.display()
-    )))
-}
-
 pub(super) fn publish_temporary_artifact(
     temporary: &Path,
     destination: &Path,
@@ -778,7 +738,15 @@ pub(super) fn refuse_same_file(source: &Path, destination: &Path) -> Result<()> 
             "backup destination is the live database",
         ));
     }
-
+    if !source.as_os_str().is_empty()
+        && source.as_os_str() != ":memory:"
+        && crate::db::lin_engine::normalize_lin_path(source)
+            == crate::db::lin_engine::normalize_lin_path(destination)
+    {
+        return Err(AppError::forbidden(
+            "backup destination is the live database",
+        ));
+    }
     #[cfg(unix)]
     if let (Ok(a), Ok(b)) = (fs::metadata(source), fs::metadata(destination)) {
         if a.dev() == b.dev() && a.ino() == b.ino() {

@@ -97,12 +97,13 @@ impl Remote {
             ] {
                 c[field] = null_or_flag(&c[field]);
             }
-            c["columns"] = json!(keys
-                .iter()
-                .take(512)
-                .filter(|k| k["constraint"] == c["name"])
-                .map(|k| json!({"ordinal":k["ordinal"],"column":k["column"]}))
-                .collect::<Vec<_>>());
+            c["columns"] = json!(
+                keys.iter()
+                    .take(512)
+                    .filter(|k| k["constraint"] == c["name"])
+                    .map(|k| json!({"ordinal":k["ordinal"],"column":k["column"]}))
+                    .collect::<Vec<_>>()
+            );
             if c["kind"] == "CHECK" && available_definition(&c["definition"]).is_none() {
                 c["definition"] = Value::Null;
                 c["definition_hash"] = Value::Null;

@@ -7,8 +7,8 @@
 use std::collections::BTreeMap;
 
 use rag_mcp::models::{GraphEdge, GraphNode, SearchExplanation, SearchHit};
-use serde::{de::DeserializeOwned, Serialize};
-use serde_json::{json, Map, Value};
+use serde::{Serialize, de::DeserializeOwned};
+use serde_json::{Map, Value, json};
 
 type Interfaces = BTreeMap<String, Vec<(String, String)>>;
 

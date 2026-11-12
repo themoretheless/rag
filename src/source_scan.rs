@@ -152,7 +152,7 @@ pub fn collect_source_files_while(
         if !keep_going() {
             break;
         }
-        if has_regular_pyvenv_sentinel(&directory) {
+        if has_regular_pyvenv_sentinel(&directory) || is_lin_database_directory(&directory) {
             continue;
         }
         for entry in std::fs::read_dir(directory)? {
@@ -166,6 +166,7 @@ pub fn collect_source_files_while(
             if file_type.is_dir() {
                 if !path.file_name().is_some_and(is_skipped_directory_name)
                     && !is_dotnet_binary_directory(&path)
+                    && !is_lin_database_directory(&path)
                 {
                     pending.push(path);
                 }
@@ -216,6 +217,11 @@ fn has_regular_pyvenv_sentinel(directory: &Path) -> bool {
     std::fs::symlink_metadata(directory.join("pyvenv.cfg"))
         .map(|metadata| metadata.file_type().is_file())
         .unwrap_or(false)
+}
+
+fn is_lin_database_directory(directory: &Path) -> bool {
+    directory.join("manifest.v2.json").is_file()
+        || (directory.join("head").is_file() && directory.join("wal").is_dir())
 }
 
 #[cfg(test)]

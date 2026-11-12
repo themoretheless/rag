@@ -14,9 +14,9 @@ use rag_mcp::models::{Chunk, Document, GraphNode};
 use rag_mcp::testkit::open_temp_store;
 use rag_mcp::util::content_hash;
 use rag_mcp::{
-    analyze_corpus, apply_maintenance_plan, heuristic_plan, log_plan, maintain_compress,
-    plan_maintenance, ActionOutcomeKind, AnalyzeOptions, ApplyPlanOptions, CompressOptions, Config,
-    MaintainCompressReport, MaintenanceAction, PlanOptions, PlanSource, Store,
+    ActionOutcomeKind, AnalyzeOptions, ApplyPlanOptions, CompressOptions, Config,
+    MaintainCompressReport, MaintenanceAction, PlanOptions, PlanSource, Store, analyze_corpus,
+    apply_maintenance_plan, heuristic_plan, log_plan, maintain_compress, plan_maintenance,
 };
 
 const DIMS: usize = 32;
@@ -435,11 +435,13 @@ async fn maintain_loop_analyze_plan_dry_run_compress_vacuum() {
     );
 
     // Fixture docs still present after L0 (L0 does not merge/delete).
-    assert!(store
-        .documents()
-        .get_document(&ids.raw_unique)
-        .unwrap()
-        .is_some());
+    assert!(
+        store
+            .documents()
+            .get_document(&ids.raw_unique)
+            .unwrap()
+            .is_some()
+    );
     assert!(store.documents().get_document(&ids.wiki).unwrap().is_some());
     assert_eq!(
         store

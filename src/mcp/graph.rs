@@ -5,7 +5,7 @@ use std::path::Path;
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
-use rmcp::{tool, tool_router, ErrorData as McpError};
+use rmcp::{ErrorData as McpError, tool, tool_router};
 use serde::Serialize;
 
 use super::facade::RagServer;
@@ -14,10 +14,10 @@ use super::tools::{
     FindTunnelsParams, FollowTunnelsParams, GetBacklinksParams, GetGraphParams, GetNeighborsParams,
     GraphExpandSearchParams, LinkNodesParams, ListTunnelsParams,
 };
-use crate::db::search::{acquire_corpus_search_guard, search_with_corpus_guard, SearchQuery};
+use crate::db::search::{SearchQuery, acquire_corpus_search_guard, search_with_corpus_guard};
 use crate::error::AppError;
-use crate::models::{pkb_node_kinds, pkb_rel_types};
 use crate::models::{GraphEdge, GraphFilter, GraphNode, GraphView, SearchHit, SearchMode};
+use crate::models::{pkb_node_kinds, pkb_rel_types};
 use crate::util::run_blocking;
 
 /// Node cap for a graph snapshot export when `max_nodes` is absent.

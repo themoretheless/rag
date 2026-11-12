@@ -1,23 +1,24 @@
 //! Preserve original markup without polluting readable document bodies or metadata payloads.
 use super::*;
+use crate::db::lin_engine::{LinReader, RecBuilder, cell_str};
+use crate::db::{DocumentWriteHook, HookWriter, register_document_write_hook};
 use crate::models::Document;
-use duckdb::Connection;
 use std::borrow::Cow;
 
 /// Store hook that moves `code_source_text` into `code_index_source_blobs`.
 struct SourceBlobHook;
 
-impl crate::db::DocumentWriteHook for SourceBlobHook {
+impl DocumentWriteHook for SourceBlobHook {
     fn name(&self) -> &'static str {
         "code_index.source_blob"
     }
 
     fn before_document_write<'a>(
         &self,
-        conn: &Connection,
+        writer: &mut dyn HookWriter,
         doc: &'a Document,
     ) -> Result<Cow<'a, Document>> {
-        persist(conn, doc)
+        persist(writer, doc)
     }
 }
 
@@ -25,11 +26,14 @@ impl crate::db::DocumentWriteHook for SourceBlobHook {
 pub fn install_document_write_hook() {
     static INSTALLED: std::sync::Once = std::sync::Once::new();
     INSTALLED.call_once(|| {
-        crate::db::register_document_write_hook(std::sync::Arc::new(SourceBlobHook));
+        register_document_write_hook(std::sync::Arc::new(SourceBlobHook));
     });
 }
 
-pub(crate) fn persist<'a>(conn: &Connection, doc: &'a Document) -> Result<Cow<'a, Document>> {
+pub(crate) fn persist<'a>(
+    w: &mut (impl HookWriter + ?Sized),
+    doc: &'a Document,
+) -> Result<Cow<'a, Document>> {
     if !doc.metadata_json.contains("code_source_text") {
         return Ok(Cow::Borrowed(doc));
     }
@@ -50,7 +54,15 @@ pub(crate) fn persist<'a>(conn: &Connection, doc: &'a Document) -> Result<Cow<'a
         return Err(AppError::config("original code source checksum mismatch"));
     }
     // A matching hash identifies the bytes; this also repairs a corrupted blob from verified input.
-    conn.execute("INSERT INTO code_index_source_blobs VALUES (?,?) ON CONFLICT(content_hash) DO UPDATE SET content=excluded.content",params![hash,source])?;
+    w.upsert_record(
+        "code_index_source_blobs",
+        &hash,
+        RecBuilder::new()
+            .id(&hash)
+            .str("content_hash", &hash)
+            .str("content", &source)
+            .build(),
+    )?;
     let object = metadata
         .as_object_mut()
         .ok_or_else(|| AppError::config("source metadata must be an object"))?;
@@ -60,7 +72,7 @@ pub(crate) fn persist<'a>(conn: &Connection, doc: &'a Document) -> Result<Cow<'a
     normalized.metadata_json = serde_json::to_string(&metadata)?;
     Ok(Cow::Owned(normalized))
 }
-pub fn read<'a>(conn: &Connection, content: &'a str, metadata: &str) -> Result<Cow<'a, str>> {
+pub fn read<'a>(r: &impl LinReader, content: &'a str, metadata: &str) -> Result<Cow<'a, str>> {
     if !metadata.contains("code_source_hash") {
         return Ok(Cow::Borrowed(content));
     }
@@ -68,13 +80,9 @@ pub fn read<'a>(conn: &Connection, content: &'a str, metadata: &str) -> Result<C
     let Some(hash) = meta.get("code_source_hash").and_then(|v| v.as_str()) else {
         return Ok(Cow::Borrowed(content));
     };
-    let source: Option<String> = conn
-        .query_row(
-            "SELECT content FROM code_index_source_blobs WHERE content_hash=?",
-            [hash],
-            |r| r.get(0),
-        )
-        .optional()?;
+    let source = r
+        .get_by_id("code_index_source_blobs", hash)?
+        .and_then(|row| cell_str(&row, "content").map(str::to_string));
     let source = source.ok_or_else(|| {
         AppError::config("original code source blob missing; resync the source file")
     })?;
@@ -86,7 +94,7 @@ pub fn read<'a>(conn: &Connection, content: &'a str, metadata: &str) -> Result<C
     Ok(Cow::Owned(source))
 }
 pub fn is_preserved_html(
-    conn: &Connection,
+    r: &impl LinReader,
     path: &std::path::Path,
     metadata: Option<&str>,
 ) -> bool {
@@ -104,7 +112,7 @@ pub fn is_preserved_html(
         meta.get("code_source_hash")
             .and_then(|v| v.as_str())
             .is_some()
-            && read(conn, "", m).is_ok()
+            && read(r, "", m).is_ok()
     })
 }
 pub fn same_attachment(

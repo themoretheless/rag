@@ -1,0 +1,11 @@
+[package]
+name = "stdarch-types-fixture"
+version = "0.1.0"
+edition = "2021"
+
+[package.metadata.rag.graph]
+version = 1
+target_kind = "lib"
+
+[package.metadata.rag.graph.cfg_values]
+target_arch = ["aarch64"]

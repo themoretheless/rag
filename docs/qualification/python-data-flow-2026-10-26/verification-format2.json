@@ -1,0 +1,57 @@
+{
+  "status": "passed",
+  "workspace": {
+    "passed": 1625,
+    "failed": 0,
+    "ignored": 1
+  },
+  "mcp_exit_codes": {
+    "python_data_flow": 0,
+    "phpunit_host_impact": 0,
+    "phpunit_effective": 0,
+    "affected_php_contexts": 0,
+    "affected_tests": 0,
+    "table_impact": 0,
+    "trace_php_contexts": 0,
+    "git_php_contexts": 0
+  },
+  "binary_sha256_before": "42921fdf9f694ed69e12690ddd222314368eb6fa2583dc1dc94e3d8c90c558a8",
+  "binary_sha256_after": "42921fdf9f694ed69e12690ddd222314368eb6fa2583dc1dc94e3d8c90c558a8",
+  "source_hashes_before": {
+    "Cargo.toml": "3ac449f72872ac529d8863dc561b3084ba29eebe9e3e4d118ce56113215329c1",
+    "Cargo.lock": "bec738712304fba10e5fc85af59ca588df50024c39b85c70fadcc9665266363b",
+    "src/code_index.rs": "6c78b576f2c7bc40a459d570bec07d89f7f64224294f4bb7db50898027c38df0",
+    "src/code_index/data_flow.rs": "88c130666ed568f87bf3b2abe66fc1c6407ce429dcec53eee1a54fd594be0a36",
+    "src/code_index/data_flow/capture.rs": "e2a9c910ec0f639229e1d45e742168878f7a58cd119c85fd5720614bd39509f3",
+    "src/code_index/data_flow/query.rs": "dd47a1a8f043667ae96bfea0bd141332414cbdb7ac431b83fdb57cedef9469ad",
+    "src/code_index/data_flow/tests.rs": "b0bdab574a0548f527e98be7ebf0883655946af77951dc3033e12a7ad30594e9",
+    "src/code_index/history.rs": "97b53460a1eaa5b26cada04bbeed91db69297b524fa7b42c26f04831ffbe3e26",
+    "src/code_index/status.rs": "e3270b2937b3b662d3abcf3abdc7a88a3674ca9ec6943a22416b92487368ff93",
+    "src/mcp/analysis.rs": "af6f78951ed7fc18ee9138dacd749a134c14cacc2ab461580443654b2acecf64",
+    "src/access.rs": "fce43d418b8bfcdfead4d37e02eb4a2306ad12a4df5fd9d92e90fb452639cca7",
+    "src/analysis_tasks.rs": "ce0da592b4fc44b12f9e41b5d7371d92a9c3781d7730ff7b2a929c63a6cf7732",
+    "src/telemetry.rs": "561fae710e5279d7069ebc07da7dfcd5506771bc3296cdb2468658ca5ea7a202",
+    "scripts/smoke_python_data_flow.py": "45b317d028094516ad12446617d8b6d5c26465e2d5b6cccd4e9c99d7fd50820a"
+  },
+  "source_hashes_after": {
+    "Cargo.toml": "3ac449f72872ac529d8863dc561b3084ba29eebe9e3e4d118ce56113215329c1",
+    "Cargo.lock": "bec738712304fba10e5fc85af59ca588df50024c39b85c70fadcc9665266363b",
+    "src/code_index.rs": "6c78b576f2c7bc40a459d570bec07d89f7f64224294f4bb7db50898027c38df0",
+    "src/code_index/data_flow.rs": "88c130666ed568f87bf3b2abe66fc1c6407ce429dcec53eee1a54fd594be0a36",
+    "src/code_index/data_flow/capture.rs": "e2a9c910ec0f639229e1d45e742168878f7a58cd119c85fd5720614bd39509f3",
+    "src/code_index/data_flow/query.rs": "dd47a1a8f043667ae96bfea0bd141332414cbdb7ac431b83fdb57cedef9469ad",
+    "src/code_index/data_flow/tests.rs": "b0bdab574a0548f527e98be7ebf0883655946af77951dc3033e12a7ad30594e9",
+    "src/code_index/history.rs": "97b53460a1eaa5b26cada04bbeed91db69297b524fa7b42c26f04831ffbe3e26",
+    "src/code_index/status.rs": "e3270b2937b3b662d3abcf3abdc7a88a3674ca9ec6943a22416b92487368ff93",
+    "src/mcp/analysis.rs": "af6f78951ed7fc18ee9138dacd749a134c14cacc2ab461580443654b2acecf64",
+    "src/access.rs": "fce43d418b8bfcdfead4d37e02eb4a2306ad12a4df5fd9d92e90fb452639cca7",
+    "src/analysis_tasks.rs": "ce0da592b4fc44b12f9e41b5d7371d92a9c3781d7730ff7b2a929c63a6cf7732",
+    "src/telemetry.rs": "561fae710e5279d7069ebc07da7dfcd5506771bc3296cdb2468658ca5ea7a202",
+    "scripts/smoke_python_data_flow.py": "45b317d028094516ad12446617d8b6d5c26465e2d5b6cccd4e9c99d7fd50820a"
+  },
+  "shared_checkout": true,
+  "frozen_source_checkout": false,
+  "analyzed_Python_PHP_SQL_executed": false,
+  "production_database_touched": false,
+  "full_RAGRAF_parity_proven": false
+}

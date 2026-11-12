@@ -1,10 +1,10 @@
 use super::*;
 use crate::config::Config;
+use crate::db::payload_kv::{PayloadTable, get_payload_raw, upsert_payload};
 use crate::embeddings::MockEmbedder;
-use axum::body::{to_bytes, Body};
+use axum::body::{Body, to_bytes};
 use axum::http::Request;
 use chrono::Utc;
-use duckdb::params;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -181,9 +181,7 @@ async fn code_index_failure_is_completed_with_errors_and_keeps_sources() {
     let state = state(root.path());
     state
         .store
-        .lock()
-        .unwrap()
-        .execute_batch("DROP TABLE code_index_documents")
+        .drop_collection_for_test("code_index_documents")
         .unwrap();
     let job = state
         .jobs
@@ -256,9 +254,11 @@ async fn final_fts_failure_is_completed_with_errors_and_retains_report() {
     assert_eq!(report.counters.preflight, 1);
     assert_eq!(report.counters.extracted, 1);
     assert_eq!(report.counters.embedded, 1);
-    assert!(report.error_samples[0]
-        .error
-        .contains("FTS_FINALIZATION_FAILED"));
+    assert!(
+        report.error_samples[0]
+            .error
+            .contains("FTS_FINALIZATION_FAILED")
+    );
     let finalization = report
         .finalization_error
         .as_ref()
@@ -271,8 +271,8 @@ async fn final_fts_failure_is_completed_with_errors_and_retains_report() {
     assert!(finalization.dirty_marker_error.is_none());
     assert_eq!(state.store.documents().list_documents().unwrap().len(), 1);
     let generation = {
-        let conn = state.store.lock().unwrap();
-        crate::db::fts::fts_generation_state(&conn).unwrap()
+        let r = state.store.read().unwrap();
+        crate::db::fts::fts_generation_state(&*r).unwrap()
     };
     assert!(generation.dirty, "next lexical read must retry FTS");
 }
@@ -502,16 +502,11 @@ fn persisting_a_pruned_job_does_not_bring_its_row_back() {
     registry.jobs().remove("job-1");
     registry.delete_persisted("job-1").unwrap();
     registry.persist(&stale).unwrap();
-    let rows: i64 = store
-        .lock()
-        .unwrap()
-        .query_row(
-            "SELECT count(*) FROM background_jobs WHERE id=?",
-            ["job-1"],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(rows, 0);
+    assert!(
+        get_payload_raw(&store, PayloadTable::BackgroundJobs, "job-1")
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]
@@ -527,14 +522,8 @@ fn a_stale_snapshot_never_overwrites_a_newer_persisted_state() {
     let stale = registry.get("job-1").unwrap();
     registry.cancel("job-1").unwrap();
     registry.persist(&stale).unwrap();
-    let payload: String = store
-        .lock()
+    let payload = get_payload_raw(&store, PayloadTable::BackgroundJobs, "job-1")
         .unwrap()
-        .query_row(
-            "SELECT payload FROM background_jobs WHERE id=?",
-            ["job-1"],
-            |r| r.get(0),
-        )
         .unwrap();
     let stored: JobSnapshot = serde_json::from_str(&payload).unwrap();
     assert!(stored.cancel_requested);
@@ -550,14 +539,8 @@ fn progress_updates_persist_at_most_once_per_interval_but_status_at_once() {
         .jobs()
         .insert("job-1".into(), entry(1, JobStatus::Running));
     let persisted = || -> JobSnapshot {
-        let payload: String = store
-            .lock()
+        let payload = get_payload_raw(&store, PayloadTable::BackgroundJobs, "job-1")
             .unwrap()
-            .query_row(
-                "SELECT payload FROM background_jobs WHERE id=?",
-                ["job-1"],
-                |r| r.get(0),
-            )
             .unwrap();
         serde_json::from_str(&payload).unwrap()
     };
@@ -608,14 +591,13 @@ fn restore_marks_running_jobs_interrupted_and_persists() {
         started_at: Some(Utc::now()),
         finished_at: None,
     };
-    {
-        let conn = store.lock().unwrap();
-        conn.execute(
-            "INSERT INTO background_jobs VALUES (?, ?)",
-            params!["job-running", serde_json::to_string(&snapshot).unwrap()],
-        )
-        .unwrap();
-    }
+    upsert_payload(
+        &store,
+        PayloadTable::BackgroundJobs,
+        "job-running",
+        &snapshot,
+    )
+    .unwrap();
 
     let registry = JobRegistry::restore_from_store(store.clone()).unwrap();
     let restored = registry.get("job-running").unwrap();
@@ -626,19 +608,15 @@ fn restore_marks_running_jobs_interrupted_and_persists() {
     );
     assert!(restored.finished_at.is_some());
     assert!(restored.requeue_safe);
-    assert!(restored
-        .resume_limits
-        .as_deref()
-        .is_some_and(|s| s.contains("committed")));
+    assert!(
+        restored
+            .resume_limits
+            .as_deref()
+            .is_some_and(|s| s.contains("committed"))
+    );
 
-    let payload: String = store
-        .lock()
+    let payload = get_payload_raw(&store, PayloadTable::BackgroundJobs, "job-running")
         .unwrap()
-        .query_row(
-            "SELECT payload FROM background_jobs WHERE id=?",
-            ["job-running"],
-            |r| r.get(0),
-        )
         .unwrap();
     let stored: JobSnapshot = serde_json::from_str(&payload).unwrap();
     assert_eq!(stored.status, JobStatus::Failed);
@@ -718,10 +696,12 @@ async fn requeue_creates_new_job_from_interrupted() {
     assert_ne!(body["job"]["id"], "job-old");
     assert_eq!(body["job"]["status"], "queued");
     assert_eq!(body["job"]["requeued_from"], "job-old");
-    assert!(body["resume_limits"]
-        .as_str()
-        .unwrap()
-        .contains("committed"));
+    assert!(
+        body["resume_limits"]
+            .as_str()
+            .unwrap()
+            .contains("committed")
+    );
 
     let finished = wait_for_terminal(&state.jobs, body["job"]["id"].as_str().unwrap()).await;
     assert_eq!(finished.status, JobStatus::Succeeded);

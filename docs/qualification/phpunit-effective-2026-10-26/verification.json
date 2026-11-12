@@ -1,0 +1,51 @@
+{
+  "status": "passed",
+  "workspace": {
+    "passed": 1613,
+    "failed": 0,
+    "ignored": 1
+  },
+  "mcp_exit_codes": {
+    "phpunit_effective": 0,
+    "phpunit_entrypoints": 0,
+    "affected_php_contexts": 0,
+    "affected_tests": 0,
+    "table_impact": 0,
+    "php_trait_paths": 0,
+    "trace_php_contexts": 0,
+    "git_php_contexts": 0
+  },
+  "binary_sha256_before": "7a65c03dc3403c2873872d7c9c90f4531f0d578c3b91b86238bac95665a05d77",
+  "binary_sha256_after": "7a65c03dc3403c2873872d7c9c90f4531f0d578c3b91b86238bac95665a05d77",
+  "source_hashes_before": {
+    "src/code_index.rs": "bfc4dd27df044f4180fb624f089a85dfcefb3a2b217b305d000d57f0ea0978a6",
+    "src/code_index/analysis.rs": "9c66949888e67ee06f4bdddcb87bdbb24020f9be887cc263ca4ccd890e648a2d",
+    "src/code_index/affected_tests.rs": "200ea7192677fc804bd3986ac3414465e9af1b1e3d946e0f56745996871d8866",
+    "src/code_index/impact.rs": "f7ec9deff386922b005a020e7947cb2902b6e250c7edf64d9972189dd1905888",
+    "src/code_index/impact/context_walk.rs": "f1861383bdc1948e9d267fef9942e267cc74dcb8d1e7ba8aa972fa5a66d044ce",
+    "src/code_index/php_names/phpunit.rs": "87c71fb651d8dfb42dce85ba04d5993841b14527b58c7be9be6c53fdfb1f65e0",
+    "src/code_index/php_names/tests.rs": "856703c6082b0b4fd57a5660ac5a6077d6d1c65e30db3158ea3589576cbee75e",
+    "src/code_index/history.rs": "9681e4c25d6cea56589d5756b1dfb7d5b8f7f2b8c846a585dddcb4d3d089b6a0",
+    "src/mcp/analysis.rs": "5974b929942ea5e2daa84d88108ec0f6fe0db0d511ad691ac6f34875bf2a5ef2",
+    "scripts/smoke_phpunit_effective.py": "0e4738a3acb32a686da242f27624124008fbd78f26276f42efec904aaad4f212",
+    "scripts/smoke_phpunit_entrypoints.py": "57537932410e9968db409ef2ddf3f1cd051042d64c13a406377e32a70831f42c"
+  },
+  "source_hashes_after": {
+    "src/code_index.rs": "bfc4dd27df044f4180fb624f089a85dfcefb3a2b217b305d000d57f0ea0978a6",
+    "src/code_index/analysis.rs": "9c66949888e67ee06f4bdddcb87bdbb24020f9be887cc263ca4ccd890e648a2d",
+    "src/code_index/affected_tests.rs": "200ea7192677fc804bd3986ac3414465e9af1b1e3d946e0f56745996871d8866",
+    "src/code_index/impact.rs": "f7ec9deff386922b005a020e7947cb2902b6e250c7edf64d9972189dd1905888",
+    "src/code_index/impact/context_walk.rs": "f1861383bdc1948e9d267fef9942e267cc74dcb8d1e7ba8aa972fa5a66d044ce",
+    "src/code_index/php_names/phpunit.rs": "87c71fb651d8dfb42dce85ba04d5993841b14527b58c7be9be6c53fdfb1f65e0",
+    "src/code_index/php_names/tests.rs": "856703c6082b0b4fd57a5660ac5a6077d6d1c65e30db3158ea3589576cbee75e",
+    "src/code_index/history.rs": "9681e4c25d6cea56589d5756b1dfb7d5b8f7f2b8c846a585dddcb4d3d089b6a0",
+    "src/mcp/analysis.rs": "5974b929942ea5e2daa84d88108ec0f6fe0db0d511ad691ac6f34875bf2a5ef2",
+    "scripts/smoke_phpunit_effective.py": "0e4738a3acb32a686da242f27624124008fbd78f26276f42efec904aaad4f212",
+    "scripts/smoke_phpunit_entrypoints.py": "57537932410e9968db409ef2ddf3f1cd051042d64c13a406377e32a70831f42c"
+  },
+  "shared_checkout": true,
+  "frozen_source_checkout": false,
+  "PHP_or_SQL_executed": false,
+  "production_database_touched": false,
+  "full_RAGRAF_parity_proven": false
+}

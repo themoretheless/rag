@@ -1,0 +1,32 @@
+{
+  "workspace_tests": {
+    "passed": 1554,
+    "failed": 0,
+    "ignored": 1
+  },
+  "focused_native_passed": 26,
+  "mcp_suites_passed": 8,
+  "trait_mcp_checks_passed": 20,
+  "versions": {
+    "index_format": 74,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "source_sha256": {
+    "src/code_index.rs": "e92d42db820197e5959e73c46453757d6625d74190ec1095ae8936ac36e8b38d",
+    "src/code_index/history.rs": "0ae0d64c1fc1e712b70815d45328f2a087fffa6a04edbbb60a075dc6f1dbe996",
+    "src/code_index/php_names.rs": "6b95f2dba006d11d6098ccd8e51f5fa77a1623aab17f2612bb6618a4d53b933c",
+    "src/code_index/php_names/hierarchy.rs": "6ba9b23b7ae847c50bedf253a71d8461e31f113d02f6346cb70578b4521004f3",
+    "src/code_index/php_names/resolve.rs": "d0051bbb9b8b346bb538d515f070dace293465f6fe9974b1d4ac5c3d515c25c7",
+    "src/code_index/php_names/tests.rs": "ed98490c1b244dcabe87e649c5696aabb2041b73bf6e3285e840d153e33bc038",
+    "src/code_index/php_names/traits.rs": "fba95f0da9c61b9c95395aaaee368721f024ce901270dfa9826f8ccdb9df07e2",
+    "src/code_index/php_names/capture.rs": "75852048a35b6d94abaf7be85b21dea73af2a9497487854f4bb17e82a3b25317",
+    "src/mcp/analysis.rs": "989c39f7d4676afb2a017cea298573715f521de8d25b316a08de11aa099e6ba0",
+    "scripts/smoke_php_traits.py": "256f2fe2389d33f4cfcffd97f811075de6a08190b0d5a7be78480e9ebacba296",
+    "scripts/smoke_php_inheritance.py": "94bdade35868a81d91f9c0eddee44c1b11da7a7c9528b4cf38d78296a677b3ae"
+  },
+  "shared_checkout": true,
+  "frozen_checkout_proven": false,
+  "compiler_runtime_verified": false,
+  "deployed_gateway_proven": false
+}

@@ -3,15 +3,15 @@
 use serde::Serialize;
 
 use crate::config::Config;
-use crate::db::search::{
-    acquire_corpus_search_guard, attach_context, fuse_rrf_many, search_with_corpus_guard,
-    ContextExpansion, DiversityMode, SearchQuery, DEFAULT_RRF_K, MAX_QUERY_CHARS, MAX_TOP_K,
-};
 use crate::db::Store;
-use crate::embeddings::{l2_normalize, EmbeddingProvider};
+use crate::db::search::{
+    ContextExpansion, DEFAULT_RRF_K, DiversityMode, MAX_QUERY_CHARS, MAX_TOP_K, SearchQuery,
+    acquire_corpus_search_guard, attach_context, fuse_rrf_many, search_with_corpus_guard,
+};
+use crate::embeddings::{EmbeddingProvider, l2_normalize};
 use crate::error::AppError;
 use crate::models::{Document, SearchHit, SearchMode};
-use crate::search_pack::{pack_hits, PackedContext};
+use crate::search_pack::{PackedContext, pack_hits};
 use crate::util::{non_blank, trimmed_non_blank};
 
 pub const MAX_MULTI_GET_DOCUMENTS: usize = 100;
@@ -277,7 +277,7 @@ async fn prepare_search_with_mode(
             other => {
                 return Err(AppError::invalid(format!(
                     "invalid group_by '{other}': expected document or none"
-                )))
+                )));
             }
         }
     }
@@ -352,7 +352,7 @@ pub struct DocumentWithChunks {
 }
 
 pub use crate::db::chunk_text::ChunkText;
-use crate::db::chunk_text::{chunk_text_page, ChunkTextPage};
+use crate::db::chunk_text::{ChunkTextPage, chunk_text_page};
 
 #[derive(Debug, Serialize)]
 pub struct MultiGetResult {
@@ -1161,9 +1161,11 @@ mod tests {
             queries: vec!["q".into(); MAX_MULTI_QUERIES + 1],
             ..MultiQuerySearchCommand::default()
         };
-        assert!(multi_query_search(&store, &embedder, &config, too_many)
-            .await
-            .is_err());
+        assert!(
+            multi_query_search(&store, &embedder, &config, too_many)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -1216,15 +1218,19 @@ mod tests {
         .await
         .unwrap()
         .unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("timeout budget exceeded during embedding"));
+        assert!(
+            error
+                .to_string()
+                .contains("timeout budget exceeded during embedding")
+        );
         assert_eq!(provider.entered.load(Ordering::SeqCst), 1);
         assert_eq!(provider.dropped.load(Ordering::SeqCst), 1);
-        assert!(store
-            .corpus_lane()
-            .corpus_mutation_lane()
-            .try_write_owned()
-            .is_ok());
+        assert!(
+            store
+                .corpus_lane()
+                .corpus_mutation_lane()
+                .try_write_owned()
+                .is_ok()
+        );
     }
 }

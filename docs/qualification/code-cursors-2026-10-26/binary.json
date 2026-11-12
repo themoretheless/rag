@@ -1,6 +1,6 @@
 {
-  "sha256": "e240be9aa65206503701528318b36e05cfe33e761895728f0b331a1e59650c58",
-  "bytes": 327494216,
+  "sha256": "66bd444db2a42c348f214110cbd35affc1ac22b2c19618169e7e08d19f200e98",
+  "bytes": 327564296,
   "fixed_for_all_MCP_scenarios": true,
   "scenarios": [
     "code_cursors",

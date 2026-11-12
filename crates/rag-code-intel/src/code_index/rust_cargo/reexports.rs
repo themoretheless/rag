@@ -613,7 +613,10 @@ mod tests {
     fn named_grouped_multihop_reexports_preserve_exact_targets_and_inline_scope() {
         let g = graph(&[
             ("/p/Cargo.toml", MANIFEST),
-            ("/p/src/lib.rs", "mod implementation; mod stage {pub use crate::implementation::work;} pub mod facade {pub use crate::stage::{work as run};} fn entry(){crate::facade::run();run();}"),
+            (
+                "/p/src/lib.rs",
+                "mod implementation; mod stage {pub use crate::implementation::work;} pub mod facade {pub use crate::stage::{work as run};} fn entry(){crate::facade::run();run();}",
+            ),
             ("/p/src/implementation.rs", "pub fn work(){}"),
         ]);
         assert_eq!(names(&g, "crate::facade::run"), ["work"]);
@@ -626,7 +629,10 @@ mod tests {
     fn glob_reexports_preserve_ambiguity_hide_private_items_and_handle_cycles() {
         let g = graph(&[
             ("/p/Cargo.toml", MANIFEST),
-            ("/p/src/lib.rs", "mod one {pub fn same(){} pub fn only(){} fn hidden(){}} mod two {pub fn same(){}} pub mod api {pub use crate::one::*;pub use crate::two::*;} pub mod a {pub use crate::b::*;}pub mod b {pub use crate::a::*;pub use crate::one::*;} fn run(){crate::api::same();crate::api::only();crate::api::hidden();crate::a::only();}"),
+            (
+                "/p/src/lib.rs",
+                "mod one {pub fn same(){} pub fn only(){} fn hidden(){}} mod two {pub fn same(){}} pub mod api {pub use crate::one::*;pub use crate::two::*;} pub mod a {pub use crate::b::*;}pub mod b {pub use crate::a::*;pub use crate::one::*;} fn run(){crate::api::same();crate::api::only();crate::api::hidden();crate::a::only();}",
+            ),
         ]);
         assert_eq!(names(&g, "crate::api::same"), ["one::same", "two::same"]);
         assert_eq!(names(&g, "crate::api::only"), ["one::only"]);
@@ -636,10 +642,19 @@ mod tests {
     #[test]
     fn restricted_exports_do_not_cross_crate_boundaries_or_widen_private_targets() {
         let g = graph(&[
-            ("/w/client/Cargo.toml", "[package]\nname='client'\n[dependencies]\nengine={path='../engine'}\n"),
-            ("/w/client/src/main.rs", "fn main(){engine::api::public();engine::api::internal();engine::api::bad();}"),
+            (
+                "/w/client/Cargo.toml",
+                "[package]\nname='client'\n[dependencies]\nengine={path='../engine'}\n",
+            ),
+            (
+                "/w/client/src/main.rs",
+                "fn main(){engine::api::public();engine::api::internal();engine::api::bad();}",
+            ),
             ("/w/engine/Cargo.toml", MANIFEST),
-            ("/w/engine/src/lib.rs", "mod inner {pub fn work(){} pub(crate) fn internal(){} fn hidden(){}}pub mod api {pub use crate::inner::work as public;pub(crate) use crate::inner::internal;pub use crate::inner::hidden as bad;pub(super) use crate::inner::work as parent;pub(in crate::api) use crate::inner::work as local;}fn run(){crate::api::internal();crate::api::parent();crate::api::local();}"),
+            (
+                "/w/engine/src/lib.rs",
+                "mod inner {pub fn work(){} pub(crate) fn internal(){} fn hidden(){}}pub mod api {pub use crate::inner::work as public;pub(crate) use crate::inner::internal;pub use crate::inner::hidden as bad;pub(super) use crate::inner::work as parent;pub(in crate::api) use crate::inner::work as local;}fn run(){crate::api::internal();crate::api::parent();crate::api::local();}",
+            ),
         ]);
         assert_eq!(names(&g, "engine::api::public"), ["inner::work"]);
         assert!(names(&g, "engine::api::internal").is_empty());
@@ -651,20 +666,26 @@ mod tests {
     #[test]
     fn module_aliases_check_the_base_visibility_before_public_children() {
         for (visibility, expected) in [("pub ", vec!["implementation::work"]), ("", vec![])] {
-            let source = format!("{visibility}mod implementation {{pub fn work(){{}}}}pub mod api {{pub use crate::implementation as nested;}}fn run(){{crate::api::nested::work();}}");
+            let source = format!(
+                "{visibility}mod implementation {{pub fn work(){{}}}}pub mod api {{pub use crate::implementation as nested;}}fn run(){{crate::api::nested::work();}}"
+            );
             let g = graph(&[("/p/Cargo.toml", MANIFEST), ("/p/src/lib.rs", &source)]);
             assert_eq!(names(&g, "crate::api::nested::work"), expected);
         }
     }
     #[test]
     fn unknown_cfg_and_duplicate_exports_never_publish_a_partial_unique_target() {
-        let configured = format!("{MANIFEST}[features]\nfast=[]\n[package.metadata.rag.graph]\nversion=1\ntarget_kind='lib'\ndefault_features=false\nfeatures=['fast']\n");
+        let configured = format!(
+            "{MANIFEST}[features]\nfast=[]\n[package.metadata.rag.graph]\nversion=1\ntarget_kind='lib'\ndefault_features=false\nfeatures=['fast']\n"
+        );
         for imports in [
             "pub use crate::one::work;#[cfg(target_os=\"linux\")]pub use crate::two::work;",
             "pub use crate::one::*;#[cfg(target_os=\"linux\")]pub use crate::two::*;",
             "pub use crate::one::work;pub use crate::two::work;",
         ] {
-            let source = format!("mod one{{pub fn work(){{}}}}mod two{{pub fn work(){{}}}}pub mod api{{{imports}}}fn run(){{crate::api::work();}}");
+            let source = format!(
+                "mod one{{pub fn work(){{}}}}mod two{{pub fn work(){{}}}}pub mod api{{{imports}}}fn run(){{crate::api::work();}}"
+            );
             let g = graph(&[("/p/Cargo.toml", &configured), ("/p/src/lib.rs", &source)]);
             assert!(names(&g, "crate::api::work").is_empty());
         }
@@ -676,7 +697,10 @@ mod tests {
     fn reexports_cannot_import_associated_or_function_local_items_or_private_glob_bases() {
         let g = graph(&[
             ("/p/Cargo.toml", MANIFEST),
-            ("/p/src/lib.rs", "pub struct A;impl A{pub fn method(){}}fn make(){pub fn nested(){}}mod source{struct Private;impl Private{pub fn method(){}}pub mod visible{mod hidden{pub fn work(){}}}}pub mod api{pub use crate::A::method as associated;pub use crate::make::nested as local;pub use crate::source::*;}fn run(){crate::api::associated();crate::api::local();crate::api::Private::method();crate::api::visible::hidden::work();}"),
+            (
+                "/p/src/lib.rs",
+                "pub struct A;impl A{pub fn method(){}}fn make(){pub fn nested(){}}mod source{struct Private;impl Private{pub fn method(){}}pub mod visible{mod hidden{pub fn work(){}}}}pub mod api{pub use crate::A::method as associated;pub use crate::make::nested as local;pub use crate::source::*;}fn run(){crate::api::associated();crate::api::local();crate::api::Private::method();crate::api::visible::hidden::work();}",
+            ),
         ]);
         for expression in [
             "crate::api::associated",
@@ -686,15 +710,29 @@ mod tests {
         ] {
             assert!(names(&g, expression).is_empty(), "{expression}");
         }
-        let g = graph(&[("/p/Cargo.toml", MANIFEST), ("/p/src/lib.rs", "pub struct A;impl A{pub fn method(){}}pub mod api{pub use crate::A::*;}fn run(){crate::api::method();}")]);
+        let g = graph(&[
+            ("/p/Cargo.toml", MANIFEST),
+            (
+                "/p/src/lib.rs",
+                "pub struct A;impl A{pub fn method(){}}pub mod api{pub use crate::A::*;}fn run(){crate::api::method();}",
+            ),
+        ]);
         assert!(names(&g, "crate::api::method").is_empty());
-        let g = graph(&[("/p/Cargo.toml", MANIFEST), ("/p/src/lib.rs", "mod source{struct Private;impl Private{pub fn method(){}}pub mod inside{pub use super::*;}pub mod visible{mod hidden{pub fn work(){}}pub mod inside{pub use super::*;}}}fn run(){crate::source::inside::Private::method();crate::source::visible::inside::hidden::work();}")]);
+        let g = graph(&[
+            ("/p/Cargo.toml", MANIFEST),
+            (
+                "/p/src/lib.rs",
+                "mod source{struct Private;impl Private{pub fn method(){}}pub mod inside{pub use super::*;}pub mod visible{mod hidden{pub fn work(){}}pub mod inside{pub use super::*;}}}fn run(){crate::source::inside::Private::method();crate::source::visible::inside::hidden::work();}",
+            ),
+        ]);
         assert!(names(&g, "crate::source::inside::Private::method").is_empty());
         assert!(names(&g, "crate::source::visible::inside::hidden::work").is_empty());
     }
     #[test]
     fn exhausted_reexport_depth_clears_other_glob_candidates() {
-        let mut source = String::from("mod leaf{pub fn work(){}}pub mod api{pub use crate::leaf::*;pub use crate::n0::*;}fn run(){crate::api::work();}");
+        let mut source = String::from(
+            "mod leaf{pub fn work(){}}pub mod api{pub use crate::leaf::*;pub use crate::n0::*;}fn run(){crate::api::work();}",
+        );
         for i in 0..18 {
             source.push_str(&format!("pub mod n{i}{{pub use crate::n{}::*;}}", i + 1));
         }

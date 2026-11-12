@@ -1,14 +1,14 @@
 //! `/v1/resources`: live process/system resource telemetry plus concurrency
 //! configuration, backing the "Ресурсы" tab in the web console.
 
+use axum::Router;
 use axum::extract::State;
 use axum::response::IntoResponse;
 use axum::routing::get;
-use axum::Router;
 use serde_json::json;
 
-use super::error::api_ok;
 use super::HttpState;
+use super::error::api_ok;
 
 pub(super) fn routes() -> Router<HttpState> {
     Router::new().route("/v1/resources", get(resources))

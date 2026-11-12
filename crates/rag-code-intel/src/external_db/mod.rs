@@ -7,22 +7,18 @@ mod relations;
 mod samples;
 mod types;
 pub mod write_check;
+#[cfg(test)]
+pub(crate) use crate::testkit::StoreCodeIntelTestExt;
 use crate::{
+    Store, analysis_tasks,
+    db::lin_engine::{LinReader, LinWriter, RecBuilder, cell_i64, cell_str, cell_string},
     error::{AppError, Result},
-    Store,
 };
 use futures_util::TryStreamExt;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::{ConnectOptions, Connection, Executor, Row};
 use std::{collections::BTreeMap, str::FromStr, time::Duration};
-
-/// This module's tables, registered at composition and ensured by its repository.
-pub const SCHEMA: crate::db::schema::SchemaExtension = crate::db::schema::SchemaExtension {
-    name: "external_db",
-    ddl: DDL,
-};
-pub const DDL: &str = "CREATE SEQUENCE IF NOT EXISTS external_db_snapshot_seq; CREATE TABLE IF NOT EXISTS external_db_snapshots (id VARCHAR PRIMARY KEY, connection_alias VARCHAR NOT NULL, captured_ms BIGINT NOT NULL, payload VARCHAR NOT NULL, seq BIGINT DEFAULT nextval('external_db_snapshot_seq') UNIQUE);";
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -52,7 +48,9 @@ enum Tls {
     Disable,
 }
 fn config_error() -> AppError {
-    AppError::config("invalid RAG_EXTERNAL_DATABASES configuration (expected named PostgreSQL/MySQL targets, url_env, project and explicit schemas)")
+    AppError::config(
+        "invalid RAG_EXTERNAL_DATABASES configuration (expected named PostgreSQL/MySQL targets, url_env, project and explicit schemas)",
+    )
 }
 fn targets(raw: &str) -> Result<BTreeMap<String, Target>> {
     if raw.len() > 32768 {
@@ -125,6 +123,11 @@ fn targets(raw: &str) -> Result<BTreeMap<String, Target>> {
 fn legacy_capture_format() -> u32 {
     1
 }
+pub const SCHEMA: crate::db::schema::SchemaExtension = crate::db::schema::SchemaExtension {
+    name: "external_db",
+    ddl: "",
+};
+
 pub const CAPTURE_FORMAT: u32 = 4;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -165,7 +168,9 @@ impl Snapshot {
                     .iter()
                     .any(|t| t.metadata.as_ref().is_none_or(|m| m.types.is_none()))
         {
-            return Err(AppError::config("unsupported or incomplete external snapshot format; retain the snapshot and refresh with a compatible server"));
+            return Err(AppError::config(
+                "unsupported or incomplete external snapshot format; retain the snapshot and refresh with a compatible server",
+            ));
         }
         Ok(())
     }
@@ -232,7 +237,9 @@ impl Remote {
                         let value: Option<String> = r.try_get(i).map_err(|_| remote_error())?;
                         received += value.as_ref().map_or(0, String::len);
                         if received > 8 * 1024 * 1024 {
-                            return Err(AppError::config("external metadata query exceeded 8 MiB text budget; previous snapshot retained"));
+                            return Err(AppError::config(
+                                "external metadata query exceeded 8 MiB text budget; previous snapshot retained",
+                            ));
                         }
                         v.insert((*k).into(), json!(value));
                     }
@@ -254,7 +261,9 @@ impl Remote {
                         let value: Option<String> = r.try_get(i).map_err(|_| remote_error())?;
                         received += value.as_ref().map_or(0, String::len);
                         if received > 8 * 1024 * 1024 {
-                            return Err(AppError::config("external metadata query exceeded 8 MiB text budget; previous snapshot retained"));
+                            return Err(AppError::config(
+                                "external metadata query exceeded 8 MiB text budget; previous snapshot retained",
+                            ));
                         }
                         v.insert((*k).into(), json!(value));
                     }
@@ -277,7 +286,9 @@ impl Remote {
     }
 }
 fn remote_error() -> AppError {
-    AppError::config("external database connection or metadata query failed; verify owner credentials, TLS, schema and metadata permissions (driver details suppressed)")
+    AppError::config(
+        "external database connection or metadata query failed; verify owner credentials, TLS, schema and metadata permissions (driver details suppressed)",
+    )
 }
 fn fingerprint(t: &Target, host: &str, port: u16, user: &str, database: Option<&str>) -> String {
     let mut schemas = t.schemas.clone();
@@ -446,7 +457,9 @@ async fn collect(
                 .map_err(|_| remote_error())?
                 .len();
             if captured_bytes > 8 * 1024 * 1024 {
-                return Err(AppError::config("external schema capture exceeded 8 MiB while collecting; previous snapshot retained"));
+                return Err(AppError::config(
+                    "external schema capture exceeded 8 MiB while collecting; previous snapshot retained",
+                ));
             }
             tables.push(entry);
         }
@@ -485,9 +498,8 @@ async fn collect(
     snapshot.inferred_relations = Some(relations::infer(&snapshot));
     Ok(snapshot)
 }
-/// External database snapshots and checks over the store connection.
 pub struct ExternalDb<'a> {
-    store: &'a Store,
+    pub(super) store: &'a Store,
 }
 
 impl<'a> ExternalDb<'a> {
@@ -497,7 +509,6 @@ impl<'a> ExternalDb<'a> {
         }
         Self { store }
     }
-
     pub async fn external_db_refresh(&self, q: &Refresh) -> Result<Value> {
         let raw = std::env::var("RAG_EXTERNAL_DATABASES").unwrap_or_else(|_| "{}".into());
         let all = targets(&raw)?;
@@ -523,37 +534,62 @@ impl<'a> ExternalDb<'a> {
                 "external schema snapshot exceeds 8 MiB; reduce configured schemas",
             ));
         }
-        self.store.with_conn(|conn| {
-            conn.execute(
-                "INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",
-                duckdb::params![snapshot.id, snapshot.connection, snapshot.captured_ms, body],
-            )?;
-            Ok(())
-        })?;
+        self.insert_external_db_snapshot(
+            &snapshot.id,
+            &snapshot.connection,
+            snapshot.captured_ms,
+            &body,
+        )?;
         Ok(
             json!({"snapshot_id":snapshot.id,"connection":snapshot.connection,"captured_ms":snapshot.captured_ms,"tables":snapshot.tables.len(),"complete_within_visible_scope":snapshot.complete_within_visible_scope,"diagnostics":snapshot.diagnostics,"source":"remote_metadata","capture_format":snapshot.capture_format,"samples_requested":q.include_samples,"readonly":true}),
         )
     }
-    fn external_snapshot(&self, q: &Query) -> Result<Snapshot> {
-        self.store.with_conn(|conn| {
-            let body: Option<String> = if let Some(id) = &q.snapshot_id {
-                let mut s = conn.prepare(
-                    "SELECT payload FROM external_db_snapshots WHERE connection_alias=? AND id=?",
-                )?;
-                let mut rows = s.query(duckdb::params![q.connection, id])?;
-                rows.next()?.map(|r| r.get(0)).transpose()?
-            } else {
-                let mut s=conn.prepare("SELECT payload FROM external_db_snapshots WHERE connection_alias=? ORDER BY seq DESC LIMIT 1")?;
-                let mut rows = s.query(duckdb::params![q.connection])?;
-                rows.next()?.map(|r| r.get(0)).transpose()?
-            };
-            let snapshot: Snapshot = serde_json::from_str(&body.ok_or_else(|| {
-                AppError::NotFound("no captured snapshot for this alias; use db_refresh first".into())
-            })?)
-            .map_err(|_| AppError::config("stored external schema snapshot is invalid"))?;
-            snapshot.validate_format()?;
-            Ok(snapshot)
+    pub(crate) fn insert_external_db_snapshot(
+        &self,
+        id: &str,
+        connection_alias: &str,
+        captured_ms: i64,
+        payload: &str,
+    ) -> Result<()> {
+        self.store.with_tx(|tx| {
+            let seq = analysis_tasks::next_seq(tx, "external_db_snapshots")?;
+            tx.insert_one(
+                "external_db_snapshots",
+                RecBuilder::new()
+                    .id(id)
+                    .str("connection_alias", connection_alias)
+                    .i64("captured_ms", captured_ms)
+                    .str("payload", payload)
+                    .i64("seq", seq)
+                    .build(),
+            )
         })
+    }
+    fn external_snapshot(&self, q: &Query) -> Result<Snapshot> {
+        let r = self.store.read()?;
+        let body: Option<String> = if let Some(id) = &q.snapshot_id {
+            r.get_by_id("external_db_snapshots", id)?
+                .filter(|row| cell_str(row, "connection_alias") == Some(q.connection.as_str()))
+                .map(|row| cell_string(&row, "payload"))
+        } else {
+            let mut best: Option<(i64, String)> = None;
+            r.scan_each("external_db_snapshots", |row| {
+                if cell_str(row, "connection_alias") == Some(q.connection.as_str()) {
+                    let seq = cell_i64(row, "seq", 0);
+                    if best.as_ref().is_none_or(|(prev, _)| seq > *prev) {
+                        best = Some((seq, cell_string(row, "payload")));
+                    }
+                }
+                Ok(true)
+            })?;
+            best.map(|(_, p)| p)
+        };
+        let snapshot: Snapshot = serde_json::from_str(&body.ok_or_else(|| {
+            AppError::NotFound("no captured snapshot for this alias; use db_refresh first".into())
+        })?)
+        .map_err(|_| AppError::config("stored external schema snapshot is invalid"))?;
+        snapshot.validate_format()?;
+        Ok(snapshot)
     }
     pub fn external_db_query(&self, operation: &str, q: &Query) -> Result<Value> {
         if q.connection.len() > 64 {
@@ -566,7 +602,9 @@ impl<'a> ExternalDb<'a> {
         }
         if matches!(operation, "db_drift" | "db_cross") && (q.schema.is_some() || q.table.is_some())
         {
-            return Err(AppError::config("db_drift and db_cross compare the entire captured scope; schema/table filters are not supported"));
+            return Err(AppError::config(
+                "db_drift and db_cross compare the entire captured scope; schema/table filters are not supported",
+            ));
         }
         if q.relation_kind.is_some() && operation != "db_relations" {
             return Err(AppError::config(
@@ -635,23 +673,29 @@ mod tests {
         old.validate_format().unwrap();
         let mut missing_analysis = payload.clone();
         missing_analysis["capture_format"] = json!(3);
-        assert!(serde_json::from_value::<Snapshot>(missing_analysis)
-            .unwrap()
-            .validate_format()
-            .is_err());
+        assert!(
+            serde_json::from_value::<Snapshot>(missing_analysis)
+                .unwrap()
+                .validate_format()
+                .is_err()
+        );
         let mut future = payload.clone();
         future["capture_format"] = json!(99);
-        assert!(serde_json::from_value::<Snapshot>(future)
-            .unwrap()
-            .validate_format()
-            .is_err());
+        assert!(
+            serde_json::from_value::<Snapshot>(future)
+                .unwrap()
+                .validate_format()
+                .is_err()
+        );
         let mut incomplete = payload;
         incomplete["capture_format"] = json!(2);
         incomplete["tables"] = json!([{"schema":"public","name":"t","kind":"BASE TABLE","columns":[],"foreign_keys":[],"complete":true,"sample":null}]);
-        assert!(serde_json::from_value::<Snapshot>(incomplete)
-            .unwrap()
-            .validate_format()
-            .is_err());
+        assert!(
+            serde_json::from_value::<Snapshot>(incomplete)
+                .unwrap()
+                .validate_format()
+                .is_err()
+        );
     }
     #[test]
     fn scope_hash_ignores_schema_order_but_tracks_target() {
@@ -706,11 +750,13 @@ mod fixture_tests {
                     .all(|r| r["provenance"] == "inferred"
                         && r["confidence"].as_f64().unwrap() <= 0.4)
             );
-            assert!(inferred
-                .diagnostics
-                .iter()
-                .any(|d| d["column"] == "account_id"
-                    && d["code"] == "TARGET_ID_NOT_PROVEN_INDIVIDUALLY_UNIQUE"));
+            assert!(
+                inferred
+                    .diagnostics
+                    .iter()
+                    .any(|d| d["column"] == "account_id"
+                        && d["code"] == "TARGET_ID_NOT_PROVEN_INDIVIDUALLY_UNIQUE")
+            );
             assert!(inferred.diagnostics.iter().any(
                 |d| d["column"] == "report_user_id" && d["code"] == "IDENTIFIER_TYPE_MISMATCH"
             ));
@@ -725,10 +771,12 @@ mod fixture_tests {
                     .unwrap()
                     .complete
             );
-            assert!(inferred
-                .relations
-                .iter()
-                .any(|r| r["mapping"]["column"] == "domain_user_id"));
+            assert!(
+                inferred
+                    .relations
+                    .iter()
+                    .any(|r| r["mapping"]["column"] == "domain_user_id")
+            );
             let defs = &event
                 .metadata
                 .as_ref()
@@ -753,10 +801,12 @@ mod fixture_tests {
                         .find(|c| c["name"] == "domain_user_id")
                         .unwrap();
                     assert_eq!(domain["nullable"], "NO");
-                    assert!(domain["effective_default_sql"]
-                        .as_str()
-                        .unwrap()
-                        .contains('9'));
+                    assert!(
+                        domain["effective_default_sql"]
+                            .as_str()
+                            .unwrap()
+                            .contains('9')
+                    );
                     assert_eq!(
                         domain["resolved_type"]["domain_chain"]
                             .as_array()
@@ -764,11 +814,11 @@ mod fixture_tests {
                             .len(),
                         2
                     );
-                    assert!(defs.iter().filter(|d| d["kind"] == "domain").all(|d| !d
-                        ["constraints"]
-                        .as_array()
-                        .unwrap()
-                        .is_empty()));
+                    assert!(
+                        defs.iter()
+                            .filter(|d| d["kind"] == "domain")
+                            .all(|d| !d["constraints"].as_array().unwrap().is_empty())
+                    );
                     let array = event
                         .columns
                         .iter()
@@ -801,9 +851,11 @@ mod fixture_tests {
             assert!(child.columns.iter().any(|c| c["name"] == "computed"
                 && !c["generation_expression"].as_str().unwrap_or("").is_empty()));
             assert!(snapshot.tables.iter().any(|x| x.name == "odd'name"));
-            assert!(!serde_json::to_string(&snapshot)
-                .unwrap()
-                .contains("PRIVATE_ROW_MARKER"));
+            assert!(
+                !serde_json::to_string(&snapshot)
+                    .unwrap()
+                    .contains("PRIVATE_ROW_MARKER")
+            );
             let metadata = child.metadata.as_ref().unwrap();
             assert!(metadata.complete, "{metadata:?}");
             let pair = metadata
@@ -831,10 +883,12 @@ mod fixture_tests {
                 .iter()
                 .find(|i| i["name"] == "child_expr")
                 .unwrap();
-            assert!(!expression["keys"][0]["expression"]
-                .as_str()
-                .unwrap()
-                .is_empty());
+            assert!(
+                !expression["keys"][0]["expression"]
+                    .as_str()
+                    .unwrap()
+                    .is_empty()
+            );
             assert_eq!(
                 expression["keys"][0]["expression_hash"]
                     .as_str()
@@ -898,14 +952,18 @@ mod fixture_tests {
                     assert_eq!(check["validated"], false);
                     assert_eq!(check["enforced"], true);
                     assert_eq!(expression["keys"][1]["included"], true);
-                    assert!(expression["predicate"]
-                        .as_str()
-                        .unwrap()
-                        .contains("IS NULL"));
-                    assert!(metadata
-                        .constraints
-                        .iter()
-                        .any(|c| c["kind"] == "EXCLUSION"));
+                    assert!(
+                        expression["predicate"]
+                            .as_str()
+                            .unwrap()
+                            .contains("IS NULL")
+                    );
+                    assert!(
+                        metadata
+                            .constraints
+                            .iter()
+                            .any(|c| c["kind"] == "EXCLUSION")
+                    );
                     let mv = snapshot
                         .tables
                         .iter()
@@ -948,14 +1006,16 @@ mod fixture_tests {
                         .find(|c| c["column"] == "created_at")
                         .unwrap();
                     assert_eq!(default["generated_expression"], false);
-                    assert!(child
-                        .columns
-                        .iter()
-                        .find(|c| c["name"] == "created_at")
-                        .unwrap()["generation_metadata"]
-                        .as_str()
-                        .unwrap()
-                        .contains("DEFAULT_GENERATED"));
+                    assert!(
+                        child
+                            .columns
+                            .iter()
+                            .find(|c| c["name"] == "created_at")
+                            .unwrap()["generation_metadata"]
+                            .as_str()
+                            .unwrap()
+                            .contains("DEFAULT_GENERATED")
+                    );
                     let admin_url = std::env::var(format!("{var}_ADMIN")).unwrap();
                     let options = sqlx::mysql::MySqlConnectOptions::from_str(&admin_url)
                         .unwrap()
@@ -1047,14 +1107,18 @@ mod fixture_tests {
                     assert!(!hidden_view.complete);
                     assert!(hidden_view.definition.is_none());
                     assert!(hidden_view.definition_hash.is_none());
-                    assert!(limited
-                        .diagnostics
-                        .iter()
-                        .any(|d| d.starts_with("VIEW_DEFINITION_UNAVAILABLE")));
-                    assert!(limited
-                        .tables
-                        .iter()
-                        .any(|t| t.name == "child" && t.metadata.as_ref().unwrap().complete));
+                    assert!(
+                        limited
+                            .diagnostics
+                            .iter()
+                            .any(|d| d.starts_with("VIEW_DEFINITION_UNAVAILABLE"))
+                    );
+                    assert!(
+                        limited
+                            .tables
+                            .iter()
+                            .any(|t| t.name == "child" && t.metadata.as_ref().unwrap().complete)
+                    );
                 }
             }
             for (view, target) in [("child_view", "child"), ("nested_view", "child_view")] {
@@ -1113,10 +1177,12 @@ mod fixture_tests {
             assert_eq!(typed_sample["rows"][0]["state"]["value"], "in,progress");
             if matches!(dialect, Dialect::Postgresql) {
                 assert_eq!(typed_sample["rows"][0]["domain_user_id"]["value"], "9");
-                assert!(typed_sample["rows"][0]["states"]["value"]
-                    .as_str()
-                    .unwrap()
-                    .contains("quote'd"));
+                assert!(
+                    typed_sample["rows"][0]["states"]["value"]
+                        .as_str()
+                        .unwrap()
+                        .contains("quote'd")
+                );
             } else {
                 assert_eq!(
                     typed_sample["rows"][0]["permissions"]["value"],
@@ -1125,28 +1191,27 @@ mod fixture_tests {
             }
             assert_eq!(sample["collected"], true);
             assert_eq!(sample["rows"][0]["a"], Value::Null);
-            assert!(sample["columns"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|c| c != "email"));
-            assert!(!serde_json::to_string(&sampled)
-                .unwrap()
-                .contains("PRIVATE_ROW_MARKER"));
+            assert!(
+                sample["columns"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|c| c != "email")
+            );
+            assert!(
+                !serde_json::to_string(&sampled)
+                    .unwrap()
+                    .contains("PRIVATE_ROW_MARKER")
+            );
             let root = tempfile::tempdir().unwrap();
-            let path = root.path().join("capture.duckdb");
-            let store = crate::testkit::open_test_store(&path).unwrap();
+            let path = root.path().join("capture.lin");
+            let store = Store::open(&path).unwrap();
             store
-                .lock()
-                .unwrap()
-                .execute(
-                    "INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",
-                    duckdb::params![
-                        snapshot.id,
-                        "fixture",
-                        snapshot.captured_ms,
-                        serde_json::to_string(&snapshot).unwrap()
-                    ],
+                .insert_external_db_snapshot(
+                    &snapshot.id,
+                    "fixture",
+                    snapshot.captured_ms,
+                    &serde_json::to_string(&snapshot).unwrap(),
                 )
                 .unwrap();
             let q = Query {
@@ -1155,46 +1220,51 @@ mod fixture_tests {
                 ..Default::default()
             };
             assert_eq!(
-                crate::external_db::ExternalDb::new(&store)
-                    .external_db_query("db_table", &q)
-                    .unwrap()["items"][0]["foreign_keys"]
+                store.external_db_query("db_table", &q).unwrap()["items"][0]["foreign_keys"]
                     .as_array()
                     .unwrap()
                     .len(),
                 2
             );
-            assert!(crate::external_db::ExternalDb::new(&store)
-                .external_db_query(
-                    "db_schema",
-                    &Query {
-                        connection: "fixture' OR 1=1 --".into(),
-                        ..Default::default()
-                    }
-                )
-                .is_err());
-            assert!(crate::external_db::ExternalDb::new(&store)
-                .external_db_query("db_drift", &q)
-                .unwrap_err()
-                .to_string()
-                .contains("filters are not supported"));
+            assert!(
+                store
+                    .external_db_query(
+                        "db_schema",
+                        &Query {
+                            connection: "fixture' OR 1=1 --".into(),
+                            ..Default::default()
+                        }
+                    )
+                    .is_err()
+            );
+            assert!(
+                store
+                    .external_db_query("db_drift", &q)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("filters are not supported")
+            );
             let drift_q = Query {
                 connection: "fixture".into(),
                 ..Default::default()
             };
             assert_eq!(
-                crate::external_db::ExternalDb::new(&store)
-                    .external_db_query("db_drift", &drift_q)
-                    .unwrap()["compared"],
+                store.external_db_query("db_drift", &drift_q).unwrap()["compared"],
                 false
             );
             let mut next = snapshot.clone();
             next.tables[0].sample = json!({"collected":true,"rows":[{"status":"changed data"}]});
             next.id = uuid::Uuid::new_v4().to_string();
             // Identical timestamps must still select actual insertion order.
-            store.lock().unwrap().execute("INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",duckdb::params![next.id,"fixture",next.captured_ms,serde_json::to_string(&next).unwrap()]).unwrap();
-            let unchanged = crate::external_db::ExternalDb::new(&store)
-                .external_db_query("db_drift", &drift_q)
+            store
+                .insert_external_db_snapshot(
+                    &next.id,
+                    "fixture",
+                    next.captured_ms,
+                    &serde_json::to_string(&next).unwrap(),
+                )
                 .unwrap();
+            let unchanged = store.external_db_query("db_drift", &drift_q).unwrap();
             assert_eq!(unchanged["snapshot_id"], next.id);
             assert_eq!(unchanged["total"], 0);
             next.id = uuid::Uuid::new_v4().to_string();
@@ -1203,11 +1273,16 @@ mod fixture_tests {
                 .find(|t| t.name == "child")
                 .unwrap()
                 .columns[0]["nullable"] = json!("NO");
-            store.lock().unwrap().execute("INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",duckdb::params![next.id,"fixture",next.captured_ms,serde_json::to_string(&next).unwrap()]).unwrap();
+            store
+                .insert_external_db_snapshot(
+                    &next.id,
+                    "fixture",
+                    next.captured_ms,
+                    &serde_json::to_string(&next).unwrap(),
+                )
+                .unwrap();
             assert_eq!(
-                crate::external_db::ExternalDb::new(&store)
-                    .external_db_query("db_drift", &drift_q)
-                    .unwrap()["changes"][0]["kind"],
+                store.external_db_query("db_drift", &drift_q).unwrap()["changes"][0]["kind"],
                 "table_changed"
             );
             for field in ["indexes", "constraints", "view"] {
@@ -1239,8 +1314,15 @@ mod fixture_tests {
                             Some("changed definition".into())
                     }
                 };
-                store.lock().unwrap().execute("INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",duckdb::params![changed.id,"fixture",changed.captured_ms,serde_json::to_string(&changed).unwrap()]).unwrap();
-                let diff = crate::external_db::ExternalDb::new(&store)
+                store
+                    .insert_external_db_snapshot(
+                        &changed.id,
+                        "fixture",
+                        changed.captured_ms,
+                        &serde_json::to_string(&changed).unwrap(),
+                    )
+                    .unwrap();
+                let diff = store
                     .external_db_query(
                         "db_drift",
                         &Query {
@@ -1263,9 +1345,16 @@ mod fixture_tests {
                 t.as_object_mut().unwrap().remove("metadata");
             }
             let legacy_id = legacy["id"].as_str().unwrap().to_string();
-            store.lock().unwrap().execute("INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",duckdb::params![legacy_id,"fixture",snapshot.captured_ms,legacy.to_string()]).unwrap();
+            store
+                .insert_external_db_snapshot(
+                    &legacy_id,
+                    "fixture",
+                    snapshot.captured_ms,
+                    &legacy.to_string(),
+                )
+                .unwrap();
             assert_eq!(
-                crate::external_db::ExternalDb::new(&store)
+                store
                     .external_db_query(
                         "db_table",
                         &Query {
@@ -1278,7 +1367,7 @@ mod fixture_tests {
                     .unwrap()["capture_format"],
                 1
             );
-            let legacy_diff = crate::external_db::ExternalDb::new(&store)
+            let legacy_diff = store
                 .external_db_query(
                     "db_drift",
                     &Query {
@@ -1298,21 +1387,21 @@ mod fixture_tests {
                 embedding_dims: 16,
                 ..crate::Config::for_tests()
             };
-            let embedder: std::sync::Arc<dyn rag_mcp::embeddings::EmbeddingProvider> =
-                std::sync::Arc::new(rag_mcp::embeddings::MockEmbedder::new(16));
-            let mut command = rag_mcp::source_sync::SourceSyncCommand::new(sources);
+            let embedder: std::sync::Arc<dyn crate::embeddings::EmbeddingProvider> =
+                std::sync::Arc::new(crate::embeddings::MockEmbedder::new(16));
+            let mut command = crate::source_sync::SourceSyncCommand::new(sources);
             command.wing = Some("fixture".into());
-            let service = rag_mcp::source_sync::SourceSyncService::new(&store, &embedder, &config);
+            let service = crate::source_sync::SourceSyncService::new(&store, &embedder, &config);
             assert!(service.sync(command).await.unwrap().errors.is_empty());
-            let cross = crate::external_db::ExternalDb::new(&store)
-                .external_db_query("db_cross", &drift_q)
-                .unwrap();
-            assert!(cross["uses"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|u| u["table"] == "absent_table"
-                    && u["resolution"] == "not_observed_in_visible_live_schema"));
+            let cross = store.external_db_query("db_cross", &drift_q).unwrap();
+            assert!(
+                cross["uses"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|u| u["table"] == "absent_table"
+                        && u["resolution"] == "not_observed_in_visible_live_schema")
+            );
             assert!(
                 cross["migrations"][0]["migration_columns_not_observed_live"]
                     .as_array()
@@ -1324,16 +1413,25 @@ mod fixture_tests {
                 cross["migrations"][0]["migration_columns_not_observed_live"],
                 json!(["missing"])
             );
-            assert!(cross["live_tables_without_observed_static_sql_use"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|t| t["deletion_safe"] == false));
+            assert!(
+                cross["live_tables_without_observed_static_sql_use"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|t| t["deletion_safe"] == false)
+            );
             next.id = uuid::Uuid::new_v4().to_string();
             next.target_fingerprint = "different-target".into();
-            store.lock().unwrap().execute("INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",duckdb::params![next.id,"fixture",next.captured_ms,serde_json::to_string(&next).unwrap()]).unwrap();
+            store
+                .insert_external_db_snapshot(
+                    &next.id,
+                    "fixture",
+                    next.captured_ms,
+                    &serde_json::to_string(&next).unwrap(),
+                )
+                .unwrap();
             assert_eq!(
-                crate::external_db::ExternalDb::new(&store)
+                store
                     .external_db_query(
                         "db_drift",
                         &Query {
@@ -1346,11 +1444,9 @@ mod fixture_tests {
                 "different_database_target_or_visible_scope"
             );
             drop(store);
-            let store = crate::testkit::open_test_store(&path).unwrap();
+            let store = Store::open(&path).unwrap();
             assert_eq!(
-                crate::external_db::ExternalDb::new(&store)
-                    .external_db_query("db_relations", &q)
-                    .unwrap()["total"],
+                store.external_db_query("db_relations", &q).unwrap()["total"],
                 2
             );
             let admin_url = std::env::var(format!("{var}_ADMIN")).unwrap();

@@ -53,7 +53,7 @@ pub(super) fn candidates(
     let unknown: HashSet<_> = snapshot
         .bound_references
         .iter()
-        .filter(|e| e.candidates.is_empty())
+        .filter(|e| e.has_unknown_targets())
         .map(|e| (project(&e.reference.document_id), e.reference.name.as_str()))
         .collect();
     let mut unresolved_roots = 0;
@@ -163,7 +163,11 @@ mod tests {
     }
     #[test]
     fn unresolved_calls_guard_callees_and_candidate_pages_are_deterministic() {
-        let snap=snapshot(&[("/p/a.py","p","def maybe(): helper()\ndef helper(): pass\ndef unused_a(): pass\ndef unused_b(): pass\nunknown.maybe()\n")]);
+        let snap = snapshot(&[(
+            "/p/a.py",
+            "p",
+            "def maybe(): helper()\ndef helper(): pass\ndef unused_a(): pass\ndef unused_b(): pass\nunknown.maybe()\n",
+        )]);
         let q = CodeQuery {
             limit: Some(1),
             ..Default::default()
@@ -200,15 +204,21 @@ mod tests {
     }
     #[test]
     fn live_base_members_protect_override_candidates_and_their_callees() {
-        let snap=snapshot(&[("/p/a.py","p","class Base:\n    def work(self): pass\nclass Child(Base):\n    def work(self): helper()\ndef helper(): pass\ndef unused(): pass\nregistered = Base.work\n")]);
+        let snap = snapshot(&[(
+            "/p/a.py",
+            "p",
+            "class Base:\n    def work(self): pass\nclass Child(Base):\n    def work(self): helper()\ndef helper(): pass\ndef unused(): pass\nregistered = Base.work\n",
+        )]);
         assert_eq!(names(&snap, "/p/a.py"), vec!["unused"]);
         assert_eq!(
             snap.query("dead_code", &CodeQuery::default())["detail"]["override_candidate_edges"],
             1
         );
-        assert!(!snap
-            .calls
-            .iter()
-            .any(|e| e.reference.expression == "Base.work"));
+        assert!(
+            !snap
+                .calls
+                .iter()
+                .any(|e| e.reference.expression == "Base.work")
+        );
     }
 }

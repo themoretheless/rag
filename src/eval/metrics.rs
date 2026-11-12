@@ -114,11 +114,7 @@ pub fn macro_average(values: impl Iterator<Item = f64>) -> f64 {
         sum += value;
         n += 1;
     }
-    if n == 0 {
-        0.0
-    } else {
-        sum / n as f64
-    }
+    if n == 0 { 0.0 } else { sum / n as f64 }
 }
 
 #[cfg(test)]

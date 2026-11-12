@@ -1,22 +1,22 @@
 use std::collections::BTreeMap;
 
 use axum::{
+    Json, Router,
     extract::{Query, State},
     response::IntoResponse,
     routing::{get, post},
-    Json, Router,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::{
-    error::{api_err, api_ok},
     HttpState,
+    error::{api_err, api_ok},
 };
 use crate::diagnostics::DiagnosticsService;
 use crate::telemetry;
-use crate::tool_spec::{spine_tool_names, TOOL_SPECS};
+use crate::tool_spec::{TOOL_SPECS, spine_tool_names};
 use crate::util::resolve_allowlisted_output_file;
 
 /// Recent calls returned when `limit` is absent.

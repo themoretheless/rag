@@ -1,6 +1,9 @@
 //! Document lookups, listings, catalog metadata, taxonomy and placement.
 
 use super::*;
+use crate::db::lin_engine::{
+    cell_i64, cell_nonempty_string, cell_opt_string, cell_str, cell_string, cell_ts,
+};
 
 /// Identity of a document without its body or metadata.
 #[derive(Debug, Clone)]
@@ -10,65 +13,22 @@ pub struct DocumentRef {
     pub layer: String,
 }
 
-/// `(label, document key)` of each wikilink source in a backlinks `view` of
-/// `target_id`, sorted by label with adjacent duplicate keys collapsed.
-pub fn wiki_backlink_rows(
-    target_id: &str,
-    view: &crate::models::GraphView,
-) -> Vec<(String, String)> {
-    let nodes: std::collections::HashMap<&str, &crate::models::GraphNode> = view
-        .nodes
-        .iter()
-        .map(|node| (node.id.as_str(), node))
-        .collect();
-    let mut out = Vec::new();
-    for e in &view.edges {
-        if e.target_id != target_id || e.rel_type != "wikilink" {
-            continue;
-        }
-        let Some(src) = nodes.get(e.source_id.as_str()) else {
-            continue;
-        };
-        let key = src.document_id.clone().unwrap_or_else(|| src.id.clone());
-        out.push((src.label.clone(), key));
-    }
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    out.dedup_by(|a, b| a.1 == b.1);
-    out
-}
-
-/// [`DOCUMENT_SELECT`] with an empty `content`, for listings that never read
-/// document bodies.
-pub(super) fn document_select_without_body() -> String {
-    DOCUMENT_SELECT.replacen("content,", "'' AS content,", 1)
-}
-
-/// Document rows: reads, catalog, placement and metadata, revisions, diary and schema documents, and the atomic document writers.
-///
-/// A repository over the shared Store connection; get one from [`Store::documents`].
-#[derive(Clone, Copy)]
-pub struct Documents<'a> {
-    pub(in crate::db) store: &'a Store,
-}
-
-impl Documents<'_> {
+impl Store {
     /// Fetch a document by id.
     pub fn get_document(&self, id: &str) -> Result<Option<Document>> {
-        let conn = self.store.lock()?;
-        get_document_locked(&conn, id)
+        let r = self.read()?;
+        get_document_locked(&r, id)
     }
 
     /// Fetch a document by stable URI (re-ingest lookup).
     pub fn find_by_uri(&self, uri: &str) -> Result<Option<Document>> {
-        let conn = self.store.lock()?;
-        let sql = format!("SELECT {DOCUMENT_SELECT} FROM documents WHERE uri = ? LIMIT 1");
-        let mut stmt = conn.prepare(&sql)?;
-
-        let mut rows = stmt.query(params![uri])?;
-        match rows.next()? {
-            Some(row) => Ok(Some(rows::document(row)?)),
-            None => Ok(None),
-        }
+        let r = self.read()?;
+        let mut found = None;
+        r.for_each_by_eq_projected("documents", "uri", uri, None, |row| {
+            found = Some(rows::document(row)?);
+            Ok(false)
+        })?;
+        Ok(found)
     }
 
     /// Document by id, else by uri. The uri query runs only when the id misses.
@@ -82,24 +42,27 @@ impl Documents<'_> {
         self.find_by_uri(uri)
     }
 
-    /// Stored `content_hash` for each id that exists, in one query.
+    /// Stored `content_hash` for each id that exists, in one read guard.
     pub fn content_hashes(
         &self,
         ids: &[&str],
     ) -> Result<std::collections::HashMap<String, Option<String>>> {
+        let mut out = std::collections::HashMap::with_capacity(ids.len());
         if ids.is_empty() {
-            return Ok(std::collections::HashMap::new());
+            return Ok(out);
         }
-        let placeholders = crate::db::sql::in_placeholders(ids.len());
-        let conn = self.store.lock()?;
-        let mut stmt = conn.prepare(&format!(
-            "SELECT id, content_hash FROM documents WHERE id IN ({placeholders})"
-        ))?;
-        let rows =
-            crate::db::rows::query_vec(&mut stmt, duckdb::params_from_iter(ids.iter()), |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
-            })?;
-        Ok(rows.into_iter().collect())
+        let r = self.read()?;
+        for &id in ids {
+            let maybe_row = if let Some(eng) = r.disk_v2() {
+                eng.get_projected_by_id("documents", id, &["content_hash"])?
+            } else {
+                r.get_by_id("documents", id)?
+            };
+            if let Some(row) = maybe_row {
+                out.insert(id.to_string(), cell_opt_string(&row, "content_hash"));
+            }
+        }
+        Ok(out)
     }
 
     /// Fetch the first document matching `content_hash` (dedupe probe).
@@ -109,22 +72,26 @@ impl Documents<'_> {
 
     /// All documents with the given `content_hash`, ordered by `created_at` ascending.
     pub fn list_by_content_hash(&self, hash: &str) -> Result<Vec<Document>> {
-        let conn = self.store.lock()?;
-        let sql = format!(
-            "SELECT {DOCUMENT_SELECT} FROM documents WHERE content_hash = ? ORDER BY created_at ASC"
-        );
-        let mut stmt = conn.prepare(&sql)?;
+        let r = self.read()?;
+        let rows = r.find_by_eq("documents", "content_hash", hash)?;
+        let mut docs: Vec<Document> = rows
+            .iter()
+            .map(rows::document)
+            .collect::<Result<Vec<_>>>()?;
+        docs.sort_by(|a, b| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        Ok(docs)
+    }
 
-        let out = crate::db::rows::query_vec(&mut stmt, params![hash], rows::document)?;
-        Ok(out)
+    /// Alias of [`Self::list_by_content_hash`].
+    pub fn find_all_by_content_hash(&self, hash: &str) -> Result<Vec<Document>> {
+        self.list_by_content_hash(hash)
     }
 
     /// Content-hash / URI idempotency probe for `check_duplicate`.
-    ///
-    /// Provide at least one of `content`, `content_hash`, or `uri`:
-    /// - `content` is hashed with [`content_hash`] when `content_hash` is empty.
-    /// - Hash matches come from `documents.content_hash`.
-    /// - URI match comes from exact `documents.uri` (when `uri` is non-empty).
     pub fn check_duplicate(
         &self,
         content: Option<&str>,
@@ -146,7 +113,6 @@ impl Documents<'_> {
             ));
         }
 
-        // id -> (doc, reasons)
         let mut by_id: std::collections::BTreeMap<String, (Document, Vec<&'static str>)> =
             std::collections::BTreeMap::new();
 
@@ -203,86 +169,98 @@ impl Documents<'_> {
 
     /// List all documents ordered by `created_at` ascending.
     pub fn list_documents(&self) -> Result<Vec<Document>> {
-        let conn = self.store.lock()?;
-        let sql = format!("SELECT {DOCUMENT_SELECT} FROM documents ORDER BY created_at ASC");
-        let mut stmt = conn.prepare(&sql)?;
-
-        let out = crate::db::rows::query_vec(&mut stmt, [], rows::document)?;
-        Ok(out)
+        let r = self.read()?;
+        let mut docs = r.filter_map_rows("documents", |row| Ok(Some(rows::document(row)?)))?;
+        docs.sort_by(|a, b| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        Ok(docs)
     }
 
     /// Current `revision` of one document, without loading its body.
     pub fn document_revision(&self, id: &str) -> Result<Option<i64>> {
-        let conn = self.store.lock()?;
-        let mut stmt = conn.prepare_cached("SELECT revision FROM documents WHERE id = ?")?;
-        let mut rows = stmt.query(params![id])?;
-        match rows.next()? {
-            Some(row) => Ok(Some(row.get(0)?)),
-            None => Ok(None),
-        }
+        let r = self.read()?;
+        let maybe_row = if let Some(eng) = r.disk_v2() {
+            eng.get_projected_by_id("documents", id, &["revision"])?
+        } else {
+            r.get_by_id("documents", id)?
+        };
+        Ok(maybe_row.map(|row| cell_i64(&row, "revision", 1).max(1)))
     }
 
     /// `(id, uri)` of one document, without loading its body.
     pub fn document_id_and_uri(&self, id: &str) -> Result<Option<(String, String)>> {
-        let conn = self.store.lock()?;
-        let mut stmt = conn.prepare_cached("SELECT id, uri FROM documents WHERE id = ?")?;
-        let mut rows = stmt.query(params![id])?;
-        match rows.next()? {
-            Some(row) => Ok(Some((row.get(0)?, row.get(1)?))),
-            None => Ok(None),
-        }
+        let r = self.read()?;
+        let maybe_row = if let Some(eng) = r.disk_v2() {
+            eng.get_projected_by_id("documents", id, &["id", "uri"])?
+        } else {
+            r.get_by_id("documents", id)?
+        };
+        Ok(maybe_row.map(|row| (cell_string(&row, "id"), cell_string(&row, "uri"))))
     }
 
     /// `(id, uri, layer)` of every document ordered by `created_at`, without bodies.
     pub fn list_document_refs(&self) -> Result<Vec<DocumentRef>> {
-        let conn = self.store.lock()?;
-        let mut stmt =
-            conn.prepare("SELECT id, uri, layer FROM documents ORDER BY created_at ASC")?;
-        crate::db::rows::query_vec(&mut stmt, [], |row| {
-            Ok(DocumentRef {
-                id: row.get(0)?,
-                uri: row.get(1)?,
-                layer: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
-            })
-        })
+        let r = self.read()?;
+        let mut items: Vec<(DateTime<Utc>, DocumentRef)> = Vec::new();
+        r.scan_each_projected("documents", &["id", "uri", "layer", "created_at"], |row| {
+            let ts = cell_ts(row, "created_at")?;
+            items.push((
+                ts,
+                DocumentRef {
+                    id: cell_string(row, "id"),
+                    uri: cell_string(row, "uri"),
+                    layer: cell_opt_string(row, "layer").unwrap_or_default(),
+                },
+            ));
+            Ok(true)
+        })?;
+        items.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.id.cmp(&b.1.id)));
+        Ok(items.into_iter().map(|(_, r)| r).collect())
     }
 
     /// Count documents without loading document bodies.
     pub fn count_documents(&self) -> Result<usize> {
-        let conn = self.store.lock()?;
-        let count: i64 = conn.query_row("SELECT COUNT(*)::BIGINT FROM documents", [], |row| {
-            row.get(0)
-        })?;
-        usize::try_from(count).map_err(|_| AppError::db(format!("invalid document count: {count}")))
+        let r = self.read()?;
+        r.count_rows("documents", None)
     }
 
     /// Count documents in one layer without loading their bodies.
     pub fn count_documents_by_layer(&self, layer: &str) -> Result<usize> {
-        let conn = self.store.lock()?;
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*)::BIGINT FROM documents WHERE layer = ?",
-            params![layer],
-            |row| row.get(0),
-        )?;
-        usize::try_from(count).map_err(|_| AppError::db(format!("invalid document count: {count}")))
+        let r = self.read()?;
+        let mut count = 0usize;
+        r.for_each_by_eq_projected("documents", "layer", layer, Some(&["id"]), |_| {
+            count += 1;
+            Ok(true)
+        })?;
+        Ok(count)
     }
 
     /// Count documents eligible for a graph rebuild.
     pub fn count_graph_rebuild_candidates(&self, dirty_only: bool) -> Result<usize> {
-        let conn = self.store.lock()?;
-        let count: i64 = conn.query_row(
-            r#"
-            SELECT COUNT(*)::BIGINT
-            FROM documents d
-            WHERE NOT ? OR NOT EXISTS (
-                SELECT 1 FROM graph_nodes n WHERE n.document_id = d.id
-            )
-            "#,
-            params![dirty_only],
-            |row| row.get(0),
-        )?;
-        usize::try_from(count)
-            .map_err(|_| AppError::db(format!("invalid graph rebuild candidate count: {count}")))
+        let r = self.read()?;
+        if !dirty_only {
+            return r.count_rows("documents", None);
+        }
+        let mut owned_docs = std::collections::HashSet::new();
+        r.scan_each_projected("graph_nodes", &["document_id"], |row| {
+            if let Some(doc_id) = cell_str(row, "document_id").filter(|s| !s.is_empty()) {
+                owned_docs.insert(doc_id.to_string());
+            }
+            Ok(true)
+        })?;
+        let mut count = 0usize;
+        r.scan_each_projected("documents", &["id"], |row| {
+            if let Some(id) = cell_str(row, "id")
+                && !owned_docs.contains(id)
+            {
+                count += 1;
+            }
+            Ok(true)
+        })?;
+        Ok(count)
     }
 
     /// Load one deterministic bounded page of graph rebuild candidates.
@@ -295,20 +273,36 @@ impl Documents<'_> {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let conn = self.store.lock()?;
-        let sql = format!(
-            "SELECT {DOCUMENT_SELECT} FROM documents d \
-             WHERE (NOT ? OR NOT EXISTS (SELECT 1 FROM graph_nodes n WHERE n.document_id = d.id)) \
-               AND d.id > ? ORDER BY d.id ASC LIMIT ?"
-        );
-        let mut statement = conn.prepare(&sql)?;
-        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        let documents = crate::db::rows::query_vec(
-            &mut statement,
-            params![dirty_only, after_id.unwrap_or(""), limit],
-            rows::document,
-        )?;
-        Ok(documents)
+        let r = self.read()?;
+        let after = after_id.unwrap_or("");
+        let mut owned_docs = std::collections::HashSet::new();
+        if dirty_only {
+            r.scan_each_projected("graph_nodes", &["document_id"], |row| {
+                if let Some(doc_id) = cell_str(row, "document_id").filter(|s| !s.is_empty()) {
+                    owned_docs.insert(doc_id.to_string());
+                }
+                Ok(true)
+            })?;
+        }
+        let mut candidate_ids: Vec<String> = Vec::new();
+        r.scan_each_projected("documents", &["id"], |row| {
+            if let Some(id) = cell_str(row, "id")
+                && id > after
+                && (!dirty_only || !owned_docs.contains(id))
+            {
+                candidate_ids.push(id.to_string());
+            }
+            Ok(true)
+        })?;
+        candidate_ids.sort();
+        candidate_ids.truncate(limit);
+        let mut docs = Vec::with_capacity(candidate_ids.len());
+        for id in candidate_ids {
+            if let Some(row) = r.get_by_id("documents", &id)? {
+                docs.push(rows::document(&row)?);
+            }
+        }
+        Ok(docs)
     }
 
     /// Load one deterministic bounded page of document ids for full-corpus work.
@@ -320,15 +314,19 @@ impl Documents<'_> {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let conn = self.store.lock()?;
-        let mut statement =
-            conn.prepare("SELECT id FROM documents WHERE id > ? ORDER BY id ASC LIMIT ?")?;
-        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        let ids = crate::db::rows::query_vec(
-            &mut statement,
-            params![after_id.unwrap_or(""), limit],
-            |row| Ok(row.get(0)?),
-        )?;
+        let r = self.read()?;
+        let after = after_id.unwrap_or("");
+        let mut ids: Vec<String> = Vec::new();
+        r.scan_each_projected("documents", &["id"], |row| {
+            if let Some(id) = cell_str(row, "id")
+                && id > after
+            {
+                ids.push(id.to_string());
+            }
+            Ok(true)
+        })?;
+        ids.sort();
+        ids.truncate(limit);
         Ok(ids)
     }
 
@@ -337,183 +335,227 @@ impl Documents<'_> {
         if limit == 0 {
             return Ok(0);
         }
-        let conn = self.store.lock()?;
-        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        let count: i64 = conn.query_row(
-            r#"
-            SELECT COUNT(*)::BIGINT
-            FROM chunks c
-            INNER JOIN (
-                SELECT id FROM documents ORDER BY id ASC LIMIT ?
-            ) d ON d.id = c.document_id
-            "#,
-            params![limit],
-            |row| row.get(0),
-        )?;
-        usize::try_from(count)
-            .map_err(|_| AppError::db(format!("invalid bounded chunk count: {count}")))
+        let r = self.read()?;
+        let mut ids: Vec<String> = Vec::new();
+        r.scan_each_projected("documents", &["id"], |row| {
+            if let Some(id) = cell_str(row, "id") {
+                ids.push(id.to_string());
+            }
+            Ok(true)
+        })?;
+        ids.sort();
+        ids.truncate(limit);
+        let mut count = 0usize;
+        for id in &ids {
+            r.for_each_by_eq_projected(
+                "chunks",
+                "document_id",
+                id.as_str(),
+                Some(&["id"]),
+                |_| {
+                    count += 1;
+                    Ok(true)
+                },
+            )?;
+        }
+        Ok(count)
     }
 
     /// Count and return a bounded deterministic prefix of persisted-hash matches.
-    ///
-    /// Callers must still validate actual body hashes before mutation.
     pub fn exact_duplicate_source_ids(
         &self,
         hash: &str,
         keep_id: &str,
         limit: usize,
     ) -> Result<(usize, Vec<String>)> {
-        let conn = self.store.lock()?;
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*)::BIGINT FROM documents WHERE content_hash = ? AND id <> ?",
-            params![hash, keep_id],
-            |row| row.get(0),
+        let r = self.read()?;
+        let mut matches: Vec<(DateTime<Utc>, String)> = Vec::new();
+        r.for_each_by_eq_projected(
+            "documents",
+            "content_hash",
+            hash,
+            Some(&["id", "created_at"]),
+            |row| {
+                if let Some(id) = cell_str(row, "id")
+                    && id != keep_id
+                {
+                    matches.push((cell_ts(row, "created_at")?, id.to_string()));
+                }
+                Ok(true)
+            },
         )?;
-        let count = usize::try_from(count)
-            .map_err(|_| AppError::db(format!("invalid duplicate source count: {count}")))?;
+        let count = matches.len();
         if limit == 0 {
             return Ok((count, Vec::new()));
         }
-        let mut statement = conn.prepare(
-            "SELECT id FROM documents WHERE content_hash = ? AND id <> ? \
-             ORDER BY created_at ASC, id ASC LIMIT ?",
-        )?;
-        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        let ids =
-            crate::db::rows::query_vec(&mut statement, params![hash, keep_id, limit], |row| {
-                Ok(row.get(0)?)
-            })?;
-        Ok((count, ids))
+        matches.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        matches.truncate(limit);
+        Ok((count, matches.into_iter().map(|(_, id)| id).collect()))
     }
 
-    /// Count and load only the bounded active, user-organizable unscoped set.
-    /// Full document bodies are selected because the optional LLM workflow may
-    /// inspect them later, but the SQL limit is applied before rows reach Rust.
+    /// Count and load only the bounded active, user-organizable unscoped set (without bodies).
     pub fn list_active_unscoped_documents(&self, limit: usize) -> Result<(usize, Vec<Document>)> {
-        let conn = self.store.lock()?;
-        let predicate = format!(
-            r#"
-            {ACTIVE_DOCUMENT_SQL}
-            AND COALESCE(layer, '') NOT IN ('schema', 'index', 'log')
-            AND (wing IS NULL OR TRIM(wing) = '')
-        "#
-        );
-        let count: i64 = conn.query_row(
-            &format!("SELECT COUNT(*)::BIGINT FROM documents WHERE {predicate}"),
-            [],
-            |row| row.get(0),
+        let r = self.read()?;
+        let mut candidates: Vec<Document> = Vec::new();
+        r.scan_each_projected(
+            "documents",
+            &[
+                "id",
+                "uri",
+                "title",
+                "metadata_json",
+                "content_hash",
+                "wing",
+                "room",
+                "source_file",
+                "layer",
+                "kind",
+                "created_at",
+                "updated_at",
+                "status",
+                "pinned",
+                "boost",
+                "revision",
+            ],
+            |row| {
+                let status = cell_nonempty_string(row, "status").unwrap_or_else(|| "active".into());
+                if status == "archived" || status == "tombstone" {
+                    return Ok(true);
+                }
+                let layer = cell_str(row, "layer").unwrap_or("");
+                if matches!(layer, "schema" | "index" | "log") {
+                    return Ok(true);
+                }
+                let wing = cell_str(row, "wing").map(str::trim).unwrap_or("");
+                if !wing.is_empty() {
+                    return Ok(true);
+                }
+                candidates.push(rows::document_without_body(row)?);
+                Ok(true)
+            },
         )?;
-        // Organize heuristics read titles, uris and paths only: skip bodies.
-        let sql = format!(
-            "SELECT {} FROM documents WHERE {predicate} \
-             ORDER BY updated_at DESC, title ASC, id ASC LIMIT ?",
-            document_select_without_body()
-        );
-        let mut statement = conn.prepare(&sql)?;
-        let limit = i64::try_from(limit.max(1)).unwrap_or(i64::MAX);
-        let documents = crate::db::rows::query_vec(&mut statement, params![limit], rows::document)?;
-        Ok((count.max(0) as usize, documents))
+        let count = candidates.len();
+        candidates.sort_by(|a, b| {
+            b.updated_at
+                .cmp(&a.updated_at)
+                .then_with(|| a.title.cmp(&b.title))
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        candidates.truncate(limit.max(1));
+        Ok((count, candidates))
     }
 
-    /// Count and load a bounded batch of searchable documents whose derived
-    /// chunks are missing.
-    ///
-    /// The anti-join and limit both run in DuckDB so doctor repair never
-    /// materializes the whole corpus or performs one chunk query per document.
+    /// Count and load a bounded batch of searchable documents whose derived chunks are missing.
     pub fn list_documents_missing_chunks(&self, limit: usize) -> Result<(usize, Vec<Document>)> {
-        let conn = self.store.lock()?;
-        let predicate = r#"
-            LOWER(COALESCE(NULLIF(TRIM(layer), ''), 'raw')) <> 'schema'
-            AND TRIM(COALESCE(content, '')) <> ''
-            AND NOT EXISTS (
-                SELECT 1 FROM chunks WHERE chunks.document_id = documents.id
-            )
-        "#;
-        let count: i64 = conn.query_row(
-            &format!("SELECT COUNT(*)::BIGINT FROM documents WHERE {predicate}"),
-            [],
-            |row| row.get(0),
+        let r = self.read()?;
+        let mut docs_with_chunks = std::collections::HashSet::new();
+        r.scan_each_projected("chunks", &["document_id"], |row| {
+            if let Some(doc_id) = cell_str(row, "document_id") {
+                docs_with_chunks.insert(doc_id.to_string());
+            }
+            Ok(true)
+        })?;
+
+        let mut missing_keys: Vec<(DateTime<Utc>, String)> = Vec::new();
+        r.scan_each_projected(
+            "documents",
+            &["id", "layer", "content", "updated_at"],
+            |row| {
+                let Some(id) = cell_str(row, "id") else {
+                    return Ok(true);
+                };
+                if docs_with_chunks.contains(id) {
+                    return Ok(true);
+                }
+                let layer = cell_str(row, "layer").map(str::trim).unwrap_or("");
+                let eff_layer = if layer.is_empty() { "raw" } else { layer };
+                if eff_layer.eq_ignore_ascii_case("schema") {
+                    return Ok(true);
+                }
+                let content = cell_str(row, "content").map(str::trim).unwrap_or("");
+                if content.is_empty() {
+                    return Ok(true);
+                }
+                missing_keys.push((cell_ts(row, "updated_at")?, id.to_string()));
+                Ok(true)
+            },
         )?;
-        let sql = format!(
-            "SELECT {DOCUMENT_SELECT} FROM documents WHERE {predicate} \
-             ORDER BY updated_at DESC, id ASC LIMIT ?"
-        );
-        let mut statement = conn.prepare(&sql)?;
-        let limit = i64::try_from(limit.max(1)).unwrap_or(i64::MAX);
-        let documents = crate::db::rows::query_vec(&mut statement, params![limit], rows::document)?;
-        Ok((count.max(0) as usize, documents))
+
+        let count = missing_keys.len();
+        missing_keys.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        missing_keys.truncate(limit.max(1));
+        let mut docs = Vec::with_capacity(missing_keys.len());
+        for (_, id) in missing_keys {
+            if let Some(row) = r.get_by_id("documents", &id)? {
+                docs.push(rows::document(&row)?);
+            }
+        }
+        Ok((count, docs))
     }
 
     /// List documents with the given `layer` (`raw`, `wiki`, …), ordered by `created_at`.
     pub fn list_documents_by_layer(&self, layer: &str) -> Result<Vec<Document>> {
-        let conn = self.store.lock()?;
-        let sql = format!(
-            "SELECT {DOCUMENT_SELECT} FROM documents WHERE layer = ? ORDER BY created_at ASC"
-        );
-        let mut stmt = conn.prepare(&sql)?;
-
-        let out = crate::db::rows::query_vec(&mut stmt, params![layer], rows::document)?;
+        let r = self.read()?;
+        let rows = r.find_by_eq("documents", "layer", layer)?;
+        let mut out: Vec<Document> = rows
+            .iter()
+            .map(rows::document)
+            .collect::<Result<Vec<_>>>()?;
+        out.sort_by(|a, b| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
         Ok(out)
     }
 
-    /// Like [`Self::list_documents_by_layer`], with an empty `content`: for
-    /// corpus-wide scans that only need ids, uris, titles and timestamps.
+    /// Like [`Self::list_documents_by_layer`], with an empty `content`.
     pub fn list_documents_by_layer_without_body(&self, layer: &str) -> Result<Vec<Document>> {
-        let conn = self.store.lock()?;
-        let sql = format!(
-            "SELECT {} FROM documents WHERE layer = ? ORDER BY created_at ASC",
-            document_select_without_body()
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        crate::db::rows::query_vec(&mut stmt, params![layer], rows::document)
+        let r = self.read()?;
+        let rows = r.find_by_eq("documents", "layer", layer)?;
+        let mut out: Vec<Document> = rows
+            .iter()
+            .map(rows::document_without_body)
+            .collect::<Result<Vec<_>>>()?;
+        out.sort_by(|a, b| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        Ok(out)
     }
 
-    /// `content` of each of `ids` that exists, in one query.
+    /// `content` of each of `ids` that exists, in one read guard.
     pub fn document_contents(
         &self,
         ids: &[&str],
     ) -> Result<std::collections::HashMap<String, String>> {
+        let mut out = std::collections::HashMap::with_capacity(ids.len());
         if ids.is_empty() {
-            return Ok(std::collections::HashMap::new());
+            return Ok(out);
         }
-        let placeholders = crate::db::sql::in_placeholders(ids.len());
-        let conn = self.store.lock()?;
-        let mut stmt = conn.prepare(&format!(
-            "SELECT id, content FROM documents WHERE id IN ({placeholders})"
-        ))?;
-        let rows =
-            crate::db::rows::query_vec(&mut stmt, duckdb::params_from_iter(ids.iter()), |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })?;
-        Ok(rows.into_iter().collect())
+        let r = self.read()?;
+        for &id in ids {
+            if let Some(row) = r.get_by_id("documents", id)? {
+                out.insert(id.to_string(), cell_string(&row, "content"));
+            }
+        }
+        Ok(out)
     }
 
     /// Wiki/catalog listing **without** loading `content` (sidebar / full catalog).
-    ///
-    /// Equivalent to [`Self::list_wiki_page_metas_filtered`] with empty filters
-    /// (no `q` / kind / category / wing / room, no pagination).
     pub fn list_wiki_page_metas(&self) -> Result<Vec<crate::models::WikiPageListItem>> {
         self.list_wiki_page_metas_filtered(&WikiPageMetaFilter::default())
             .map(|(items, _total)| items)
     }
 
     /// Wiki catalog with optional text query, placement/kind filters, and pagination.
-    ///
-    /// Used by HTTP `GET /v1/wiki?q=&limit=&offset=&kind=&category=&wing=&room=`.
-    ///
-    /// - `q`: case-insensitive substring on title, slug, uri, summary, category, kind
-    /// - `kind` / `category` / `wing` / `room`: exact match when non-empty (category from metadata)
-    /// - `offset` / `limit`: applied after filters; `limit` omitted returns all matches
-    ///
-    /// Returns `(page_items, total)` where `total` is the filtered count before pagination.
-    ///
-    /// Orchestrates: SQL fetch + DTO map, then post-filter, then page (see free helpers below).
     pub fn list_wiki_page_metas_filtered(
         &self,
         filter: &WikiPageMetaFilter,
     ) -> Result<(Vec<crate::models::WikiPageListItem>, usize)> {
-        let conn = self.store.lock()?;
-        fetch_wiki_page_meta_items(&conn, filter)
+        let r = self.read()?;
+        fetch_wiki_page_meta_items(&r, filter)
     }
 
     /// Incoming wikilink sources for a document (label, document_id or node id).
@@ -529,18 +571,14 @@ impl Documents<'_> {
         &self,
         document_id: &str,
     ) -> Result<Option<(String, crate::models::GraphView)>> {
-        let Some(node) = self.store.graph().find_node_by_document_id(document_id)? else {
+        let Some(node) = self.find_node_by_document_id(document_id)? else {
             return Ok(None);
         };
-        let view = self.store.graph().backlinks(&node.id)?;
+        let view = self.backlinks(&node.id)?;
         Ok(Some((node.id, view)))
     }
 
     /// Incoming wikilink sources constrained to the same project wing.
-    ///
-    /// Both the target and each returned source must be backed by a document
-    /// in `wing`; unowned stubs are intentionally excluded because their
-    /// project membership cannot be proven.
     pub fn wiki_backlinks_for_document_in_wing(
         &self,
         document_id: &str,
@@ -551,132 +589,168 @@ impl Documents<'_> {
         if document_id.is_empty() || wing.is_empty() {
             return Ok(Vec::new());
         }
-        let conn = self.store.lock()?;
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT MIN(source_node.label), source_node.document_id
-            FROM graph_nodes target_node
-            JOIN documents target_document
-              ON target_document.id = target_node.document_id
-            JOIN graph_edges edge
-              ON edge.target_id = target_node.id
-             AND edge.rel_type = 'wikilink'
-            JOIN graph_nodes source_node
-              ON source_node.id = edge.source_id
-            JOIN documents source_document
-              ON source_document.id = source_node.document_id
-            WHERE target_node.document_id = ?
-              AND target_document.wing = ?
-              AND source_document.wing = ?
-            GROUP BY source_node.document_id
-            ORDER BY MIN(source_node.label), source_node.document_id
-            "#,
-        )?;
-        let out = crate::db::rows::query_vec(&mut stmt, params![document_id, wing, wing], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })?;
+        let r = self.read()?;
+        let Some(target_doc) = r.get_by_id("documents", document_id)? else {
+            return Ok(Vec::new());
+        };
+        if cell_str(&target_doc, "wing") != Some(wing) {
+            return Ok(Vec::new());
+        }
+        let target_nodes = r.find_by_eq("graph_nodes", "document_id", document_id)?;
+        if target_nodes.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // source_document_id -> MIN(source_node.label)
+        let mut by_source_doc: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        for tnode in &target_nodes {
+            let Some(tnode_id) = cell_str(tnode, "id") else {
+                continue;
+            };
+            let in_edges = r.find_by_eq("graph_edges", "target_id", tnode_id)?;
+            for edge in &in_edges {
+                if cell_str(edge, "rel_type") != Some("wikilink") {
+                    continue;
+                }
+                let Some(src_node_id) = cell_str(edge, "source_id") else {
+                    continue;
+                };
+                let Some(src_node) = r.get_by_id("graph_nodes", src_node_id)? else {
+                    continue;
+                };
+                let Some(src_doc_id) = cell_str(&src_node, "document_id").filter(|s| !s.is_empty())
+                else {
+                    continue;
+                };
+                let Some(src_doc) = r.get_by_id("documents", src_doc_id)? else {
+                    continue;
+                };
+                if cell_str(&src_doc, "wing") != Some(wing) {
+                    continue;
+                }
+                let label = cell_string(&src_node, "label");
+                by_source_doc
+                    .entry(src_doc_id.to_string())
+                    .and_modify(|cur| {
+                        if label < *cur {
+                            *cur = label.clone();
+                        }
+                    })
+                    .or_insert(label);
+            }
+        }
+
+        let mut out: Vec<(String, String)> = by_source_doc
+            .into_iter()
+            .map(|(doc_id, min_label)| (min_label, doc_id))
+            .collect();
+        out.sort();
         Ok(out)
     }
 
     /// List documents in the given `wing`, ordered by `created_at`.
     pub fn list_documents_by_wing(&self, wing: &str) -> Result<Vec<Document>> {
-        let conn = self.store.lock()?;
-        let sql = format!(
-            "SELECT {DOCUMENT_SELECT} FROM documents WHERE wing = ? ORDER BY created_at ASC"
-        );
-        let mut stmt = conn.prepare(&sql)?;
-
-        let out = crate::db::rows::query_vec(&mut stmt, params![wing], rows::document)?;
+        let r = self.read()?;
+        let rows = r.find_by_eq("documents", "wing", wing)?;
+        let mut out: Vec<Document> = rows
+            .iter()
+            .map(rows::document)
+            .collect::<Result<Vec<_>>>()?;
+        out.sort_by(|a, b| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
         Ok(out)
     }
 
     /// List documents matching optional wing / room / status / layer / kind filters.
-    ///
-    /// When `status` is unset and `include_archived` is not true, rows with
-    /// status `archived` or `tombstone` are excluded.
-    ///
-    /// Order: pinned DESC, boost DESC, updated_at DESC, title ASC.
     pub fn list_documents_filtered(&self, filter: &DocumentFilter) -> Result<Vec<Document>> {
-        let mut sql = format!("SELECT {DOCUMENT_SELECT} FROM documents WHERE 1=1");
-        let mut binds: Vec<String> = Vec::new();
+        let r = self.read()?;
+        let include_archived = filter.include_archived.unwrap_or(false);
+        let mut out = r.filter_map_rows("documents", |row| {
+            if let Some(ref w) = filter.wing
+                && !w.is_empty()
+                && cell_str(row, "wing") != Some(w.as_str())
+            {
+                return Ok(None);
+            }
+            if let Some(ref rm) = filter.room
+                && !rm.is_empty()
+                && cell_str(row, "room") != Some(rm.as_str())
+            {
+                return Ok(None);
+            }
+            let row_status = cell_nonempty_string(row, "status").unwrap_or_else(|| "active".into());
+            if let Some(ref s) = filter.status
+                && !s.is_empty()
+            {
+                if row_status != *s {
+                    return Ok(None);
+                }
+            } else if !include_archived && (row_status == "archived" || row_status == "tombstone") {
+                return Ok(None);
+            }
+            if let Some(ref layer) = filter.layer
+                && !layer.is_empty()
+                && cell_str(row, "layer") != Some(layer.as_str())
+            {
+                return Ok(None);
+            }
+            if let Some(ref kind) = filter.kind
+                && !kind.is_empty()
+                && cell_str(row, "kind") != Some(kind.as_str())
+            {
+                return Ok(None);
+            }
+            if let Some(ref src) = filter.source_file
+                && !src.is_empty()
+                && cell_str(row, "source_file") != Some(src.as_str())
+            {
+                return Ok(None);
+            }
+            Ok(Some(rows::document(row)?))
+        })?;
 
-        if let Some(ref w) = filter.wing {
-            if !w.is_empty() {
-                sql.push_str(" AND wing = ?");
-                binds.push(w.clone());
-            }
-        }
-        if let Some(ref r) = filter.room {
-            if !r.is_empty() {
-                sql.push_str(" AND room = ?");
-                binds.push(r.clone());
-            }
-        }
-        if let Some(ref s) = filter.status {
-            if !s.is_empty() {
-                sql.push_str(" AND COALESCE(status, 'active') = ?");
-                binds.push(s.clone());
-            }
-        } else if !filter.include_archived.unwrap_or(false) {
-            sql.push_str(&format!(" AND {ACTIVE_DOCUMENT_SQL}"));
-        }
-        if let Some(ref layer) = filter.layer {
-            if !layer.is_empty() {
-                sql.push_str(" AND layer = ?");
-                binds.push(layer.clone());
-            }
-        }
-        if let Some(ref kind) = filter.kind {
-            if !kind.is_empty() {
-                sql.push_str(" AND kind = ?");
-                binds.push(kind.clone());
-            }
-        }
-        if let Some(ref src) = filter.source_file {
-            if !src.is_empty() {
-                sql.push_str(" AND source_file = ?");
-                binds.push(src.clone());
-            }
-        }
-
-        sql.push_str(
-            " ORDER BY COALESCE(pinned, false) DESC, COALESCE(boost, 1.0) DESC, updated_at DESC, title ASC",
-        );
+        out.sort_by(|a, b| {
+            b.pinned
+                .cmp(&a.pinned)
+                .then_with(|| {
+                    b.boost
+                        .partial_cmp(&a.boost)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .then_with(|| b.updated_at.cmp(&a.updated_at))
+                .then_with(|| a.title.cmp(&b.title))
+                .then_with(|| a.id.cmp(&b.id))
+        });
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit.max(1)));
+            out.truncate(limit.max(1));
         }
-
-        let conn = self.store.lock()?;
-        let mut stmt = conn.prepare(&sql)?;
-        let params_dyn: Vec<&dyn duckdb::types::ToSql> = binds
-            .iter()
-            .map(|s| s as &dyn duckdb::types::ToSql)
-            .collect();
-        let out = crate::db::rows::query_vec(&mut stmt, params_dyn.as_slice(), rows::document)?;
         Ok(out)
     }
 
     /// Distinct wings with document counts (non-null, non-empty wing), sorted by name.
     pub fn list_wings(&self) -> Result<Vec<WingCount>> {
-        let conn = self.store.lock()?;
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT wing, COUNT(*)::BIGINT
-            FROM documents
-            WHERE wing IS NOT NULL AND TRIM(wing) <> ''
-            GROUP BY wing
-            ORDER BY wing ASC
-            "#,
-        )?;
-        let out = crate::db::rows::query_vec(&mut stmt, [], |row| {
-            let count: i64 = row.get(1)?;
-            Ok(WingCount {
-                wing: row.get(0)?,
-                document_count: count as u64,
+        let r = self.read()?;
+        let (_, buckets) = r.group_count_str1("documents", "wing")?;
+        let mut counts: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+        for (w_opt, cnt) in buckets {
+            if let Some(w) = w_opt
+                && !w.trim().is_empty()
+            {
+                *counts.entry(w).or_insert(0) += cnt;
+            }
+        }
+        Ok(counts
+            .into_iter()
+            .map(|(wing, document_count)| WingCount {
+                wing,
+                document_count,
             })
-        })?;
-        Ok(out)
+            .collect())
     }
 
     /// First-class project catalog backed by the compatible `wing` storage key.
@@ -695,109 +769,118 @@ impl Documents<'_> {
     }
 
     /// Distinct rooms with document counts.
-    ///
-    /// When `wing` is `Some`, only rooms under that wing are returned (with wing set).
-    /// When `None`, returns all rooms globally (wing column may vary per row).
     pub fn list_rooms(&self, wing: Option<&str>) -> Result<Vec<RoomCount>> {
-        let conn = self.store.lock()?;
+        let r = self.read()?;
         if let Some(w) = wing {
-            let mut stmt = conn.prepare(
-                r#"
-                SELECT wing, room, COUNT(*)::BIGINT
-                FROM documents
-                WHERE wing = ?
-                  AND room IS NOT NULL AND TRIM(room) <> ''
-                GROUP BY wing, room
-                ORDER BY room ASC
-                "#,
+            let mut counts: std::collections::BTreeMap<String, u64> =
+                std::collections::BTreeMap::new();
+            r.for_each_by_eq_str3(
+                "documents",
+                "wing",
+                w,
+                "room",
+                "id",
+                None,
+                |rm_opt, _, _| {
+                    if let Some(rm) = rm_opt
+                        && !rm.trim().is_empty()
+                    {
+                        *counts.entry(rm.to_string()).or_insert(0) += 1;
+                    }
+                    Ok(true)
+                },
             )?;
-            let out = crate::db::rows::query_vec(&mut stmt, params![w], |row| {
-                let count: i64 = row.get(2)?;
-                let wing_name: String = row.get(0)?;
-                Ok(RoomCount {
-                    wing: Some(wing_name),
-                    room: row.get(1)?,
-                    document_count: count as u64,
+            Ok(counts
+                .into_iter()
+                .map(|(room, document_count)| RoomCount {
+                    wing: Some(w.to_string()),
+                    room,
+                    document_count,
                 })
-            })?;
-            Ok(out)
+                .collect())
         } else {
-            let mut stmt = conn.prepare(
-                r#"
-                SELECT wing, room, COUNT(*)::BIGINT
-                FROM documents
-                WHERE room IS NOT NULL AND TRIM(room) <> ''
-                GROUP BY wing, room
-                ORDER BY wing ASC NULLS LAST, room ASC
-                "#,
-            )?;
-            let out = crate::db::rows::query_vec(&mut stmt, [], |row| {
-                let count: i64 = row.get(2)?;
-                let wing: Option<String> = row.get(0)?;
-                Ok(RoomCount {
-                    wing: wing.filter(|s| !s.is_empty()),
-                    room: row.get(1)?,
-                    document_count: count as u64,
+            // Key: (wing.is_none_or_empty, wing_opt, room) so NULLS LAST on wing!
+            let (_, pair_buckets) = r.group_count_str2("documents", "wing", "room")?;
+            let mut counts: std::collections::BTreeMap<(bool, Option<String>, String), u64> =
+                std::collections::BTreeMap::new();
+            for ((w_raw, rm_raw), cnt) in pair_buckets {
+                if let Some(rm) = rm_raw
+                    && !rm.trim().is_empty()
+                {
+                    let w_opt = w_raw.filter(|s| !s.is_empty());
+                    let is_null = w_opt.is_none();
+                    *counts.entry((is_null, w_opt, rm)).or_insert(0) += cnt;
+                }
+            }
+            Ok(counts
+                .into_iter()
+                .map(|((_, w_opt, room), document_count)| RoomCount {
+                    wing: w_opt,
+                    room,
+                    document_count,
                 })
-            })?;
-            Ok(out)
+                .collect())
         }
     }
 
     /// Full taxonomy tree: wings → rooms with document counts, plus unscoped totals.
+    /// Single-pass `group_count_str2("documents", "wing", "room")` over `TextDict` `u16` ordinals!
     pub fn get_taxonomy(&self) -> Result<Taxonomy> {
-        let wings_flat = self.list_wings()?;
-        let rooms_flat = self.list_rooms(None)?;
+        let r = self.read()?;
+        let (total, pair_buckets) = r.group_count_str2("documents", "wing", "room")?;
 
-        let mut by_wing: std::collections::BTreeMap<String, Vec<TaxonomyRoom>> =
+        let mut wing_totals: std::collections::BTreeMap<String, u64> =
             std::collections::BTreeMap::new();
-        for r in rooms_flat {
-            if let Some(w) = r.wing.as_ref().filter(|s| !s.is_empty()) {
-                by_wing.entry(w.clone()).or_default().push(TaxonomyRoom {
-                    room: r.room,
-                    document_count: r.document_count,
-                });
+        let mut wing_rooms: std::collections::BTreeMap<
+            String,
+            std::collections::BTreeMap<String, u64>,
+        > = std::collections::BTreeMap::new();
+        let mut unscoped = 0u64;
+
+        for ((w_raw, rm_raw), cnt) in pair_buckets {
+            let has_wing = w_raw.as_deref().is_some_and(|w| !w.trim().is_empty());
+            if !has_wing {
+                unscoped += cnt;
+                continue;
+            }
+            let w = w_raw.unwrap();
+            *wing_totals.entry(w.clone()).or_insert(0) += cnt;
+            if let Some(rm) = rm_raw
+                && !rm.trim().is_empty()
+            {
+                *wing_rooms.entry(w).or_default().entry(rm).or_insert(0) += cnt;
             }
         }
 
-        let mut wings = Vec::with_capacity(wings_flat.len());
-        for w in wings_flat {
-            let rooms = by_wing.remove(&w.wing).unwrap_or_default();
+        let mut wings = Vec::with_capacity(wing_totals.len());
+        for (wing, document_count) in wing_totals {
+            let rooms = wing_rooms
+                .remove(&wing)
+                .map(|rm_map| {
+                    rm_map
+                        .into_iter()
+                        .map(|(room, document_count)| TaxonomyRoom {
+                            room,
+                            document_count,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
             wings.push(TaxonomyWing {
-                wing: w.wing,
-                document_count: w.document_count,
+                wing,
+                document_count,
                 rooms,
             });
         }
 
-        let conn = self.store.lock()?;
-        let total: i64 = conn.query_row("SELECT COUNT(*) FROM documents", [], |r| r.get(0))?;
-        let unscoped: i64 = conn.query_row(
-            r#"
-            SELECT COUNT(*) FROM documents
-            WHERE wing IS NULL OR TRIM(wing) = ''
-            "#,
-            [],
-            |r| r.get(0),
-        )?;
-
         Ok(Taxonomy {
             wings,
-            unscoped_count: unscoped as u64,
-            total_documents: total as u64,
+            unscoped_count: unscoped,
+            total_documents: total,
         })
     }
 
     /// Apply a partial metadata update without re-embedding unless body text changes.
-    ///
-    /// Fields that are `None` in `update` are left unchanged. Empty string for
-    /// `wing` / `room` / `source_file` clears the column (NULL).
-    ///
-    /// When `content` is set and differs from the stored body, the text and
-    /// `content_hash` are updated and `content_changed` is true — the **caller**
-    /// must re-chunk and re-embed. Meta-only updates leave chunks untouched.
-    ///
-    /// Returns `None` if `id` is missing.
     pub fn update_document_meta(
         &self,
         id: &str,
@@ -806,8 +889,6 @@ impl Documents<'_> {
         self.update_document_meta_with_identity(id, update, None)
     }
 
-    #[cfg(any(test, feature = "testkit"))]
-    #[doc(hidden)]
     pub fn update_document_meta_for_sync_test(
         &self,
         id: &str,
@@ -817,7 +898,7 @@ impl Documents<'_> {
         self.update_document_meta_with_identity(id, update, Some(identity))
     }
 
-    pub(in crate::db) fn update_document_meta_with_identity(
+    pub(super) fn update_document_meta_with_identity(
         &self,
         id: &str,
         update: &DocumentMetaUpdate,
@@ -840,9 +921,6 @@ impl Documents<'_> {
     }
 
     /// Prepare a metadata/body update without mutating storage.
-    ///
-    /// Ingestion uses this seam to finish any required chunking/embedding before
-    /// passing the prepared document to [`Self::write_document_atomic`].
     pub fn prepare_document_meta_update(
         &self,
         id: &str,
@@ -861,523 +939,31 @@ impl Documents<'_> {
     ) -> Result<Option<Document>> {
         Ok(self.update_document_meta(id, update)?.map(|r| r.document))
     }
+}
 
-    /// Insert or replace a document row by primary key `id` (last-write-wins).
-    ///
-    /// Bumps `revision` based on the previous row for this `id` (or starts at 1).
-    /// When `doc.content_hash` is empty/`None`, computes [`content_hash`] of
-    /// `doc.content` and stores that fingerprint.
-    pub fn upsert_document(&self, doc: &Document) -> Result<()> {
-        self.upsert_document_cas(doc, None).map(|_| ())
-    }
-
-    /// CAS upsert: if `if_match_revision` is `Some`, the existing row (by `id`)
-    /// must have that revision or [`AppError::Conflict`] is returned.
-    ///
-    /// Returns the **new** revision written (1 for insert).
-    pub fn upsert_document_cas(
-        &self,
-        doc: &Document,
-        if_match_revision: Option<i64>,
-    ) -> Result<i64> {
-        self.store.with_tx(|tx| {
-            let new_rev = upsert_document_cas_locked(tx, doc, if_match_revision)?;
-            Ok(new_rev)
-        })
-    }
-
-    /// Persist a document and its derived state under one DuckDB transaction.
-    ///
-    /// Callers must finish chunking and embedding before entering this method.
-    /// Embedding JSON is also prepared before the database lock/transaction so
-    /// serialization failures cannot leave a partially-updated document.
-    ///
-    /// # Caller-guarded
-    ///
-    /// This method does not take the corpus mutation lane itself. The caller
-    /// must hold an [`EmbeddingWriteGuard`](crate::db::store::EmbeddingWriteGuard)
-    /// from `corpus_lane().try_embedding_write_guard` (or run inside a scope
-    /// from `try_corpus_mutation_scope`) for the whole embed-then-write step,
-    /// so the write cannot race an exclusive corpus mutation or a manifest
-    /// change. See `docs/refactor/ARCHITECTURE.md` (caller-guarded writes).
-    pub fn write_document_atomic(
-        &self,
-        doc: &Document,
-        if_match_revision: Option<i64>,
-        derived: DocumentDerivedWrite<'_>,
-    ) -> Result<AtomicDocumentWriteResult> {
-        self.write_document_atomic_with_manifest(doc, if_match_revision, derived, None, None)
-    }
-
-    /// Persist an unchunked document (e.g. `schema://agents`), rebuild its
-    /// outgoing graph slice and append its audit row in one transaction.
-    ///
-    /// Either all three land or none do: a graph or ops-log failure leaves the
-    /// previous document, graph and log untouched.
-    pub fn write_unchunked_document_with_audit(
-        &self,
-        doc: &Document,
-        audit: &OpsLogEntry,
-    ) -> Result<AtomicDocumentWriteResult> {
-        self.store.with_tx(|tx| {
-            let revision = upsert_document_cas_locked(tx, doc, None)?;
-            let (node_id, edge_count) =
-                crate::db::graph::resolve::rebuild_document_graph_locked(tx, doc)?;
-            append_ops_log_locked(tx, audit)?;
-            Ok(AtomicDocumentWriteResult {
-                revision,
-                node_id: Some(node_id),
-                edge_count,
-            })
-        })
-    }
-
-    /// Persist a synchronized source document and its manifest ownership in the
-    /// same transaction as chunks and graph state.
-    ///
-    /// # Caller-guarded
-    ///
-    /// This method does not take the corpus mutation lane itself. The caller
-    /// must hold an [`EmbeddingWriteGuard`](crate::db::store::EmbeddingWriteGuard)
-    /// from `corpus_lane().try_embedding_write_guard` (or run inside a scope
-    /// from `try_corpus_mutation_scope`) for the whole embed-then-write step,
-    /// so the write cannot race an exclusive corpus mutation or a manifest
-    /// change. See `docs/refactor/ARCHITECTURE.md` (caller-guarded writes).
-    pub fn write_source_document_atomic(
-        &self,
-        doc: &Document,
-        if_match_revision: Option<i64>,
-        chunks: &[Chunk],
-        manifest: crate::db::SourceManifestWrite<'_>,
-    ) -> Result<AtomicDocumentWriteResult> {
-        if manifest.document_id != doc.id {
-            return Err(AppError::config(format!(
-                "source manifest document {} does not match {}",
-                manifest.document_id, doc.id
-            )));
+/// `(label, document key)` of each wikilink source in a backlinks `view` of
+/// `target_id`, sorted by label with adjacent duplicate keys collapsed.
+pub fn wiki_backlink_rows(
+    target_id: &str,
+    view: &crate::models::GraphView,
+) -> Vec<(String, String)> {
+    let nodes: std::collections::HashMap<&str, &crate::models::GraphNode> = view
+        .nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect();
+    let mut out = Vec::new();
+    for e in &view.edges {
+        if e.target_id != target_id || e.rel_type != "wikilink" {
+            continue;
         }
-        let document_hash = doc
-            .content_hash
-            .clone()
-            .unwrap_or_else(|| content_hash(&doc.content));
-        if manifest.content_hash != document_hash {
-            return Err(AppError::config(
-                "source manifest content hash does not match document",
-            ));
-        }
-        self.write_document_atomic_with_manifest(
-            doc,
-            if_match_revision,
-            DocumentDerivedWrite::ReplaceChunksAndGraph(chunks),
-            Some(manifest),
-            None,
-        )
-    }
-
-    pub(in crate::db) fn write_document_atomic_with_manifest(
-        &self,
-        doc: &Document,
-        if_match_revision: Option<i64>,
-        derived: DocumentDerivedWrite<'_>,
-        manifest: Option<crate::db::SourceManifestWrite<'_>>,
-        sync_identity: Option<&crate::db::sync::SyncIdentity>,
-    ) -> Result<AtomicDocumentWriteResult> {
-        let prepared_embeddings = match &derived {
-            DocumentDerivedWrite::ReplaceChunksAndGraph(chunks) => {
-                Some(owned_embedding_json(&doc.id, chunks)?)
-            }
-            DocumentDerivedWrite::Preserve | DocumentDerivedWrite::RefreshGraphLabel => None,
+        let Some(src) = nodes.get(e.source_id.as_str()) else {
+            continue;
         };
-
-        self.store.with_tx(|tx| {
-            let previous = if canonical_wiki_slug(&doc.uri).is_some() {
-                get_document_locked(tx, &doc.id)?
-            } else {
-                None
-            };
-            let result = write_document_locked(
-                tx,
-                doc,
-                if_match_revision,
-                derived,
-                prepared_embeddings.as_deref(),
-                manifest,
-            )?;
-            journal_generic_wiki_change_locked(tx, previous.as_ref(), doc, sync_identity)?;
-            Ok(result)
-        })
+        let key = src.document_id.clone().unwrap_or_else(|| src.id.clone());
+        out.push((src.label.clone(), key));
     }
-
-    /// Persist a wiki document and its chunks, graph, catalog row, and audit
-    /// event, replication journal and applied cursor under one transaction.
-    pub fn write_wiki_document_atomic(
-        &self,
-        write: WikiDocumentWrite<'_>,
-    ) -> Result<(Option<AtomicDocumentWriteResult>, i64)> {
-        let WikiDocumentWrite {
-            doc,
-            if_match_revision,
-            chunks,
-            index_entry,
-            audit_entry,
-            sync,
-            create_only,
-        } = write;
-        if index_entry.page_id.as_deref() != Some(doc.id.as_str()) {
-            return Err(AppError::config(format!(
-                "wiki index page id {:?} does not match document {}",
-                index_entry.page_id, doc.id
-            )));
-        }
-        if let Some(entity_id) = audit_entry.entity_id.as_deref() {
-            if entity_id != doc.id {
-                return Err(AppError::config(format!(
-                    "wiki audit entity id {entity_id} does not match document {}",
-                    doc.id
-                )));
-            }
-        }
-        let prepared_embeddings = owned_embedding_json(&doc.id, chunks)?;
-
-        let local_event = crate::db::sync::SyncChangeInput {
-            origin_seq: 1,
-            entity_kind: "wiki".into(),
-            entity_id: doc.uri.clone(),
-            operation: "upsert".into(),
-            payload_json: serde_json::to_string(&crate::db::sync::WikiSyncPayload {
-                slug: index_entry.slug.clone(),
-                title: doc.title.clone(),
-                content: doc.content.clone(),
-                wing: doc.wing.clone(),
-                room: doc.room.clone(),
-                kind: Some(doc.kind.to_string()),
-                category: index_entry.category.clone(),
-                summary: index_entry.summary.clone(),
-                metadata_json: Some(doc.metadata_json.clone()),
-            })?,
-            content_hash: doc.content_hash.clone(),
-            created_at: doc
-                .updated_at
-                .to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
-        };
-        crate::db::sync::validate_wiki_change(&local_event)?;
-        let incoming = match sync {
-            crate::db::sync::WikiSyncWrite::Local(_) => None,
-            crate::db::sync::WikiSyncWrite::Push { change, .. } => Some(*change),
-            crate::db::sync::WikiSyncWrite::Pull { event, .. } => Some(&event.change),
-        };
-        if incoming.is_some_and(|event| event.entity_id != doc.uri) {
-            return Err(AppError::config(
-                "sync event does not belong to prepared wiki document",
-            ));
-        }
-        let mut conn = self.store.lock()?;
-        let tx = conn.transaction()?;
-        if create_only {
-            let existing: i64 = tx.query_row(
-                "SELECT COUNT(*) FROM documents WHERE uri = ? OR id = ?",
-                params![&doc.uri, &doc.id],
-                |row| row.get(0),
-            )?;
-            if existing != 0 {
-                return Err(AppError::conflict("wiki page already exists"));
-            }
-        }
-        if let Some(sequence) = crate::db::sync::sync_duplicate_locked(&tx, sync)? {
-            return Ok((None, sequence));
-        }
-        if crate::db::sync::defer_pulled_document_locked(&tx, sync, &doc.uri)? {
-            let sequence = crate::db::sync::commit_sync_write_locked(&tx, sync, &local_event)?;
-            tx.commit()?;
-            return Ok((None, sequence));
-        }
-        crate::db::review::accept_locked(&tx, doc, audit_entry)?;
-        let result = write_document_locked(
-            &tx,
-            doc,
-            if_match_revision,
-            DocumentDerivedWrite::ReplaceChunksAndGraph(chunks),
-            Some(&prepared_embeddings),
-            None,
-        )?;
-        upsert_wiki_index_entry_locked(&tx, index_entry)?;
-        #[cfg(any(test, feature = "testkit"))]
-        if audit_entry.op == TEST_FAIL_WIKI_WRITE_AFTER_INDEX_OP {
-            return Err(AppError::db(
-                "injected wiki write failure after catalog update",
-            ));
-        }
-        append_ops_log_locked(&tx, audit_entry)?;
-        let sequence = crate::db::sync::commit_sync_write_locked(&tx, sync, &local_event)?;
-        #[cfg(any(test, feature = "testkit"))]
-        if audit_entry.op == "__test_fail_wiki_after_sync_journal__" {
-            return Err(AppError::db("injected wiki failure after sync journal"));
-        }
-        tx.commit()?;
-        Ok((Some(result), sequence))
-    }
-
-    /// Delete a document, its chunks, and its graph node + incident edges.
-    ///
-    /// Returns `true` if a document row was removed.
-    pub fn delete_document(&self, id: &str) -> Result<bool> {
-        self.store.with_tx(|tx| {
-            let deleted = delete_document_locked(tx, id)?;
-            Ok(deleted)
-        })
-    }
-
-    /// Apply a maintenance batch of hard deletes and tombstones atomically.
-    ///
-    /// Every target must exist and an id may occur only once across the two
-    /// lists. Any validation or storage failure rolls back the entire group, so
-    /// a compression caller never loses a partial prefix without a report.
-    ///
-    /// # Caller-guarded
-    ///
-    /// This method does not take the corpus mutation lane itself. The caller
-    /// must run it on a store returned by `corpus_lane().try_corpus_mutation_scope`
-    /// (or `with_corpus_mutation_guard`), so no guarded search or other bulk
-    /// mutation runs at the same time. See `docs/refactor/ARCHITECTURE.md`
-    /// (caller-guarded writes).
-    pub fn apply_document_dispositions_atomic(
-        &self,
-        delete_ids: &[String],
-        tombstone_ids: &[String],
-    ) -> Result<(u64, u64, u64)> {
-        let mut seen = std::collections::HashSet::new();
-        for id in delete_ids.iter().chain(tombstone_ids) {
-            if id.trim().is_empty() || !seen.insert(id.as_str()) {
-                return Err(AppError::config(format!(
-                    "duplicate or empty document disposition id '{id}'"
-                )));
-            }
-        }
-
-        self.store.with_tx(|tx| {
-            let mut deleted = 0u64;
-            let mut tombstoned = 0u64;
-            let mut chunks_deleted = 0u64;
-
-            for id in tombstone_ids {
-                let Some(document) = get_document_locked(tx, id)? else {
-                    return Err(AppError::not_found(format!(
-                        "document not found for tombstone: {id}"
-                    )));
-                };
-                let expected_revision = document.revision;
-                let mut applied = apply_document_meta_update(
-                    document,
-                    &DocumentMetaUpdate {
-                        status: Some("tombstone".into()),
-                        ..Default::default()
-                    },
-                )?;
-                applied.document.revision =
-                    upsert_document_cas_locked(tx, &applied.document, Some(expected_revision))?;
-                tombstoned += 1;
-            }
-
-            for id in delete_ids {
-                let chunk_count: i64 = tx.query_row(
-                    "SELECT COUNT(*)::BIGINT FROM chunks WHERE document_id = ?",
-                    params![id],
-                    |row| row.get(0),
-                )?;
-                if !delete_document_locked(tx, id)? {
-                    return Err(AppError::not_found(format!(
-                        "document not found for delete: {id}"
-                    )));
-                }
-                deleted += 1;
-                chunks_deleted = chunks_deleted.saturating_add(chunk_count.max(0) as u64);
-            }
-            Ok((deleted, tombstoned, chunks_deleted))
-        })
-    }
-
-    /// Validate and apply one exact-content duplicate group atomically.
-    ///
-    /// Actual document bodies are hashed inside the transaction; persisted
-    /// `content_hash` values and caller-provided ids are never trusted as proof
-    /// of equality. All sources are validated before the first mutation and any
-    /// later storage failure rolls the whole group back.
-    ///
-    /// # Caller-guarded
-    ///
-    /// This method does not take the corpus mutation lane itself. The caller
-    /// must run it on a store returned by `corpus_lane().try_corpus_mutation_scope`
-    /// (or `with_corpus_mutation_guard`), so no guarded search or other bulk
-    /// mutation runs at the same time. See `docs/refactor/ARCHITECTURE.md`
-    /// (caller-guarded writes).
-    pub fn merge_exact_duplicates_atomic(
-        &self,
-        keep_id: &str,
-        source_ids: &[String],
-        declared_hash: Option<&str>,
-        hard_delete: bool,
-        allow_raw_delete: bool,
-    ) -> Result<ExactDuplicateMergeResult> {
-        self.merge_exact_duplicates_atomic_with(
-            keep_id,
-            source_ids,
-            declared_hash,
-            hard_delete,
-            allow_raw_delete,
-            |_| Ok(()),
-        )
-    }
-
-    pub(in crate::db) fn merge_exact_duplicates_atomic_with(
-        &self,
-        keep_id: &str,
-        source_ids: &[String],
-        declared_hash: Option<&str>,
-        hard_delete: bool,
-        allow_raw_delete: bool,
-        mut after_mutation: impl FnMut(usize) -> Result<()>,
-    ) -> Result<ExactDuplicateMergeResult> {
-        let keep_id = keep_id.trim();
-        if keep_id.is_empty() {
-            return Err(AppError::config(
-                "merge_exact_dup requires a non-empty canonical document id",
-            ));
-        }
-        if source_ids.is_empty() {
-            return Err(AppError::config(
-                "merge_exact_dup requires at least one source document id",
-            ));
-        }
-        let mut seen = std::collections::HashSet::with_capacity(source_ids.len());
-        for source_id in source_ids {
-            let normalized = source_id.trim();
-            if normalized.is_empty()
-                || normalized != source_id
-                || normalized == keep_id
-                || !seen.insert(normalized)
-            {
-                return Err(AppError::config(format!(
-                    "merge_exact_dup source ids must be non-empty, unique, and different from canonical id '{keep_id}'"
-                )));
-            }
-        }
-
-        self.store.with_tx(|tx| {
-            let keep = get_document_locked(tx, keep_id)?
-                .ok_or_else(|| AppError::not_found(format!("document not found: {keep_id}")))?;
-            let expected_hash = content_hash(&keep.content);
-            if declared_hash.is_some_and(|declared| declared != expected_hash) {
-                return Err(AppError::conflict(format!(
-                    "merge_exact_dup declared content_hash does not match canonical document {keep_id}"
-                )));
-            }
-
-            let mut sources = Vec::with_capacity(source_ids.len());
-            for source_id in source_ids {
-                let source = get_document_locked(tx, source_id)?
-                    .ok_or_else(|| AppError::not_found(format!("document not found: {source_id}")))?;
-                if content_hash(&source.content) != expected_hash {
-                    return Err(AppError::conflict(format!(
-                        "merge_exact_dup source {source_id} is not an exact content duplicate of {keep_id}"
-                    )));
-                }
-                sources.push(source);
-            }
-
-            let mut merged = Vec::with_capacity(sources.len());
-            let mut raw_protected = Vec::new();
-            for (index, source) in sources.into_iter().enumerate() {
-                if hard_delete && (!crate::models::Layer::Raw.is(&source.layer) || allow_raw_delete) {
-                    if !delete_document_locked(tx, &source.id)? {
-                        return Err(AppError::not_found(format!(
-                            "document disappeared during merge_exact_dup: {}",
-                            source.id
-                        )));
-                    }
-                } else {
-                    let expected_revision = source.revision;
-                    let mut applied = apply_document_meta_update(
-                        source,
-                        &DocumentMetaUpdate {
-                            status: Some("archived".into()),
-                            ..Default::default()
-                        },
-                    )?;
-                    let source_id = applied.document.id.clone();
-                    applied.document.revision =
-                        upsert_document_cas_locked(tx, &applied.document, Some(expected_revision))?;
-                    if hard_delete {
-                        raw_protected.push(source_id);
-                    }
-                }
-                merged.push(source_ids[index].clone());
-                after_mutation(index + 1)?;
-            }
-            Ok(ExactDuplicateMergeResult {
-                merged,
-                raw_protected,
-            })
-        })
-    }
-
-    /// Delete all documents whose `source_file` equals `source`, plus their chunks.
-    ///
-    /// Returns the number of document rows removed.
-    pub fn delete_by_source(&self, source: &str) -> Result<u64> {
-        self.delete_by_source_ids(source)
-            .map(|document_ids| document_ids.len() as u64)
-    }
-
-    /// Delete by exact source and return the ids selected inside the same
-    /// transaction that performs the deletion.
-    pub fn delete_by_source_ids(&self, source: &str) -> Result<Vec<String>> {
-        self.delete_source_state_ids_with(source, |_| Ok(()))
-            .map(|(document_ids, _)| document_ids)
-    }
-
-    /// Atomically remove every document/derived row and manifest ownership for
-    /// one filesystem source. Returns `(documents_deleted, manifest_deleted)`.
-    pub fn delete_source_state(&self, source: &str) -> Result<(u64, bool)> {
-        self.delete_source_state_with(source, |_| Ok(()))
-    }
-
-    pub(in crate::db) fn delete_source_state_with(
-        &self,
-        source: &str,
-        after_document: impl FnMut(usize) -> Result<()>,
-    ) -> Result<(u64, bool)> {
-        self.delete_source_state_ids_with(source, after_document)
-            .map(|(document_ids, manifest_deleted)| (document_ids.len() as u64, manifest_deleted))
-    }
-
-    pub(in crate::db) fn delete_source_state_ids_with(
-        &self,
-        source: &str,
-        mut after_document: impl FnMut(usize) -> Result<()>,
-    ) -> Result<(Vec<String>, bool)> {
-        self.store.with_tx(|tx| {
-            let manifest_present: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM source_manifest WHERE canonical_path = ?)",
-                params![source],
-                |row| row.get(0),
-            )?;
-            let mut ids = Vec::new();
-            {
-                let mut stmt = tx.prepare("SELECT id FROM documents WHERE source_file = ?")?;
-                crate::db::rows::for_each_row(&mut stmt, params![source], |row| {
-                    ids.push(row.get::<_, String>(0)?);
-                    Ok(())
-                })?;
-            }
-            for (index, id) in ids.iter().enumerate() {
-                delete_document_locked(tx, id)?;
-                after_document(index + 1)?;
-            }
-            tx.execute(
-                "DELETE FROM source_manifest WHERE canonical_path = ?",
-                params![source],
-            )?;
-            Ok((ids, manifest_present))
-        })
-    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out.dedup_by(|a, b| a.1 == b.1);
+    out
 }

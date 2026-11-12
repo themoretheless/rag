@@ -5,8 +5,8 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 use chrono::Utc;
-use rag_mcp::models::Document;
 use rag_mcp::Store;
+use rag_mcp::models::Document;
 
 fn run(binary: &str, cwd: &Path, args: &[&str]) -> Output {
     Command::new(binary)

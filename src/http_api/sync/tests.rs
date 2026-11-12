@@ -1,6 +1,6 @@
 use super::*;
 use axum::{
-    body::{to_bytes, Body},
+    body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
 use std::sync::Arc;
@@ -136,12 +136,14 @@ async fn sync_http_validates_all_events_before_writing_and_rejects_identity_reus
             String::from_utf8_lossy(&to_bytes(response.into_body(), 65536).await.unwrap())
         );
         if expected == StatusCode::BAD_REQUEST {
-            assert!(primary
-                .store
-                .documents()
-                .find_by_uri("wiki://shared")
-                .unwrap()
-                .is_none());
+            assert!(
+                primary
+                    .store
+                    .documents()
+                    .find_by_uri("wiki://shared")
+                    .unwrap()
+                    .is_none()
+            );
             assert!(!primary.store.sync().has_sync_change("replica", 1).unwrap());
         }
     }
@@ -174,12 +176,14 @@ async fn sync_page_journal_and_pull_cursor_rollback_together_and_retry_once() {
     )
     .await;
     assert!(result.is_err());
-    assert!(replica
-        .store
-        .documents()
-        .find_by_uri("wiki://shared")
-        .unwrap()
-        .is_none());
+    assert!(
+        replica
+            .store
+            .documents()
+            .find_by_uri("wiki://shared")
+            .unwrap()
+            .is_none()
+    );
     assert!(!replica.store.sync().has_sync_change("primary", 1).unwrap());
     assert_eq!(cursor(&replica, "replica"), 0);
     apply_change(
@@ -203,12 +207,14 @@ async fn sync_page_journal_and_pull_cursor_rollback_together_and_retry_once() {
     .unwrap();
     assert_eq!(revision(&replica), committed);
     assert_eq!(cursor(&replica, "replica"), 1);
-    assert!(replica
-        .store
-        .sync()
-        .pending_sync_outbox(10)
-        .unwrap()
-        .is_empty());
+    assert!(
+        replica
+            .store
+            .sync()
+            .pending_sync_outbox(10)
+            .unwrap()
+            .is_empty()
+    );
 
     let local = state(root.path(), "local");
     let mut failing = command("local");
@@ -226,18 +232,22 @@ async fn sync_page_journal_and_pull_cursor_rollback_together_and_retry_once() {
     )
     .await;
     assert!(result.is_err());
-    assert!(local
-        .store
-        .sync()
-        .pending_sync_outbox(10)
-        .unwrap()
-        .is_empty());
-    assert!(local
-        .store
-        .documents()
-        .find_by_uri("wiki://shared")
-        .unwrap()
-        .is_none());
+    assert!(
+        local
+            .store
+            .sync()
+            .pending_sync_outbox(10)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        local
+            .store
+            .documents()
+            .find_by_uri("wiki://shared")
+            .unwrap()
+            .is_none()
+    );
     // Public agent strings cannot opt out of journalling.
     wiki::write_wiki_page_command(
         &local.store,
@@ -322,12 +332,14 @@ async fn sync_replays_more_than_one_page_of_events_without_losing_pending_drafts
     assert_eq!(body(&replica), "offline 105");
     assert_eq!(body(&primary), body(&replica));
     assert_eq!(cursor(&replica, "replica"), 105);
-    assert!(replica
-        .store
-        .sync()
-        .pending_sync_outbox(100)
-        .unwrap()
-        .is_empty());
+    assert!(
+        replica
+            .store
+            .sync()
+            .pending_sync_outbox(100)
+            .unwrap()
+            .is_empty()
+    );
     server.abort();
     let _ = server.await;
 }
@@ -575,22 +587,28 @@ async fn sync_rejects_untransportable_new_wiki_without_committing_page_or_outbox
         false,
     )
     .await;
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("sync event exceeds"));
-    assert!(replica
-        .store
-        .documents()
-        .find_by_uri("wiki://shared")
-        .unwrap()
-        .is_none());
-    assert!(replica
-        .store
-        .sync()
-        .pending_sync_outbox(10)
-        .unwrap()
-        .is_empty());
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("sync event exceeds")
+    );
+    assert!(
+        replica
+            .store
+            .documents()
+            .find_by_uri("wiki://shared")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        replica
+            .store
+            .sync()
+            .pending_sync_outbox(10)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -800,12 +818,14 @@ async fn sync_metadata_edits_around_push_ack_and_pull_converge() {
             .len(),
         5
     );
-    assert!(replica
-        .store
-        .sync()
-        .pending_sync_outbox(10)
-        .unwrap()
-        .is_empty());
+    assert!(
+        replica
+            .store
+            .sync()
+            .pending_sync_outbox(10)
+            .unwrap()
+            .is_empty()
+    );
     server.abort();
     let _ = server.await;
 }
@@ -830,9 +850,7 @@ async fn sync_direct_metadata_update_rolls_back_when_journal_fails() {
     let pending = replica.store.sync().pending_sync_outbox(10).unwrap();
     replica
         .store
-        .lock()
-        .unwrap()
-        .execute_batch("DROP TABLE sync_nodes")
+        .drop_collection_for_test("sync_nodes")
         .unwrap();
     let result = replica
         .store

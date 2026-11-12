@@ -1,0 +1,37 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 35.06s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 29 tests
+test code_index::data_flow::diff::tests::exhausted_normalization_work_is_explicit ... ok
+test code_index::data_flow::tests::branch_merges_include_both_reaching_values_and_predicates ... ok
+test code_index::data_flow::tests::loop_cycles_are_visible_with_checked_transition_contexts ... ok
+test code_index::data_flow::tests::loop_return_paths_cannot_supply_backedge_definitions ... ok
+test code_index::data_flow::diff::tests::unsupported_function_transitions_are_coverage_gaps_not_deleted_value_edges ... ok
+test code_index::data_flow::diff::tests::function_addition_removal_and_output_limits_remain_visible ... ok
+test code_index::data_flow::tests::for_iteration_values_are_abstract_and_iterables_are_evaluated_once ... ok
+test code_index::data_flow::tests::branch_initialization_and_unrelated_controls_are_not_invented ... ok
+test code_index::data_flow::tests::loop_else_skips_breaks_but_captures_normal_exits ... ok
+test code_index::data_flow::diff::tests::formatting_comments_and_nfkc_spelling_do_not_change_normalized_values ... ok
+test code_index::data_flow::tests::elif_and_returning_arms_keep_only_live_definitions ... ok
+test code_index::data_flow::tests::python_nfkc_binding_identity_preserves_source_spelling_and_latest_write ... ok
+test code_index::data_flow::tests::python_constant_return_does_not_invent_argument_influence ... ok
+test code_index::data_flow::diff::tests::legacy_partial_corrupt_and_foreign_captures_cannot_prove_deletions ... ok
+test code_index::data_flow::diff::tests::literal_and_operator_changes_keep_topology_but_change_node_fingerprints ... ok
+test code_index::data_flow::tests::python_unimported_foreign_module_does_not_supply_a_value_target ... ok
+test code_index::data_flow::tests::python_rebound_export_does_not_supply_an_interprocedural_value_target ... ok
+test code_index::data_flow::tests::nested_loops_keep_jumps_in_the_innermost_body ... ok
+test code_index::data_flow::tests::python_data_slice_budgets_are_independent_and_stale_sources_are_excluded ... ok
+test code_index::data_flow::tests::python_argument_return_frames_do_not_leak_other_call_sites ... ok
+test code_index::data_flow::tests::nested_branch_merges_and_all_returning_paths_preserve_reaching_values ... ok
+test code_index::data_flow::tests::python_value_slice_uses_latest_definitions_and_exact_unicode_spans ... ok
+test code_index::data_flow::tests::while_headers_preserve_entry_backedge_and_zero_iterations ... ok
+test code_index::data_flow::tests::loop_break_and_continue_keep_their_local_states ... ok
+test code_index::data_flow::tests::python_imported_functions_keep_project_boundaries_and_unresolved_guards ... ok
+test code_index::data_flow::diff::tests::reassignment_and_import_redirect_change_actual_candidate_edges ... ok
+test code_index::data_flow::tests::deeply_nested_branches_fail_with_a_bounded_capture ... ok
+test code_index::data_flow::tests::dense_control_edges_have_an_explicit_independent_response_cap ... ok
+test code_index::data_flow::tests::python_value_facts_persist_repair_and_freeze_with_explicit_diff_availability ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 1375 filtered out; finished in 0.36s
+

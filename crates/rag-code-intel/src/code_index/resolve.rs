@@ -1,5 +1,6 @@
 //! Conservative static binding: imports, lexical declarations and annotated receivers.
 use super::*;
+pub(super) mod python_names;
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,6 +19,8 @@ pub(super) struct Binding {
     rust_extern: bool,
     #[serde(default)]
     declaration_at: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    python_class_scope: Option<usize>,
 }
 pub(super) fn configure_rust_bindings(
     doc: &mut IndexedDocument,
@@ -66,9 +69,10 @@ fn add(
 ) {
     let local = local.trim();
     if local.is_empty()
-        || !local
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+        || (!(out.path.ends_with(".rs") && node.kind() == "use_declaration" && local == "*")
+            && !local
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '$'))
     {
         return;
     }
@@ -78,6 +82,7 @@ fn add(
         Some("js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx")
     );
     out.bindings.push(Binding {
+        python_class_scope: None,
         rust_extern: out.path.ends_with(".rs") && node.kind() == "extern_crate_declaration",
         rust_namespace: out.path.ends_with(".rs")
             && matches!(
@@ -227,7 +232,7 @@ pub(super) fn collect(node: Node, source: &str, out: &mut IndexedDocument) {
             if let Some(name) = node.child_by_field_name("name") {
                 let alias = node.child_by_field_name("alias").unwrap_or(name);
                 let name = text(name, source);
-                let target = if matches!(name, "std" | "alloc") {
+                let target = if matches!(name, "std" | "alloc" | "core") {
                     format!("\0extern_crate::{name}")
                 } else {
                     format!("\0unverified_extern_crate::{name}")
@@ -235,7 +240,7 @@ pub(super) fn collect(node: Node, source: &str, out: &mut IndexedDocument) {
                 // Preserve the existing captured-Cargo path for an unrenamed
                 // nonstandard extern. Renamed unknown crates must not resolve
                 // against an unrelated local namespace with a similar name.
-                if matches!(name, "std" | "alloc") || text(alias, source) != name {
+                if matches!(name, "std" | "alloc" | "core") || text(alias, source) != name {
                     add(out, node, text(alias, source), Some(target), None, false);
                 }
             }
@@ -737,9 +742,23 @@ pub(super) fn import_target<'a>(
 pub(super) fn visible_import_targets(doc: &IndexedDocument, at: usize) -> Vec<&str> {
     doc.bindings
         .iter()
-        .filter(|b| b.start <= at && at < b.end && (b.rust_namespace || b.declared <= at))
+        .filter(|b| {
+            b.local != "*" && b.start <= at && at < b.end && (b.rust_namespace || b.declared <= at)
+        })
         .filter_map(|b| b.target.as_deref())
         .collect()
+}
+pub(super) fn unique_rust_glob_target(doc: &IndexedDocument, at: usize) -> Option<&str> {
+    let globs: Vec<_> = doc
+        .bindings
+        .iter()
+        .filter(|b| b.rust_namespace && b.local == "*" && b.start <= at && at < b.end)
+        .collect();
+    if globs.len() == 1 {
+        globs[0].target.as_deref()
+    } else {
+        None
+    }
 }
 pub(super) fn unknown_rust_namespace(doc: &IndexedDocument, name: &str, at: usize) -> bool {
     let imports: Vec<_> = doc
@@ -778,11 +797,58 @@ pub(super) fn references_selected(
     documents: &HashMap<String, IndexedDocument>,
     selected: Option<&HashSet<String>>,
 ) -> Vec<CallEdge> {
+    let python: HashSet<_> = documents
+        .iter()
+        .filter(|(id, d)| d.path.ends_with(".py") && selected.is_none_or(|set| set.contains(*id)))
+        .map(|(id, _)| id.clone())
+        .collect();
+    if python.is_empty() {
+        return references_selected_raw(symbols, documents, selected);
+    }
+    let other: HashSet<_> = documents
+        .iter()
+        .filter(|(id, d)| !d.path.ends_with(".py") && selected.is_none_or(|set| set.contains(*id)))
+        .map(|(id, _)| id.clone())
+        .collect();
+    let mut result = references_selected_raw(symbols, documents, Some(&other));
+    result.extend(super::python_names::references(symbols, documents, &python));
+    result.sort_by(|a, b| {
+        (
+            &a.reference.document_id,
+            a.reference.start_byte,
+            &a.reference.expression,
+        )
+            .cmp(&(
+                &b.reference.document_id,
+                b.reference.start_byte,
+                &b.reference.expression,
+            ))
+    });
+    result
+}
+pub(super) fn references_selected_raw(
+    symbols: &[Symbol],
+    documents: &HashMap<String, IndexedDocument>,
+    selected: Option<&HashSet<String>>,
+) -> Vec<CallEdge> {
+    references_selected_overrides(symbols, documents, selected, None)
+}
+pub(super) fn references_selected_overrides(
+    symbols: &[Symbol],
+    documents: &HashMap<String, IndexedDocument>,
+    selected: Option<&HashSet<String>>,
+    overrides: Option<&HashMap<String, IndexedDocument>>,
+) -> Vec<CallEdge> {
     let mut result = vec![];
     for (id, doc) in documents
         .iter()
         .filter(|(id, _)| selected.is_none_or(|set| set.contains(*id)))
     {
+        let doc = overrides.and_then(|m| m.get(id)).unwrap_or(doc);
+        if doc.php_names.is_some() {
+            result.extend(super::php_names::document(documents, doc));
+            continue;
+        }
         if doc.powershell.is_some() {
             result.extend(super::powershell::resolve_document(documents, doc));
             continue;
@@ -822,6 +888,7 @@ pub(super) fn references_selected(
             }
             if !doc.binding_limitations.is_empty() {
                 result.push(CallEdge {
+                    context_evidence: None,
                     reference: r.clone(),
                     candidates: vec![],
                     resolution: "unresolved".into(),
@@ -844,11 +911,12 @@ pub(super) fn references_selected(
                 .iter()
                 .filter(|b| {
                     b.local == head
+                        && super::python_names::visible(doc, b.python_class_scope, r.start_byte)
                         && b.start <= r.start_byte
                         && r.start_byte < b.end
                         && (b.hoisted || b.rust_namespace || b.declared <= r.start_byte)
                 })
-                .max_by_key(|b| (b.start, b.declared));
+                .max_by_key(|b| super::python_names::key(doc, b, r.start_byte));
             let mut candidates: Vec<&Symbol> = vec![];
             let mut reason = "unresolved";
             if matches!(head, "super()" | "super")
@@ -958,7 +1026,10 @@ pub(super) fn references_selected(
                 if candidates.is_empty() && reason != "uninitialized_binding" {
                     reason = "shadowed_or_external";
                 }
-            } else if matches!(head, "self" | "this" | "Self") && segments.len() == 2 {
+            } else if !doc.path.ends_with(".py")
+                && matches!(head, "self" | "this" | "Self")
+                && segments.len() == 2
+            {
                 if let Some(parent) =
                     caller.and_then(|s| s.qualified_name.rsplit_once("::").map(|p| p.0))
                 {
@@ -986,7 +1057,16 @@ pub(super) fn references_selected(
                     reason = "module_path";
                 }
             } else {
-                let mut scopes = caller
+                let class_body = super::python_names::class_body(doc, r.start_byte);
+                let class_caller = class_body.and_then(|start| {
+                    symbols.iter().find(|s| {
+                        s.document_id == r.document_id
+                            && s.start_byte == start
+                            && s.kind == "class_definition"
+                    })
+                });
+                let mut scopes = class_caller
+                    .or(caller)
                     .map(|s| {
                         s.qualified_name
                             .split("::")
@@ -1006,18 +1086,24 @@ pub(super) fn references_selected(
                         || symbols.iter().any(|s| {
                             s.path == doc.path
                                 && s.qualified_name == scopes.join("::")
-                                && !matches!(
-                                    s.kind.as_str(),
-                                    "class_definition"
-                                        | "class_declaration"
-                                        | "struct_item"
-                                        | "enum_item"
-                                        | "trait_item"
-                                        | "interface_declaration"
-                                )
+                                && (class_body == Some(s.start_byte)
+                                    && s.kind == "class_definition"
+                                    || !matches!(
+                                        s.kind.as_str(),
+                                        "class_definition"
+                                            | "class_declaration"
+                                            | "struct_item"
+                                            | "union_item"
+                                            | "enum_item"
+                                            | "trait_item"
+                                            | "interface_declaration"
+                                    ))
                         });
                     candidates = if lexical_scope {
                         matching(symbols, &doc.path, &name)
+                            .into_iter()
+                            .filter(|s| class_body.is_none() || s.start_byte <= r.start_byte)
+                            .collect()
                     } else {
                         vec![]
                     };
@@ -1032,7 +1118,7 @@ pub(super) fn references_selected(
             }
             // Do not cross project boundaries or fall back to unrelated same-name files.
             if doc.path.ends_with(".rs") && r.is_call {
-                candidates.retain(|s| s.kind != "mod_item");
+                candidates.retain(|s| !matches!(s.kind.as_str(), "mod_item" | "union_item"));
             }
             candidates.retain(|s| {
                 documents
@@ -1047,6 +1133,7 @@ pub(super) fn references_selected(
                 _ => "ambiguous",
             };
             result.push(CallEdge {
+                context_evidence: None,
                 reference: r.clone(),
                 candidates: candidates.iter().map(|s| s.id.clone()).collect(),
                 resolution: resolution.into(),

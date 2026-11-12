@@ -195,12 +195,10 @@ pub(super) fn anonymous_body(node: Node) -> bool {
 }
 fn modifiers(node: Node, source: &str) -> String {
     let mut c = node.walk();
-    let result = node
-        .named_children(&mut c)
+    node.named_children(&mut c)
         .find(|n| n.kind() == "modifiers")
         .map(|n| text(n, source).into())
-        .unwrap_or_default();
-    result
+        .unwrap_or_default()
 }
 fn modifier(node: Node, name: &str) -> bool {
     let mut cursor = node.walk();
@@ -211,8 +209,7 @@ fn modifier(node: Node, name: &str) -> bool {
         return false;
     };
     let mut cursor = modifiers.walk();
-    let found = modifiers.children(&mut cursor).any(|n| n.kind() == name);
-    found
+    modifiers.children(&mut cursor).any(|n| n.kind() == name)
 }
 fn args(node: Node) -> Option<usize> {
     let a = node.child_by_field_name("arguments")?;
@@ -1147,6 +1144,7 @@ pub(super) fn resolve(
     found.sort_by_key(|s| &s.id);
     found.dedup_by_key(|s| &s.id);
     CallEdge {
+        context_evidence: None,
         reference: r.clone(),
         candidates: found.iter().map(|s| s.id.clone()).collect(),
         resolution: match found.len() {
@@ -1302,9 +1300,17 @@ mod tests {
     }
     #[test]
     fn imports_typed_receivers_constructor_and_arity_preserve_overload_ambiguity() {
-        let s=snapshot(&[
-            ("/p/api/Service.java","p","package api; public class Service { public Service(){} public void run(){} public void run(int x){} public void ambiguous(int x){} public void ambiguous(String s){} }"),
-            ("/p/app/Main.java","p","package app; import api.Service; class Main { void use(Service s){s.run();s.run(1);s.ambiguous(1);new Service();} }"),
+        let s = snapshot(&[
+            (
+                "/p/api/Service.java",
+                "p",
+                "package api; public class Service { public Service(){} public void run(){} public void run(int x){} public void ambiguous(int x){} public void ambiguous(String s){} }",
+            ),
+            (
+                "/p/app/Main.java",
+                "p",
+                "package app; import api.Service; class Main { void use(Service s){s.run();s.run(1);s.ambiguous(1);new Service();} }",
+            ),
         ]);
         let run = calls(&s, "s.run");
         assert_eq!(run.len(), 2);
@@ -1328,9 +1334,17 @@ mod tests {
     }
     #[test]
     fn inherited_overloads_overrides_super_and_private_methods_are_separate() {
-        let s=snapshot(&[
-            ("/p/Base.java","p","package p; class Base { public void work(){} public void work(int x){} private void secret(){} }"),
-            ("/p/Child.java","p","package p; class Child extends Base {public void work(){} void use(){work();work(1);super.work();secret();}}"),
+        let s = snapshot(&[
+            (
+                "/p/Base.java",
+                "p",
+                "package p; class Base { public void work(){} public void work(int x){} private void secret(){} }",
+            ),
+            (
+                "/p/Child.java",
+                "p",
+                "package p; class Child extends Base {public void work(){} void use(){work();work(1);super.work();secret();}}",
+            ),
         ]);
         let work = calls(&s, "work");
         assert_eq!(names(&s, work[0]), vec!["Child::work"]);
@@ -1342,7 +1356,11 @@ mod tests {
     }
     #[test]
     fn typed_fields_this_local_shadowing_static_receivers_and_interface_contracts() {
-        let s=snapshot(&[("/p/A.java","p","class Service {static void stat(){} void run(){}} interface Api {void read();} class Main { Service svc; void use(Service other,Api api){this.svc.run();other.run();api.read();Service.stat();Service.run();} void shadow(Object Service){Service.stat();}}")]);
+        let s = snapshot(&[(
+            "/p/A.java",
+            "p",
+            "class Service {static void stat(){} void run(){}} interface Api {void read();} class Main { Service svc; void use(Service other,Api api){this.svc.run();other.run();api.read();Service.stat();Service.run();} void shadow(Object Service){Service.stat();}}",
+        )]);
         for expr in ["this.svc.run", "other.run", "api.read"] {
             assert_eq!(
                 calls(&s, expr)[0].candidates.len(),
@@ -1358,17 +1376,41 @@ mod tests {
     }
     #[test]
     fn static_and_wildcard_imports_do_not_fall_back_to_unrelated_types_or_projects() {
-        let s=snapshot(&[
-            ("/p/a/Util.java","p","package a; public class Util { public static void work(){} }"),
-            ("/p/a/Service.java","p","package a; public class Service {public void run(){}}"),
-            ("/p/b/Service.java","p","package b; public class Service {public void run(){}}"),
-            ("/p/Main.java","p","import static a.Util.work; import a.*; import b.*; class Main {void use(Service s){work();s.run();}}"),
-            ("/p/Foreign.java","other","package a; public class Util {public static void work(){}}"),
+        let s = snapshot(&[
+            (
+                "/p/a/Util.java",
+                "p",
+                "package a; public class Util { public static void work(){} }",
+            ),
+            (
+                "/p/a/Service.java",
+                "p",
+                "package a; public class Service {public void run(){}}",
+            ),
+            (
+                "/p/b/Service.java",
+                "p",
+                "package b; public class Service {public void run(){}}",
+            ),
+            (
+                "/p/Main.java",
+                "p",
+                "import static a.Util.work; import a.*; import b.*; class Main {void use(Service s){work();s.run();}}",
+            ),
+            (
+                "/p/Foreign.java",
+                "other",
+                "package a; public class Util {public static void work(){}}",
+            ),
         ]);
         assert_eq!(calls(&s, "work")[0].candidates.len(), 1);
         assert_eq!(calls(&s, "s.run")[0].candidates.len(), 2);
         assert_eq!(calls(&s, "s.run")[0].resolution, "ambiguous");
-        let s=snapshot(&[("/p/A.java","p","import absent.Service; class Service {static void run(){}} class Main {void use(){Service.run();}}")]);
+        let s = snapshot(&[(
+            "/p/A.java",
+            "p",
+            "import absent.Service; class Service {static void run(){}} class Main {void use(){Service.run();}}",
+        )]);
         assert!(calls(&s, "Service.run")[0].candidates.is_empty());
     }
     #[test]
@@ -1379,16 +1421,25 @@ mod tests {
             "class A extends B {void run(){} void use(){run();}} class B extends A {}",
         )]);
         assert_eq!(calls(&s, "run")[0].resolution, "ambiguous");
-        assert!(s
-            .inheritance
-            .iter()
-            .all(|e| e.hierarchy_status == "incomplete_or_invalid"));
-        let s=snapshot(&[("/p/A.java","p","import static A.toString; class A { static void toString(int x){} } class Main {void use(){toString();}}")]);
+        assert!(
+            s.inheritance
+                .iter()
+                .all(|e| e.hierarchy_status == "incomplete_or_invalid")
+        );
+        let s = snapshot(&[(
+            "/p/A.java",
+            "p",
+            "import static A.toString; class A { static void toString(int x){} } class Main {void use(){toString();}}",
+        )]);
         assert!(calls(&s, "toString")[0].candidates.is_empty());
     }
     #[test]
     fn method_references_records_and_opaque_anonymous_owners_keep_source_truth() {
-        let s=snapshot(&[("/p/A.java","p","class Service {void run(){} void run(int x){}} record R(int x) {R {}} enum E {ONE} @interface Tag {} class Main {void use(Service s){Object cb=s::run;new R(1);Runnable r=()->s.run();}}")]);
+        let s = snapshot(&[(
+            "/p/A.java",
+            "p",
+            "class Service {void run(){} void run(int x){}} record R(int x) {R {}} enum E {ONE} @interface Tag {} class Main {void use(Service s){Object cb=s::run;new R(1);Runnable r=()->s.run();}}",
+        )]);
         let refs = s.query(
             "references",
             &CodeQuery {
@@ -1416,13 +1467,21 @@ mod tests {
     }
     #[test]
     fn class_members_take_precedence_over_interface_declarations() {
-        let s=snapshot(&[("/p/A.java","p","interface Api {default void work(){}} class Base {public void work(){}} class Child extends Base implements Api {void use(){work();}}")]);
+        let s = snapshot(&[(
+            "/p/A.java",
+            "p",
+            "interface Api {default void work(){}} class Base {public void work(){}} class Child extends Base implements Api {void use(){work();}}",
+        )]);
         assert_eq!(names(&s, calls(&s, "work")[0]), vec!["Base::work"]);
         assert_eq!(calls(&s, "work")[0].resolution, "resolved_static");
     }
     #[test]
     fn constructor_and_unbound_instance_references_do_not_claim_sam_arity() {
-        let s=snapshot(&[("/p/A.java","p","class Service {Service(){} Service(int x){} void run(){}} class Main {void use(){Object ctor=Service::new;Object method=Service::run;}}")]);
+        let s = snapshot(&[(
+            "/p/A.java",
+            "p",
+            "class Service {Service(){} Service(int x){} void run(){}} class Main {void use(){Object ctor=Service::new;Object method=Service::run;}}",
+        )]);
         let ctor = s.query(
             "references",
             &CodeQuery {
@@ -1467,9 +1526,17 @@ mod tests {
     }
     #[test]
     fn comments_in_imports_qualified_types_and_receivers_do_not_change_binding() {
-        let s=snapshot(&[
-            ("/p/S.java","p","package api /* comment */ . inner; public class Service { public void run(){} public static void work(){} }"),
-            ("/p/M.java","p","import /* comment */ api.inner.Service; import static /* comment */ api.inner.Service.work; class Main { void use(Service s){s /*comment*/ .run();work();api.inner.Service.work();}}"),
+        let s = snapshot(&[
+            (
+                "/p/S.java",
+                "p",
+                "package api /* comment */ . inner; public class Service { public void run(){} public static void work(){} }",
+            ),
+            (
+                "/p/M.java",
+                "p",
+                "import /* comment */ api.inner.Service; import static /* comment */ api.inner.Service.work; class Main { void use(Service s){s /*comment*/ .run();work();api.inner.Service.work();}}",
+            ),
         ]);
         assert_eq!(calls(&s, "s.run")[0].candidates.len(), 1);
         assert_eq!(calls(&s, "work")[0].candidates.len(), 1);
@@ -1477,7 +1544,11 @@ mod tests {
     }
     #[test]
     fn enhanced_for_headers_use_outer_fields_and_record_components_keep_their_owner() {
-        let s=snapshot(&[("/p/A.java","p","class Service {void run(){}} class Bag {Service[] items(){return null;}} class Main {Bag value;void use(){for(Service value:value.items()){value.run();}}} record R(Service service){} class service {static void run(){}} class Other {void use(){service.run();}}")]);
+        let s = snapshot(&[(
+            "/p/A.java",
+            "p",
+            "class Service {void run(){}} class Bag {Service[] items(){return null;}} class Main {Bag value;void use(){for(Service value:value.items()){value.run();}}} record R(Service service){} class service {static void run(){}} class Other {void use(){service.run();}}",
+        )]);
         assert_eq!(names(&s, calls(&s, "value.items")[0]), vec!["Bag::items"]);
         assert_eq!(names(&s, calls(&s, "value.run")[0]), vec!["Service::run"]);
         assert_eq!(names(&s, calls(&s, "service.run")[0]), vec!["service::run"]);
@@ -1518,17 +1589,27 @@ mod tests {
         assert!(!parsed.parse_errors);
         let sql = serde_json::to_value(&parsed.sql).unwrap();
         assert_eq!(sql["uses"].as_array().unwrap().len(), 1);
-        assert!(sql["diagnostics"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|d| d["code"] == "JAVA_SQL_TEXT_BLOCK_VALUE_UNVERIFIED"));
+        assert!(
+            sql["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d["code"] == "JAVA_SQL_TEXT_BLOCK_VALUE_UNVERIFIED")
+        );
     }
     #[test]
     fn annotation_values_cannot_spoof_static_or_private_modifiers() {
-        let s=snapshot(&[
-            ("/p/Host.java","p","package api; @interface Label {String value();} public class Host {@Label(\"static private\") public void run(){} @Label(\"static\") public void use(){run();}}"),
-            ("/p/Main.java","p","import api.Host; class Main {void use(Host h){h.run();}}"),
+        let s = snapshot(&[
+            (
+                "/p/Host.java",
+                "p",
+                "package api; @interface Label {String value();} public class Host {@Label(\"static private\") public void run(){} @Label(\"static\") public void use(){run();}}",
+            ),
+            (
+                "/p/Main.java",
+                "p",
+                "import api.Host; class Main {void use(Host h){h.run();}}",
+            ),
         ]);
         assert_eq!(names(&s, calls(&s, "run")[0]), vec!["Host::run"]);
         assert_eq!(names(&s, calls(&s, "h.run")[0]), vec!["Host::run"]);

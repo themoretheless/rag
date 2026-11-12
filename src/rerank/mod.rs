@@ -118,11 +118,7 @@ fn jaccard(a: &std::collections::HashSet<String>, b: &std::collections::HashSet<
     }
     let inter = a.intersection(b).count() as f32;
     let union = a.union(b).count() as f32;
-    if union == 0.0 {
-        0.0
-    } else {
-        inter / union
-    }
+    if union == 0.0 { 0.0 } else { inter / union }
 }
 
 /// Jina / vLLM-style rerank API (`POST {base_url}/rerank`).
@@ -418,12 +414,14 @@ mod tests {
         assert_eq!(hits[0].score_rerank, Some(0.9));
         // Primary score stays the fusion/retrieval score.
         assert_eq!(hits[0].score, 0.8);
-        assert!(hits[0]
-            .explanation
-            .as_ref()
-            .unwrap()
-            .reasons
-            .contains(&"rerank".to_string()));
+        assert!(
+            hits[0]
+                .explanation
+                .as_ref()
+                .unwrap()
+                .reasons
+                .contains(&"rerank".to_string())
+        );
     }
 
     #[test]

@@ -64,31 +64,33 @@ pub use config::Config;
 pub use db::Store;
 pub use error::AppError;
 pub use memory_lifecycle::{
-    archive_selected as archive_memory_items, consolidate_selected as consolidate_memory_items,
-    list_candidates as list_memory_lifecycle_candidates, LifecycleCandidate,
-    LifecycleMutationResult, STATUS_ACTIVE, STATUS_ARCHIVED, STATUS_CONSOLIDATED,
+    LifecycleCandidate, LifecycleMutationResult, STATUS_ACTIVE, STATUS_ARCHIVED,
+    STATUS_CONSOLIDATED, archive_selected as archive_memory_items,
+    consolidate_selected as consolidate_memory_items,
+    list_candidates as list_memory_lifecycle_candidates,
 };
 pub use models::{
-    pkb_node_kinds, pkb_rel_types, Chunk, DiaryEntry, Document, DocumentFilter,
-    DocumentMetaApplyResult, DocumentMetaUpdate, DrawerListItem, DuplicateCheckResult,
-    DuplicateMatch, EdgeCutRow, EmbeddingManifest, GraphEdge, GraphFilter, GraphNode, GraphStats,
-    GraphView, IndexQueryMatch, IndexQueryPage, IndexQueryResult, IngestResult, KgFact, KgStats,
-    OpsLogEntry, PlacementUpdate, RoomCount, SearchHit, SearchMode, Stats, Taxonomy, TaxonomyNode,
-    TaxonomyRoom, TaxonomyWing, VacuumStoreReport, WakeUpSchemaSnippet, WikiIndexEntry, WingCount,
-    PKB_CORE_REL_TYPES, PKB_NODE_KINDS, UI_GRAPH_EXPORT_MAX_NODES, WIKI_SEMANTIC_REL_TYPES,
+    Chunk, DiaryEntry, Document, DocumentFilter, DocumentMetaApplyResult, DocumentMetaUpdate,
+    DrawerListItem, DuplicateCheckResult, DuplicateMatch, EdgeCutRow, EmbeddingManifest, GraphEdge,
+    GraphFilter, GraphNode, GraphStats, GraphView, IndexQueryMatch, IndexQueryPage,
+    IndexQueryResult, IngestResult, KgFact, KgStats, OpsLogEntry, PKB_CORE_REL_TYPES,
+    PKB_NODE_KINDS, PlacementUpdate, RoomCount, SearchHit, SearchMode, Stats, Taxonomy,
+    TaxonomyNode, TaxonomyRoom, TaxonomyWing, UI_GRAPH_EXPORT_MAX_NODES, VacuumStoreReport,
+    WIKI_SEMANTIC_REL_TYPES, WakeUpSchemaSnippet, WikiIndexEntry, WingCount, pkb_node_kinds,
+    pkb_rel_types,
 };
 pub use storage::{BackendKind, StorageCapability};
 
 // --- Graph (domain extract in `graph`; resolve and CRUD live in `db::graph`) ---
 pub use db::graph::resolve::rebuild_document_graph;
-pub use graph::{extract_links, ExtractedLink, REL_TAGGED, REL_TUNNEL, REL_WIKILINK};
+pub use graph::{ExtractedLink, REL_TAGGED, REL_TUNNEL, REL_WIKILINK, extract_links};
 
 // --- FTS / hybrid substrate (owned by `db::fts`, re-exported at `db::`) ---
 pub use db::{
-    chunks_generation, ensure_fts, ensure_fts_with_stemmer, fts_generation_state,
-    fts_index_present, fts_status, refresh_fts_if_stale, refresh_fts_if_stale_with_stemmer,
-    reindex, reindex_with_stemmer, search_bm25, FtsBackend, FtsGenerationState, FtsState,
-    LexFilters,
+    FtsBackend, FtsGenerationState, FtsState, LexFilters, chunks_generation, ensure_fts,
+    ensure_fts_with_stemmer, fts_generation_state, fts_index_present, fts_status,
+    refresh_fts_if_stale, refresh_fts_if_stale_with_stemmer, reindex, reindex_with_stemmer,
+    search_bm25,
 };
 
 // --- Util (hash + ingest path allowlist) ---
@@ -96,37 +98,36 @@ pub use util::{check_path_allowlist, content_hash, parse_ingest_roots};
 
 // --- Wiki compile layer ---
 pub use wiki::{
-    apply_consolidate_proposal, consolidate, file_answer, find_stale_wiki, get_schema,
-    get_wiki_page, list_wiki_pages, refresh_stale_wiki, update_schema, write_page, write_wiki_page,
-    write_wiki_page_command, ConsolidateOpts, ConsolidateRequest, ConsolidateResult,
-    FileAnswerCitation, FileAnswerRequest, RawIngest, RawRefreshTarget, RefreshError,
-    RefreshStaleWikiResult, SchemaDocumentView, StaleWikiItem, WikiPageRequest, WikiPageWrite,
-    WikiWriteCommand, WikiWriteMode, WikiWriteResult, LAYER_RAW, LAYER_SCHEMA, LAYER_WIKI,
-    SCHEMA_URI,
+    ConsolidateOpts, ConsolidateRequest, ConsolidateResult, FileAnswerCitation, FileAnswerRequest,
+    LAYER_RAW, LAYER_SCHEMA, LAYER_WIKI, RawIngest, RawRefreshTarget, RefreshError,
+    RefreshStaleWikiResult, SCHEMA_URI, SchemaDocumentView, StaleWikiItem, WikiPageRequest,
+    WikiPageWrite, WikiWriteCommand, WikiWriteMode, WikiWriteResult, apply_consolidate_proposal,
+    consolidate, file_answer, find_stale_wiki, get_schema, get_wiki_page, list_wiki_pages,
+    refresh_stale_wiki, update_schema, write_page, write_wiki_page, write_wiki_page_command,
 };
 
 // --- Agent diary / session checkpoint / wake_up ---
 pub use diary::{
-    agent_wing, checkpoint, diary_read, diary_write, normalize_agent_name, wake_up,
     CheckpointResult, DiaryWriteCommand, DiaryWriteResult, KIND_DIARY, LAYER_DIARY, ROOM_DIARY,
+    agent_wing, checkpoint, diary_read, diary_write, normalize_agent_name, wake_up,
 };
 
 // --- Search packing ---
 pub use search_pack::{
-    estimate_tokens, format_context_block, pack_hits, PackedContext, CHARS_PER_TOKEN,
+    CHARS_PER_TOKEN, PackedContext, estimate_tokens, format_context_block, pack_hits,
 };
 
 // --- Maintenance (analyze / plan / apply / organize / compress / refresh) ---
 pub use diagnostics::{DoctorReport, LlmStatusReport, StatusReport};
 pub use diary::WakeUpReport;
 pub use maintain::{
-    action_from_parts, analyze_corpus, apply_maintenance_plan, filter_plan, heuristic_plan,
-    is_allowed_action, log_plan, maintain_compress, maintain_organize, maintain_refresh,
-    maintenance_actions_json_schema, maintenance_plan_json_schema, parse_and_filter_plan,
-    parse_plan_json, plan_maintenance, validate_action, validate_plan, ActionOutcome,
-    ActionOutcomeKind, AnalysisReport, AnalyzeOptions, ApplyMaintenancePlanReport,
-    ApplyPlanOptions, CompressOptions, MaintainCompressReport, MaintainRefreshFlags,
-    MaintainRefreshReport, MaintenanceAction, MaintenancePlan, MaintenancePlanItem, OrganizeMode,
-    OrganizeOptions, OrganizeReport, PlanOptions, PlanSource, RefileApplyResult, RefileSuggestion,
-    ALLOWED_ACTIONS, COMPRESS_ACTION_WHITELIST, COMPRESS_LEVEL_MAX, REFRESH_ACTION_WHITELIST,
+    ALLOWED_ACTIONS, ActionOutcome, ActionOutcomeKind, AnalysisReport, AnalyzeOptions,
+    ApplyMaintenancePlanReport, ApplyPlanOptions, COMPRESS_ACTION_WHITELIST, COMPRESS_LEVEL_MAX,
+    CompressOptions, MaintainCompressReport, MaintainRefreshFlags, MaintainRefreshReport,
+    MaintenanceAction, MaintenancePlan, MaintenancePlanItem, OrganizeMode, OrganizeOptions,
+    OrganizeReport, PlanOptions, PlanSource, REFRESH_ACTION_WHITELIST, RefileApplyResult,
+    RefileSuggestion, action_from_parts, analyze_corpus, apply_maintenance_plan, filter_plan,
+    heuristic_plan, is_allowed_action, log_plan, maintain_compress, maintain_organize,
+    maintain_refresh, maintenance_actions_json_schema, maintenance_plan_json_schema,
+    parse_and_filter_plan, parse_plan_json, plan_maintenance, validate_action, validate_plan,
 };

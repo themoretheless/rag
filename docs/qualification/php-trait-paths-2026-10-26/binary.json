@@ -1,0 +1,8 @@
+{
+  "sha256_before": "d0ee6f8b1eb2d6e49046c15a9e7396654da68ba5c96253135dd8c92c00e7cc56",
+  "shared_checkout": true,
+  "frozen_checkout_proven": false,
+  "deployment_proven": false,
+  "sha256_after": "d0ee6f8b1eb2d6e49046c15a9e7396654da68ba5c96253135dd8c92c00e7cc56",
+  "unchanged_during_qualification": true
+}

@@ -520,7 +520,7 @@ impl Config {
         //   Fallbacks: OPENAI_API_KEY, ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, MOONSHOT_API_KEY
         //   RAG_LLM_ENABLED, RAG_LLM_TIMEOUT_SECS, RAG_LLM_MAX_TOKENS
         //   RAG_MAINT_MAX_DOCS, RAG_MAINT_NEAR_DUP_THRESHOLD
-        use providers::{resolve_api_key, LlmProviderKind};
+        use providers::{LlmProviderKind, resolve_api_key};
         let llm_provider = env::var("RAG_LLM_PROVIDER")
             .unwrap_or_else(|_| "ollama".to_string())
             .parse::<LlmProviderKind>()?;

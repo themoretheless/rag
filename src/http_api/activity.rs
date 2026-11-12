@@ -1,6 +1,6 @@
 //! `/v1/activity`: read-only view over [`crate::activity`].
 
-use axum::{extract::Query, routing::get, Json, Router};
+use axum::{Json, Router, extract::Query, routing::get};
 use serde::{Deserialize, Serialize};
 
 use crate::activity::{self, ActivityEvent, MAX_ACTIVITY_EVENTS};

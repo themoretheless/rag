@@ -4,19 +4,19 @@
 //! attach to feedback question ids and eval run ids.
 
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     response::Response,
     routing::{get, post},
-    Json, Router,
 };
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::{
-    error::{api_err, api_ok},
     HttpState,
+    error::{api_err, api_ok},
 };
 use crate::error::{AppError, Result};
 use crate::eval::ErrorLabel;
@@ -325,7 +325,7 @@ mod tests {
     use crate::config::Config;
     use crate::embeddings::MockEmbedder;
     use crate::http_api::jobs::JobRegistry;
-    use axum::body::{to_bytes, Body};
+    use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode};
     use std::sync::Arc;
     use tower::ServiceExt;

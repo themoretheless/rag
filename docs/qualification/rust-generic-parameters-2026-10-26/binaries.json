@@ -1,0 +1,12 @@
+{
+  "code_quality_capture": {
+    "path": "/private/tmp/rag-generic-parameters-20261026/bin/code_quality_capture",
+    "sha256": "d5e078e5626a3f05170959393681a44ebb76304f30eb3c7466074f78895991e6",
+    "size_bytes": 173814568
+  },
+  "rag-mcp": {
+    "path": "/private/tmp/rag-generic-parameters-20261026/bin/rag-mcp",
+    "sha256": "1650abf294d2bc57585c5fd053556d9c39bf417950ab89cec3970aaa5adb89c3",
+    "size_bytes": 329309448
+  }
+}
