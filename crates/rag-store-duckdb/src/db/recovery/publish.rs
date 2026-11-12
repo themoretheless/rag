@@ -548,7 +548,7 @@ pub(super) fn stage_file_copy(source: &Path, destination: &Path) -> Result<(Path
 /// Stream a transactionally consistent `DiskEngineV2` portable `LIN\x04` backup directly to a
 /// staged artifact file in 512-row Zstd chunks without buffering a multi-GB snapshot in RAM!
 pub(super) fn stage_disk_v2_backup<F>(
-    view: lin::disk_v2::DiskEngineV2,
+    view: lin::disk::DiskEngine,
     source: &Path,
     destination: &Path,
     mut copy_hook: F,

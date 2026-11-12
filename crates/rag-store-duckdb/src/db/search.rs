@@ -1101,7 +1101,7 @@ fn disk_vec_scope_cache() -> &'static Mutex<HashMap<usize, Vec<Arc<CachedDiskVec
 fn get_or_load_disk_vec_scope(
     store: &Store,
     r: &impl LinReader,
-    eng: &lin::disk_v2::DiskEngineV2,
+    eng: &lin::disk::DiskEngine,
     filters: &LexFilters,
 ) -> Result<Arc<CachedDiskVecScope>> {
     let manifest_gen = eng.manifest.generation;

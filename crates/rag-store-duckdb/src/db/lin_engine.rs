@@ -10,9 +10,9 @@ use chrono::{DateTime, Utc};
 use lin::{
     Cell, Db, Embedder, OpenOpts, Pred, Query, Quotas, ReadDb, Row, Source, Step, Stmt, SyncMode,
     Value,
-    disk_v2::{
-        DiskColKind, DiskColSchema, DiskEngineV2, DiskTableSchema, DiskWalOp, HotCacheConfig,
-        HotCacheStats, is_disk_v2_dir,
+    disk::{
+        DiskColKind, DiskColSchema, DiskEngine as DiskEngineV2, DiskTableSchema, DiskWalOp,
+        HotCacheConfig, HotCacheStats, is_disk_dir as is_disk_v2_dir,
     },
 };
 
@@ -210,9 +210,10 @@ pub fn is_lin_portable_backup_file(path: &Path) -> bool {
     false
 }
 
-/// Check whether `path` is a durable `lin` directory (`DiskEngineV2` `manifest.v2.json` or legacy `head`/`snapshot`/`log`).
+/// Check whether `path` is a durable `lin` directory (`DiskEngine` `manifest.json`/`manifest.v2.json` or legacy `head`/`snapshot`/`log`).
 pub fn is_lin_data_dir(path: &Path) -> bool {
     is_disk_v2_dir(path)
+        || (path.is_dir() && path.join("manifest.v2.json").is_file())
         || (path.is_dir()
             && (path.join("head").is_file()
                 || path.join("snapshot").is_file()
@@ -221,10 +222,32 @@ pub fn is_lin_data_dir(path: &Path) -> bool {
 
 pub fn is_legacy_lin_v1_dir(path: &Path) -> bool {
     !is_disk_v2_dir(path)
+        && !path.join("manifest.v2.json").is_file()
         && path.is_dir()
         && (path.join("head").is_file()
             || path.join("snapshot").is_file()
             || path.join("log").is_file())
+}
+
+fn upgrade_legacy_disk_v2_filenames_if_needed(dir: &Path) {
+    if !dir.is_dir() {
+        return;
+    }
+    let old_manifest = dir.join("manifest.v2.json");
+    let new_manifest = dir.join(lin::disk::MANIFEST_FILE);
+    if old_manifest.is_file() && !new_manifest.exists() {
+        let _ = std::fs::rename(&old_manifest, &new_manifest);
+    }
+    let old_wal = dir.join("wal.v2.log");
+    let new_wal = dir.join(lin::disk::WAL_FILE);
+    if old_wal.is_file() && !new_wal.exists() {
+        let _ = std::fs::rename(&old_wal, &new_wal);
+    }
+    let old_tomb = dir.join("tombstones.v2.bin");
+    let new_tomb = dir.join(lin::disk::TOMBSTONES_FILE);
+    if old_tomb.is_file() && !new_tomb.exists() {
+        let _ = std::fs::rename(&old_tomb, &new_tomb);
+    }
 }
 
 /// Compute total disk bytes occupied by a `lin` directory or portable backup file.
@@ -404,6 +427,7 @@ impl LinBackend {
                 read_only_flag: false,
             });
         }
+        upgrade_legacy_disk_v2_filenames_if_needed(&clean);
         let bridge = BridgeEmbedder::new("nomic-embed-text/768");
         let engine = DiskEngineV2::open_with_hot_cache(
             &clean,
@@ -446,6 +470,7 @@ impl LinBackend {
                 path.display()
             )));
         }
+        upgrade_legacy_disk_v2_filenames_if_needed(&clean);
         if is_disk_v2_dir(&clean) {
             let bridge = BridgeEmbedder::new("nomic-embed-text/768");
             let engine =
@@ -1983,12 +2008,12 @@ impl<'a> LinWriteGuard<'a> {
     }
 
     /// Run full out-of-core segment compaction (`DiskEngineV2::vacuum`) or `checkpoint()` on `:memory:`/v1.
-    pub fn vacuum(&mut self) -> Result<lin::disk_v2::CompactionReport> {
+    pub fn vacuum(&mut self) -> Result<lin::disk::CompactionReport> {
         match &mut *self.guard {
             LinBackend::DiskV2 { engine, .. } => Ok(engine.vacuum()?),
             LinBackend::Primary { db, .. } => {
                 db.checkpoint()?;
-                Ok(lin::disk_v2::CompactionReport::default())
+                Ok(lin::disk::CompactionReport::default())
             }
             LinBackend::ReadOnlyDir { .. } => unreachable!("verified writable in new()"),
         }

@@ -183,7 +183,7 @@ fn run_lin_v1_to_v2_upgrade(args: &CliArgs) -> Result<()> {
         args.src.display(),
         args.dst.display()
     );
-    let eng = lin::disk_v2::DiskEngineV2::migrate_from_legacy(
+    let eng = lin::disk::DiskEngine::migrate_from_legacy(
         &args.src,
         &args.dst,
         65_536,

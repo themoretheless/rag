@@ -681,7 +681,7 @@ struct CachedBm25Index {
 /// Zero-heap `mmap` BM25 handle for `DiskEngineV2` stores (`0 MiB` heap at 500+ GiB scale!).
 struct CachedMmapBm25 {
     stemmer: String,
-    index: lin::disk_v2::MmapBm25Index,
+    index: lin::disk::MmapBm25Index,
 }
 
 static BM25_CACHE: std::sync::LazyLock<RwLock<HashMap<usize, Arc<CachedBm25Index>>>> =
@@ -732,8 +732,8 @@ fn build_mmap_bm25_on_disk(
     db_dir: &std::path::Path,
     generation: u64,
     stemmer: &str,
-) -> Result<lin::disk_v2::MmapBm25Index> {
-    let mut builder = lin::disk_v2::MmapBm25Builder::new(generation);
+) -> Result<lin::disk::MmapBm25Index> {
+    let mut builder = lin::disk::MmapBm25Builder::new(generation);
     r.scan_each_projected("chunks", &["id", "content"], |row| {
         let Some(chunk_id) = cell_str(row, "id") else {
             return Ok(true);
@@ -852,7 +852,7 @@ fn store_cache_key(store: &Store) -> usize {
 fn get_or_open_mmap_bm25(
     store: &Store,
     r: &impl LinReader,
-    eng: &lin::disk_v2::DiskEngineV2,
+    eng: &lin::disk::DiskEngine,
     generation: u64,
     stemmer: &str,
 ) -> Result<Option<Arc<CachedMmapBm25>>> {
@@ -866,7 +866,7 @@ fn get_or_open_mmap_bm25(
     }
 
     let v3_path = bm25_v3_mmap_path(eng.dir(), stemmer);
-    if let Some(opened) = lin::disk_v2::MmapBm25Index::open_if_valid(&v3_path, generation) {
+    if let Some(opened) = lin::disk::MmapBm25Index::open_if_valid(&v3_path, generation) {
         let handle = Arc::new(CachedMmapBm25 {
             stemmer: stemmer.to_string(),
             index: opened,
@@ -895,8 +895,7 @@ fn get_or_open_mmap_bm25(
     {
         return Ok(Some(Arc::clone(existing)));
     }
-    let idx = if let Some(opened) = lin::disk_v2::MmapBm25Index::open_if_valid(&v3_path, generation)
-    {
+    let idx = if let Some(opened) = lin::disk::MmapBm25Index::open_if_valid(&v3_path, generation) {
         opened
     } else {
         build_mmap_bm25_on_disk(r, eng.dir(), generation, stemmer)?
@@ -951,8 +950,7 @@ pub fn persist_bm25_disk_cache(store: &Store, stemmer: &str) -> Result<bool> {
     let clean_stemmer = sanitize_stemmer(stemmer);
     let generation = chunks_generation(&r)?;
     let v3_path = bm25_v3_mmap_path(eng.dir(), &clean_stemmer);
-    let idx = if let Some(valid) = lin::disk_v2::MmapBm25Index::open_if_valid(&v3_path, generation)
-    {
+    let idx = if let Some(valid) = lin::disk::MmapBm25Index::open_if_valid(&v3_path, generation) {
         let old_v2 = legacy_bm25_v2_bin_path(eng.dir(), &clean_stemmer);
         if old_v2.exists() {
             let _ = std::fs::remove_file(old_v2);
@@ -1182,8 +1180,8 @@ fn collect_matching_doc_ids_for_lex(
 fn get_or_build_bm25_scope_bitset(
     store: &Store,
     r: &impl LinReader,
-    eng: &lin::disk_v2::DiskEngineV2,
-    bm25: &lin::disk_v2::MmapBm25Index,
+    eng: &lin::disk::DiskEngine,
+    bm25: &lin::disk::MmapBm25Index,
     bm25_gen: u64,
     filters: &LexFilters,
 ) -> Result<Option<Arc<Vec<u64>>>> {

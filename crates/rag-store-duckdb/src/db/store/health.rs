@@ -188,8 +188,8 @@ impl Store {
     pub fn wal_file_size_bytes(&self) -> u64 {
         let clean = crate::db::lin_engine::normalize_lin_path(&self.path);
         if clean.is_dir() {
-            if lin::disk_v2::is_disk_v2_dir(&clean) {
-                std::fs::metadata(clean.join(lin::disk_v2::WAL_FILE))
+            if lin::disk::is_disk_dir(&clean) {
+                std::fs::metadata(clean.join(lin::disk::WAL_FILE))
                     .map(|m| m.len())
                     .unwrap_or(0)
             } else {

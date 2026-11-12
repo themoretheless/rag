@@ -220,8 +220,12 @@ fn has_regular_pyvenv_sentinel(directory: &Path) -> bool {
 }
 
 fn is_lin_database_directory(directory: &Path) -> bool {
-    directory.join("manifest.v2.json").is_file()
-        || (directory.join("head").is_file() && directory.join("wal").is_dir())
+    crate::db::lin_engine::is_lin_data_dir(directory)
+        || directory.join("manifest.v2.json").is_file()
+        || (directory.join("manifest.json").is_file()
+            && (directory.join("segments").is_dir()
+                || directory.join("wal.log").is_file()
+                || directory.join("LOCK").is_file()))
 }
 
 #[cfg(test)]
