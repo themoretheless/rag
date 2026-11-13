@@ -1391,6 +1391,7 @@ pub trait LinWriter: LinReader {
                     name: name.to_string(),
                     columns,
                     indexed_fields,
+                    cluster_by: None,
                 },
             }])?;
             return Ok(());

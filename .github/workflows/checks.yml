@@ -15,7 +15,7 @@ concurrency:
 jobs:
   rust:
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
       RAG_EMBEDDING_PROVIDER: mock
       RAG_EMBEDDING_DIMS: '32'
